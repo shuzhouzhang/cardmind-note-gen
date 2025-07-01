@@ -44,7 +44,10 @@ export function MdEditor() {
     }
   }
 
-  function init() {
+  async function init() {
+    const store = await Store.load('store.json');
+    const typewriterMode = await store.get<boolean>('typewriterMode') || false
+
     let toolbarConfig = [
       { name: 'undo', tipPosition: 's' },
       { name: 'redo', tipPosition: 's' },
@@ -121,6 +124,7 @@ export function MdEditor() {
       cdn: '',
       theme: theme === 'dark' ? 'dark' : 'classic',
       toolbar: toolbarConfig,
+      typewriterMode,
       link: {
         isOpen: false,
         click: (dom: Element) => {

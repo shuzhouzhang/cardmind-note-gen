@@ -23,6 +23,12 @@
     "error": "失敗"
   },
   "settings": {
+    "editor": {
+      "title": "エディタ設定です",
+      "desc": "ここでは、Markdown エディタをカスタマイズして、より適した書き込み体験を提供できます。",
+      "typewriterMode": "打字機モード",
+      "typewriterModeDesc": "打字機モード下、エディタは打字機の効果を模倣し、より深く浸かる書き込み体験を提供します。"
+    },
     "uploadStore": {
       "uploadConfirm": "同期リポジトリをプライベートに設定してください。",
       "downloadConfirm": "ダウンロード配置をローカル配置に上書きし、再起動して有効になります。",

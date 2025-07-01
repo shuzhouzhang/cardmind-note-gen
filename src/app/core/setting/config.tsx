@@ -41,6 +41,10 @@ const baseConfig = [
     anchor: 'file',
   },
   {
+    icon: <UserRoundCog className="size-4 lg:size-6" />,
+    anchor: 'editor',
+  },
+  {
     icon: <ScanText className="size-4 lg:size-6" />,
     anchor: 'ocr',
   },

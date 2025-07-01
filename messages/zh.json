@@ -23,6 +23,12 @@
     "error": "失败"
   },
   "settings": {
+    "editor": {
+      "title": "编辑器设置",
+      "desc": "在这里，你可以对 Markdown 编辑器进行自定义配置，打造更适合你的写作方式。",
+      "typewriterMode": "打字机模式",
+      "typewriterModeDesc": "打字机模式下，编辑器会模拟打字机效果，帮助你更好地沉浸在写作中。"
+    },
     "uploadStore": {
       "uploadConfirm": "上传配置请确保同步仓库为私有，否则数据将会泄露！",
       "downloadConfirm": "下载配置将会覆盖本地配置，并且重启生效！",

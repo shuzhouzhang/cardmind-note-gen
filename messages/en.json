@@ -25,6 +25,12 @@
     "error": "Failed"
   },
   "settings": {
+    "editor": {
+      "title": "Editor Settings",
+      "desc": "Here, you can customize the Markdown editor, creating a writing experience tailored to your needs.",
+      "typewriterMode": "Typewriter Mode",
+      "typewriterModeDesc": "In typewriter mode, the editor will simulate a typewriter effect, helping you better immerse in writing."
+    },
     "uploadStore": {
       "uploadConfirm": "Upload configuration please ensure the sync repository is private, otherwise the data will be leaked!",
       "downloadConfirm": "Download configuration will cover local configuration and restart to take effect!",
