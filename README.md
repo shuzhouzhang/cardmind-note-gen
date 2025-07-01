@@ -113,7 +113,7 @@ The writing section is divided into two parts: **File Manager** and **Markdown E
 ## Sponsors
 
 <div>
-  <a href="https://docs.siliconflow.cn/cn/usercases/use-siliconcloud-in-NoteGen?utm_source=NoteGen" target="_blank">
+  <a href="https://cloud.siliconflow.cn/i/O2ciJeZw" target="_blank">
     <img src="https://s2.loli.net/2025/06/11/65TLRh813e2YFzr.png" />
   </a>
   <a href="https://www.qiniu.com/products/ai-token-api?utm_source=NoteGen" target="_blank">
@@ -121,6 +121,9 @@ The writing section is divided into two parts: **File Manager** and **Markdown E
   </a>
   <a href="http://upgrade.toolsetlink.com/upgrade/example/tauri-example.html" target="_blank">
     <img src="https://s2.loli.net/2025/06/11/r2dqNIWVXp4RaFe.png" />
+  </a>
+  <a href="https://share.302.ai/jfFrIP" target="_blank">
+    <img src="https://s2.loli.net/2025/07/01/dPlkU1tejnDyV4S.png" />
   </a>
 </div>
 
