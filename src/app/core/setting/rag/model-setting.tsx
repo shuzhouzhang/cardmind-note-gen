@@ -3,10 +3,10 @@ import { useTranslations } from 'next-intl';
 import { ModelSelect } from "./model-select";
 import { ChartScatter, ListOrdered } from "lucide-react";
 
-export function Setting() {
+export function ModelSetting() {
   const t = useTranslations('settings.defaultModel');
-
-  const options = [
+  
+  const modelOptions = [
     {
       title: t('options.embedding.title'),
       desc: t('options.embedding.desc'),
@@ -19,13 +19,16 @@ export function Setting() {
       modelKey: 'reranking',
       icon: <ListOrdered className="size-4" />
     },
-  ]
+  ];
 
-  return (
-    options.map((option) => (
-      <SettingPanel key={option.modelKey} title={option.title} desc={option.desc} icon={option.icon}>
-        <ModelSelect modelKey={option.modelKey} />
-      </SettingPanel>
-    ))
-  )
+  return modelOptions.map((option) => (
+    <SettingPanel 
+      key={option.modelKey} 
+      title={option.title} 
+      desc={option.desc} 
+      icon={option.icon}
+    >
+      <ModelSelect modelKey={option.modelKey} />
+    </SettingPanel>
+  ))
 }

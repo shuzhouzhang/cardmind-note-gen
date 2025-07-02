@@ -13,18 +13,15 @@ import { getFilePathOptions, getWorkspacePath } from "./workspace";
 import { DirTree } from "@/stores/article";
 import { toast } from "@/hooks/use-toast";
 import { join } from "@tauri-apps/api/path";
-
-// 默认分块大小和重叠大小（字符数）
-const DEFAULT_CHUNK_SIZE = 1000;
-const DEFAULT_CHUNK_OVERLAP = 200;
+import { Store } from "@tauri-apps/plugin-store";
 
 /**
  * 文本分块函数，用于将大文本分成小块
  */
 export function chunkText(
   text: string, 
-  chunkSize: number = DEFAULT_CHUNK_SIZE, 
-  chunkOverlap: number = DEFAULT_CHUNK_OVERLAP
+  chunkSize: number = 1000,
+  chunkOverlap: number = 200
 ): string[] {
   const chunks: string[] = [];
   
@@ -118,8 +115,10 @@ export async function processMarkdownFile(
       const { path, baseDir } = await getFilePathOptions(filePath)
       content = fileContent || await readTextFile(path, { baseDir })
     }
-    const chunks = chunkText(content);
-    
+    const store = await Store.load('store.json')
+    const chunkSize = await store.get<number>('ragChunkSize');
+    const chunkOverlap = await store.get<number>('ragChunkOverlap');
+    const chunks = chunkText(content, chunkSize, chunkOverlap);
     // 文件名（不含路径）
     const filename = filePath.split('/').pop() || filePath;
     
@@ -293,7 +292,10 @@ export async function getContextForQuery(query: string): Promise<string> {
     }
     
     // 查询最相关的文档
-    let similarDocs = await getSimilarDocuments(queryEmbedding, 5, 0.7);
+    const store = await Store.load('store.json')
+    const resultCount = await store.get<number>('ragResultCount') || 5;
+    const similarityThreshold = await store.get<number>('ragSimilarityThreshold') || 0.7;
+    let similarDocs = await getSimilarDocuments(queryEmbedding, resultCount, similarityThreshold);
     if (!similarDocs.length) {
       return '';
     }

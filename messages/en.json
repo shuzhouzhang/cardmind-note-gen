@@ -27,7 +27,23 @@
   "settings": {
     "rag": {
       "title": "Knowledge Base",
-      "desc": "Here, you can configure knowledge base related settings, knowledge base based on RAG technology, through embedding models to convert text into vectors, then through vector search to achieve intelligent search and intelligent answers."
+      "desc": "Here, you can configure knowledge base related settings, knowledge base based on RAG technology, through embedding models to convert text into vectors, then through vector search to achieve intelligent search and intelligent answers.",
+      "settingsTitle": "Parameter Settings",
+      "settingsDesc": "By adjusting parameters, you can more precisely control the retrieval effect of the knowledge base.",
+      "deleteVectorConfirm": "Are you sure you want to clear the knowledge base?",
+      "deleteVectorSuccess": "Knowledge base cleared successfully",
+      "enable": "Enable knowledge base search",
+      "enableDesc": "Enabling it will make AI search your notes when answering questions, providing more accurate answers.",
+      "chunkSize": "Chunk size",
+      "chunkSizeDesc": "The maximum number of characters for text chunking. Larger chunks may contain more context, but will increase vector calculation complexity.",
+      "chunkOverlap": "Chunk overlap",
+      "chunkOverlapDesc": "The number of overlapping characters between text chunks. Larger overlaps can maintain context continuity.",
+      "resultCount": "Result count",
+      "resultCountDesc": "The number of related documents returned when searching. The more documents, the more information provided, but may also introduce noise.",
+      "similarityThreshold": "Similarity threshold",
+      "similarityThresholdDesc": "The minimum similarity threshold between documents and queries. Only documents exceeding this threshold will be returned. The value range is 0.0-1.0, the higher the threshold, the stricter the requirement.",
+      "resetToDefaults": "Reset to defaults",
+      "deleteVector": "Clear knowledge base"
     },
     "editor": {
       "title": "Markdown Editor",

@@ -28,6 +28,8 @@ import { ClipboardMonitor } from "./clipboard-monitor"
 import { RagSwitch } from "./rag-switch"
 import emitter from "@/lib/emitter"
 import useVectorStore from "@/stores/vector"
+import { getContextForQuery } from '@/lib/rag'
+
 
 export function ChatInput() {
   const [text, setText] = useState("")
@@ -98,8 +100,6 @@ export function ChatInput() {
     // 如果启用RAG，获取相关上下文
     if (isRagEnabled) {
       try {
-        // 导入getContextForQuery函数
-        const { getContextForQuery } = await import('@/lib/rag')
         // 获取相关文档内容
         ragContext = await getContextForQuery(text)
         

@@ -287,9 +287,9 @@ export default function AiPage() {
                     <Slider
                       className="w-64"
                       value={[temperature]}
-                    max={2}
-                    step={0.01}
-                    onValueChange={(value) => valueChangeHandler('temperature', value[0])}
+                      max={2}
+                      step={0.01}
+                      onValueChange={(value) => valueChangeHandler('temperature', value[0])}
                     />
                     <span className="text-zinc-500">{temperature}</span>
                   </div>

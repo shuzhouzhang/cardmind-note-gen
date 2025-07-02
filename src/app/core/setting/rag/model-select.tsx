@@ -86,7 +86,7 @@ export function ModelSelect({modelKey}: {modelKey: string}) {
     <Popover open={open} onOpenChange={setOpen}>
       <div className="flex gap-2">
         <PopoverTrigger asChild>
-          <div>
+          <div className="flex-1">
             <Button
               variant="outline"
               role="combobox"

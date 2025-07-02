@@ -25,7 +25,23 @@
   "settings": {
     "rag": {
       "title": "知识库",
-      "desc": "在这里，你可以配置知识库相关设置，知识库基于 RAG 技术，通过嵌入模型将文本转换为向量，然后通过向量搜索来实现智能搜索和智能回答。"
+      "desc": "在这里，你可以配置知识库相关设置，知识库基于 RAG 技术，通过嵌入模型将文本转换为向量，然后通过向量搜索来实现智能搜索和智能回答。",
+      "settingsTitle": "参数设置",
+      "settingsDesc": "通过调解参数，可以更加精确的控制知识库的检索效果。",
+      "deleteVectorConfirm": "确定清空知识库吗？",
+      "deleteVectorSuccess": "清空知识库成功",
+      "enable": "启用知识库检索",
+      "enableDesc": "启用后，AI 将在回答问题时检索你的笔记内容，提供更准确的回答。",
+      "chunkSize": "分块大小",
+      "chunkSizeDesc": "文本分块的最大字符数，较大的分块可能包含更多上下文，但会增加向量计算的复杂度。",
+      "chunkOverlap": "重叠大小",
+      "chunkOverlapDesc": "文本分块间的重叠字符数，较大的重叠可以保持上下文连贯性。",
+      "resultCount": "检索数量",
+      "resultCountDesc": "检索时返回的相关文档数量，数量越多提供的信息可能更丰富，但也可能引入噪声。",
+      "similarityThreshold": "相似度阈值",
+      "similarityThresholdDesc": "文档与查询的最小相似度阈值，只有超过此阈值的文档才会被返回。值范围 0.0-1.0，越高要求越严格。",
+      "resetToDefaults": "重置默认值",
+      "deleteVector": "清空知识库"
     },
     "editor": {
       "title": "Markdown 编辑器",
