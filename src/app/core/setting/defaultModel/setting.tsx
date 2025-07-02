@@ -1,52 +1,43 @@
-import { FormItem, SettingRow, SettingType } from "../components/setting-base";
+import { SettingPanel } from "../components/setting-base";
 import { useTranslations } from 'next-intl';
 import { ModelSelect } from "./model-select";
+import { Bot, Highlighter, Languages, Lightbulb } from "lucide-react";
 
-export function Setting({id, icon}: {id: string, icon?: React.ReactNode}) {
+export function Setting() {
   const t = useTranslations('settings.defaultModel');
 
   const options = [
     {
       title: t('options.primaryModel.title'),
       desc: t('options.primaryModel.desc'),
-      modelKey: 'primaryModel'
+      modelKey: 'primaryModel',
+      icon: <Bot className="size-4" />
     },
     {
       title: t('options.markDesc.title'),
       desc: t('options.markDesc.desc'),
-      modelKey: 'markDesc'
+      modelKey: 'markDesc',
+      icon: <Highlighter className="size-4" />
     },
     {
       title: t('options.placeholder.title'),
       desc: t('options.placeholder.desc'),
-      modelKey: 'placeholder'
+      modelKey: 'placeholder',
+      icon: <Lightbulb className="size-4" />
     },
     {
       title: t('options.translate.title'),
       desc: t('options.translate.desc'),
-      modelKey: 'translate'
-    },
-    {
-      title: t('options.embedding.title'),
-      desc: t('options.embedding.desc'),
-      modelKey: 'embedding'
-    },
-    {
-      title: t('options.reranking.title'),
-      desc: t('options.reranking.desc'),
-      modelKey: 'reranking'
+      modelKey: 'translate',
+      icon: <Languages className="size-4" />
     },
   ]
 
   return (
-    <SettingType id={id} icon={icon} title={t('title')} desc={t('desc')}>
-      {options.map((option) => (
-        <SettingRow key={option.modelKey}>
-          <FormItem title={option.title} desc={option.desc}>
-            <ModelSelect modelKey={option.modelKey} />
-          </FormItem>
-        </SettingRow>
-      ))}
-    </SettingType>
+    options.map((option) => (
+      <SettingPanel key={option.modelKey} title={option.title} desc={option.desc} icon={option.icon}>
+        <ModelSelect modelKey={option.modelKey} />
+      </SettingPanel>
+    ))
   )
 }

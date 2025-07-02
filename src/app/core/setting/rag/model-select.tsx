@@ -27,7 +27,7 @@ import { TooltipButton } from "@/components/tooltip-button"
 
 export function ModelSelect({modelKey}: {modelKey: string}) {
   const [list, setList] = useState<AiConfig[]>([])
-  const { setPlaceholderModel, setTranslateModel, setMarkDescModel, setPrimaryModel } = useSettingStore()
+  const { setEmbeddingModel, setRerankingModel } = useSettingStore()
   const [model, setModel] = useState<string>('')
   const [open, setOpen] = React.useState(false)
   const t = useTranslations('settings.defaultModel')
@@ -35,17 +35,11 @@ export function ModelSelect({modelKey}: {modelKey: string}) {
   function setPrimaryModelHandler(primaryModel: string) {
     setModel(primaryModel)
     switch (modelKey) {
-      case 'primaryModel':
-        setPrimaryModel(primaryModel)
+      case 'embedding':
+        setEmbeddingModel(primaryModel)
         break;
-      case 'placeholder':
-        setPlaceholderModel(primaryModel)
-        break;
-      case 'translate':
-        setTranslateModel(primaryModel)
-        break;
-      case 'markDesc':
-        setMarkDescModel(primaryModel)
+      case 'reranking':
+        setRerankingModel(primaryModel)
         break;
       default:
         break;
@@ -60,7 +54,7 @@ export function ModelSelect({modelKey}: {modelKey: string}) {
       return item.apiKey && item.model && item.baseURL
     })
     setList(filteredModels)
-    const primaryModel = await store.get<string>(modelKey === 'primaryModel' ? 'primaryModel' : `${modelKey}PrimaryModel`)
+    const primaryModel = await store.get<string>(`${modelKey}PrimaryModel`)
     if (!primaryModel) return
     setPrimaryModelHandler(primaryModel)
   }
@@ -100,8 +94,8 @@ export function ModelSelect({modelKey}: {modelKey: string}) {
               className="w-full lg:w-[280px] justify-between"
             >
               {model
-                ? `${list.find((item) => item.key === model)?.model}(${list.find((item) => item.key === model)?.title})`
-                : modelKey === 'primaryModel' ? t('noModel') : t('tooltip')}
+                ? list.find((item) => item.key === model)?.model
+                : t('tooltip')}
               <ChevronsUpDown className="opacity-50" />
             </Button>
           </div>
@@ -111,16 +105,34 @@ export function ModelSelect({modelKey}: {modelKey: string}) {
           icon={<X className="h-4 w-4" />}
           onClick={resetDefaultModel}
           variant="default"
-          tooltipText={t('tooltip')}
+          tooltipText={t('noModel')}
         />
       </div>
-      <PopoverContent align="end" className="p-0">
+      <PopoverContent align="end" className="w-full lg:w-[320px] p-0">
         <Command>
           <CommandInput placeholder={t('placeholder')} className="h-9" />
           <CommandList>
             <CommandEmpty>No model found.</CommandEmpty>
             <CommandGroup>
-              {list.filter(item => item.modelType === 'chat' || !item.modelType).map((item) => (
+              {modelKey === 'embedding' && list.filter(item => item.modelType === 'embedding').map((item) => (
+                <CommandItem
+                  key={item.key}
+                  value={item.key}
+                  onSelect={(currentValue) => {
+                    modelSelectChangeHandler(currentValue)
+                    setOpen(false)
+                  }}
+                >
+                  {`${item.model}(${item.title})`}
+                  <Check
+                    className={cn(
+                      "ml-auto",
+                      model === item.key ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                </CommandItem>
+              ))}
+              {modelKey === 'reranking' && list.filter(item => item.modelType === 'rerank').map((item) => (
                 <CommandItem
                   key={item.key}
                   value={item.key}
