@@ -24,7 +24,8 @@ import type {
   ToolResult,
 } from './types'
 
-const DEFAULT_MAX_ITERATIONS = 15
+const ABSOLUTE_MAX_MODEL_ROUNDS = 30
+const MAX_CONSECUTIVE_NO_PROGRESS_ROUNDS = 2
 const MAX_INVALID_QUOTED_WRITE_REPAIRS = 2
 const MAX_IDENTICAL_READ_RESULT_REPEATS = 2
 const MAX_IDENTICAL_FAILED_TOOL_RESULT_REPEATS = 1
@@ -535,6 +536,8 @@ export class AgentRuntime {
       result: string
       repeatCount: number
     }>()
+    const successfulToolEvidence = new Set<string>()
+    let consecutiveNoProgressRounds = 0
     let latestEditorStateResult: AgentToolResult | undefined
     let activeModelTraceId: string | undefined
     let activeModelStartedAt = 0
@@ -581,6 +584,7 @@ export class AgentRuntime {
       tools = selectToolsForContext(context, allTools, input.permissionMode)
       editorStateReadLocked = false
       invalidQuotedWriteRepairCount = 0
+      consecutiveNoProgressRounds = 0
       systemPrompt = this.promptAssembler.assemble(context, tools, customSystemPrompt)
       messages[0] = { role: 'system', content: systemPrompt }
 
@@ -618,7 +622,7 @@ export class AgentRuntime {
     }
 
     try {
-      for (let iteration = 1; iteration <= DEFAULT_MAX_ITERATIONS; iteration += 1) {
+      for (let iteration = 1; iteration <= ABSOLUTE_MAX_MODEL_ROUNDS; iteration += 1) {
         if (this.stopped) {
           callbacks.onStatus?.('stopped')
           const stoppedContent = getSafeStoppedContent()
@@ -637,6 +641,7 @@ export class AgentRuntime {
         }
 
         await drainSteering()
+        const evidenceCountAtRoundStart = successfulToolEvidence.size
 
         callbacks.onStatus?.('thinking')
         await agentEventBus.emit('before-model-call', { runId })
@@ -1395,6 +1400,14 @@ export class AgentRuntime {
             content: stringifyToolResult(modelFacingResult),
           })
 
+          if (result.ok) {
+            successfulToolEvidence.add([
+              tool.name,
+              JSON.stringify(args),
+              stringifyToolResult(result),
+            ].join(':'))
+          }
+
           if (!result.ok) {
             const failedCallSignature = `${tool.name}:${JSON.stringify(args)}`
             const serializedResult = stringifyToolResult(result)
@@ -1487,9 +1500,47 @@ export class AgentRuntime {
 
         }
 
+        const madeProgress = successfulToolEvidence.size > evidenceCountAtRoundStart
+        consecutiveNoProgressRounds = madeProgress
+          ? 0
+          : consecutiveNoProgressRounds + 1
+        agentDebugLog('agent_round_progress', {
+          runId,
+          iteration,
+          madeProgress,
+          newEvidenceCount: successfulToolEvidence.size - evidenceCountAtRoundStart,
+          consecutiveNoProgressRounds,
+        })
+
+        if (consecutiveNoProgressRounds >= MAX_CONSECUTIVE_NO_PROGRESS_ROUNDS) {
+          finalContent = [
+            `连续 ${MAX_CONSECUTIVE_NO_PROGRESS_ROUNDS} 轮没有获得新的成功工具结果，已停止执行以避免无效循环。`,
+            changes.length > 0 ? `此前已有 ${changes.length} 项改动成功执行，请以改动记录为准。` : '本次任务尚未确认完成。',
+          ].join('\n')
+          callbacks.onCandidateAnswerClear?.()
+          callbacks.onStatus?.('completed')
+          callbacks.onFinalAnswerRender?.(finalContent)
+          const finalTrace = recorder.add({
+            type: 'final',
+            title: '停止无进展循环',
+            status: 'error',
+            message: finalContent,
+          })
+          callbacks.onTrace?.(finalTrace)
+          return {
+            runId,
+            content: finalContent,
+            stopped: false,
+            steps,
+            toolCalls,
+            changes,
+            trace: recorder.all(),
+          }
+        }
+
       }
 
-      finalContent = finalContent || '已达到最大执行轮数，任务可能未完全完成。'
+      finalContent = finalContent || `已达到 ${ABSOLUTE_MAX_MODEL_ROUNDS} 轮绝对安全上限，任务可能未完全完成。`
       callbacks.onFinalAnswerRender?.(finalContent)
       return {
         runId,
