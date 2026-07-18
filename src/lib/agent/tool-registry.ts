@@ -370,6 +370,10 @@ async function executeEditorTransaction(input: Record<string, unknown>): Promise
     return normalized
   }
 
+  if (resultReportsNoChange(normalized)) {
+    return normalized
+  }
+
   return {
     ...normalized,
     changes: [
@@ -388,8 +392,22 @@ async function executeEditorLegacyWrite(input: Record<string, unknown>, legacy: 
   }
 
   const after = await readEditorMarkdown()
-  if (before === undefined || after === undefined || before === after) {
-    return normalized
+  if (before === after && before !== undefined) {
+    return {
+      ...normalized,
+      data: {
+        ...(normalized.data && typeof normalized.data === 'object' ? normalized.data : {}),
+        unchanged: true,
+      },
+      message: `${normalized.message}\n编辑器内容已是目标状态，无需重复修改。`,
+    }
+  }
+  if (before === undefined || after === undefined) {
+    return {
+      ok: false,
+      message: '编辑器操作已返回，但无法验证操作后的内容。为避免重复写入，已停止自动重试。',
+      error: 'EDITOR_CHANGE_VERIFICATION_FAILED',
+    }
   }
 
   return {
@@ -434,6 +452,10 @@ async function executeCreateFileWithChange(input: Record<string, unknown>): Prom
     return normalized
   }
 
+  if (resultReportsNoChange(normalized)) {
+    return normalized
+  }
+
   const target = filePathFromCreateResult(input, normalized)
   return {
     ...normalized,
@@ -456,6 +478,10 @@ async function executeUpdateFileWithChange(input: Record<string, unknown>): Prom
     return normalized
   }
 
+  if (resultReportsNoChange(normalized)) {
+    return normalized
+  }
+
   return {
     ...normalized,
     changes: [
@@ -475,6 +501,16 @@ async function executeDeleteFileWithChange(input: Record<string, unknown>): Prom
   const normalized = resultFromLegacy(await deleteMarkdownFileTool.execute(input as Record<string, any>))
 
   if (!normalized.ok) {
+    return normalized
+  }
+
+  const alreadyAbsent = Boolean(
+    normalized.data &&
+    typeof normalized.data === 'object' &&
+    'alreadyAbsent' in normalized.data &&
+    normalized.data.alreadyAbsent === true
+  )
+  if (alreadyAbsent) {
     return normalized
   }
 
@@ -506,6 +542,19 @@ function resultDataPath(result: AgentToolResult, key: string) {
   return ''
 }
 
+function resultReportsNoChange(result: AgentToolResult) {
+  if (!result.data || typeof result.data !== 'object') {
+    return false
+  }
+
+  const data = result.data as Record<string, unknown>
+  return data.alreadyAbsent === true
+    || data.alreadyExists === true
+    || data.unchanged === true
+    || data.alreadyRenamed === true
+    || data.alreadyMoved === true
+}
+
 async function executeRenameFileWithChange(input: Record<string, unknown>): Promise<AgentToolResult> {
   const normalized = resultFromLegacy(await renameFileTool.execute(input as Record<string, any>))
   if (!normalized.ok) {
@@ -514,6 +563,9 @@ async function executeRenameFileWithChange(input: Record<string, unknown>): Prom
 
   const oldPath = resultDataPath(normalized, 'oldPath') || asString(input.filePath)
   const newPath = resultDataPath(normalized, 'newPath') || asString(input.newName)
+  if (resultReportsNoChange(normalized)) {
+    return normalized
+  }
   return {
     ...normalized,
     changes: [
@@ -533,6 +585,9 @@ async function executeMoveFileWithChange(input: Record<string, unknown>): Promis
 
   const oldPath = resultDataPath(normalized, 'oldPath') || asString(input.filePath)
   const newPath = resultDataPath(normalized, 'newPath') || asString(input.targetFolderPath)
+  if (resultReportsNoChange(normalized)) {
+    return normalized
+  }
   return {
     ...normalized,
     changes: [
@@ -572,6 +627,9 @@ async function executeFolderCreateWithChange(input: Record<string, unknown>): Pr
   }
 
   const target = resultDataPath(normalized, 'folderPath') || asString(input.folderPath)
+  if (resultReportsNoChange(normalized)) {
+    return normalized
+  }
   return {
     ...normalized,
     changes: [
@@ -587,6 +645,10 @@ async function executeFolderCreateWithChange(input: Record<string, unknown>): Pr
 async function executeFolderDeleteWithChange(input: Record<string, unknown>): Promise<AgentToolResult> {
   const normalized = resultFromLegacy(await deleteFolderTool.execute(input as Record<string, any>))
   if (!normalized.ok) {
+    return normalized
+  }
+
+  if (resultReportsNoChange(normalized)) {
     return normalized
   }
 
@@ -617,6 +679,11 @@ async function executeStructuralToolWithChange(
     return normalized
   }
 
+
+  if (resultReportsNoChange(normalized)) {
+    return normalized
+  }
+
   return {
     ...normalized,
     changes: [
@@ -639,7 +706,7 @@ const editorApplyTransactionTool: AgentTool = {
   inputSchema: {
     type: 'object',
     properties: {
-      filePath: { type: 'string', description: 'Current editor file path, if known.' },
+      filePath: { type: 'string', description: 'Exact current editor file path.' },
       version: { type: 'number', description: 'Editor version from editor_get_state.' },
       operations: {
         type: 'array',
@@ -663,7 +730,7 @@ const editorApplyTransactionTool: AgentTool = {
         },
       },
     },
-    required: ['operations'],
+    required: ['filePath', 'operations'],
     additionalProperties: false,
   },
   execute: executeEditorTransaction,
@@ -846,6 +913,16 @@ function buildTools(): AgentTool[] {
       category: 'editor',
       risk: 'editor-write',
       legacy: insertAtCursorTool,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filePath: { type: 'string', description: 'Exact current editor file path.' },
+          content: { type: 'string', description: 'Markdown content to insert.' },
+          replaceSelection: { type: 'boolean', description: 'Replace the current selection when true.' },
+        },
+        required: ['filePath', 'content'],
+        additionalProperties: false,
+      },
       execute: (input) => executeEditorLegacyWrite(input, insertAtCursorTool),
     }),
     adaptLegacyTool({
@@ -858,12 +935,13 @@ function buildTools(): AgentTool[] {
       inputSchema: {
         type: 'object',
         properties: {
+          filePath: { type: 'string', description: 'Exact current editor file path.' },
           from: { type: 'number' },
           to: { type: 'number' },
           content: { type: 'string' },
           version: { type: 'number' },
         },
-        required: ['from', 'to', 'content'],
+        required: ['filePath', 'from', 'to', 'content'],
         additionalProperties: false,
       },
       execute: (input) => executeEditorLegacyWrite(input, replaceEditorContentTool),
@@ -878,12 +956,13 @@ function buildTools(): AgentTool[] {
       inputSchema: {
         type: 'object',
         properties: {
+          filePath: { type: 'string', description: 'Exact current editor file path.' },
           startLine: { type: 'number' },
           endLine: { type: 'number' },
           replaceContent: { type: 'string' },
           version: { type: 'number' },
         },
-        required: ['startLine', 'endLine', 'replaceContent'],
+        required: ['filePath', 'startLine', 'endLine', 'replaceContent'],
         additionalProperties: false,
       },
       execute: (input) => executeEditorLegacyWrite(input, replaceEditorContentTool),

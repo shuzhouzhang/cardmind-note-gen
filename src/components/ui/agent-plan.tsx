@@ -44,7 +44,7 @@ interface ConfirmationRecord {
   status: "pending" | "confirmed" | "cancelled";
   timestamp: number;
   scope?: "once" | "conversation";
-  sessionApprovalType?: "write" | "runtime-script-skill";
+  sessionApprovalType?: "runtime-script-skill";
   sessionApprovalSkillId?: string;
 }
 
@@ -82,7 +82,7 @@ interface AgentPlanProps {
     from?: number;
     to?: number;
     canApproveForSession?: boolean;
-    sessionApprovalType?: "write" | "runtime-script-skill";
+    sessionApprovalType?: "runtime-script-skill";
     sessionApprovalSkillId?: string;
   };
   confirmationHistory?: ConfirmationRecord[];

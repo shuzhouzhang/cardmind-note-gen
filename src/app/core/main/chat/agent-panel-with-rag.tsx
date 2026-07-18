@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl"
 import { useState } from "react"
 import useArticleStore from "@/stores/article"
 import { AgentRunTimeline } from "./agent-run-timeline"
-import type { AgentApprovalKind, AgentChange, AgentRunStatus, AgentSkillSummary, AgentTraceEvent, ToolCall } from "@/lib/agent/types"
+import type { AgentChange, AgentRunStatus, AgentSkillSummary, AgentTraceEvent, ToolCall } from "@/lib/agent/types"
 
 interface RagSourceDetail {
   filepath: string
@@ -53,9 +53,8 @@ interface AgentPanelWithRagProps {
     from?: number
     to?: number
     canApproveForSession?: boolean
-    sessionApprovalType?: "write" | "runtime-script-skill"
+    sessionApprovalType?: "runtime-script-skill"
     sessionApprovalSkillId?: string
-    approvalKind?: AgentApprovalKind
   }
   confirmationHistory?: Array<{
     toolName: string
@@ -63,9 +62,8 @@ interface AgentPanelWithRagProps {
     status: "pending" | "confirmed" | "cancelled"
     timestamp: number
     scope?: "once" | "conversation"
-    sessionApprovalType?: "write" | "runtime-script-skill"
+    sessionApprovalType?: "runtime-script-skill"
     sessionApprovalSkillId?: string
-    approvalKind?: AgentApprovalKind
   }>
   currentStepStartTime?: number
   onConfirm?: (scope?: "once" | "conversation") => void

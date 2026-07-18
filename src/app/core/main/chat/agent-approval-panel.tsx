@@ -6,7 +6,6 @@ import { useTranslations } from "next-intl"
 import { Button } from "@/components/ui/button"
 import { DiffViewer } from "@/components/ui/diff-viewer"
 import { formatConfirmationPreview } from "@/lib/agent/tool-confirmation-display"
-import type { AgentApprovalKind } from "@/lib/agent/types"
 import emitter from "@/lib/emitter"
 import { formatAgentToolName } from "./agent-display-utils"
 
@@ -20,9 +19,8 @@ export interface PendingAgentConfirmation {
   from?: number
   to?: number
   canApproveForSession?: boolean
-  sessionApprovalType?: "write" | "runtime-script-skill"
+  sessionApprovalType?: "runtime-script-skill"
   sessionApprovalSkillId?: string
-  approvalKind?: AgentApprovalKind
 }
 
 interface AgentApprovalPanelProps {
@@ -98,19 +96,14 @@ export function AgentApprovalPanel({
     return null
   }
 
-  const isIntentConfirmation = pendingConfirmation.approvalKind === "intent"
-  const title = isIntentConfirmation
-    ? t("record.chat.input.agent.confirmation.intent.title")
-    : translateKey(
-        approvalPreview.titleKey,
-        formatAgentToolName(pendingConfirmation.toolName)
-      )
-  const description = isIntentConfirmation
-    ? t("record.chat.input.agent.confirmation.intent.description")
-    : translateKey(
-        approvalPreview.descriptionKey,
-        "Agent 请求执行需要确认的操作。"
-      )
+  const title = translateKey(
+    approvalPreview.titleKey,
+    formatAgentToolName(pendingConfirmation.toolName)
+  )
+  const description = translateKey(
+    approvalPreview.descriptionKey,
+    "Agent 请求执行需要确认的操作。"
+  )
   const hasDiff =
     pendingConfirmation.originalContent !== undefined &&
     pendingConfirmation.modifiedContent !== undefined
@@ -138,7 +131,7 @@ export function AgentApprovalPanel({
               )}
             </span>
             <span className="block max-w-full truncate text-xs text-muted-foreground">
-              {isIntentConfirmation ? description : pendingConfirmation.filePath || description}
+              {pendingConfirmation.filePath || description}
             </span>
           </span>
         </button>
@@ -152,7 +145,7 @@ export function AgentApprovalPanel({
           onClick={onCancel}
         >
           <XCircle data-icon="inline-start" />
-          {isIntentConfirmation ? t("record.chat.input.agent.confirmation.cancel") : "拒绝"}
+          {t("record.chat.input.agent.confirmation.cancel")}
         </Button>
         <Button
           size="sm"
@@ -160,18 +153,16 @@ export function AgentApprovalPanel({
           onClick={() => onConfirm?.("once")}
         >
           <CheckCircle2 data-icon="inline-start" />
-          {isIntentConfirmation ? t("record.chat.input.agent.confirmation.intent.continue") : "允许一次"}
+          {t("record.chat.input.agent.confirmation.confirm")}
         </Button>
         {pendingConfirmation.canApproveForSession && (
           <Button
             size="sm"
-            variant={isIntentConfirmation ? "destructive" : "secondary"}
+            variant="secondary"
             className="h-7 px-2 text-xs"
             onClick={() => onConfirm?.("conversation")}
           >
-            {isIntentConfirmation
-              ? t("record.chat.input.agent.confirmation.intent.session")
-              : "本会话允许"}
+            {t("record.chat.input.agent.confirmation.session")}
           </Button>
         )}
       </div>

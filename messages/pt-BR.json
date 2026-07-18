@@ -2222,6 +2222,14 @@
           "acting": "Agindo",
           "observation": "Observação",
           "toolCalls": "Chamadas de Ferramenta",
+          "permissionMode": {
+            "label": "Modo de permissão do Agent",
+            "modes": {
+              "read-only": { "title": "Somente leitura", "description": "Permite leitura e análise, mas bloqueia alterações." },
+              "ask": { "title": "Confirmar edições", "description": "O modelo planeja livremente e mostra cada alteração antes de executar." },
+              "auto-edit": { "title": "Edição automática", "description": "Executa alterações locais reversíveis; exclusões, scripts e ações externas ainda exigem confirmação." }
+            }
+          },
           "autoFinal": {
             "createNote": "Nota \"{name}\" criada.",
             "createFile": "Arquivo \"{name}\" criado."
@@ -2237,12 +2245,7 @@
             "confirm": "Confirmar",
             "confirmed": "Confirmado",
             "cancelled": "Cancelado",
-            "intent": {
-              "title": "Continuar com esta alteração?",
-              "description": "Sua solicitação pode exigir alterações no conteúdo. Confirme se deseja continuar com esta operação.",
-              "continue": "Continuar",
-              "session": "Permitir nesta sessão"
-            }
+            "session": "Permitir nesta sessão"
           }
         },
         "imageSelector": {

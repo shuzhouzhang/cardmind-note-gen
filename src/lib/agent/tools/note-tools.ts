@@ -1,5 +1,5 @@
 import { Tool, ToolResult } from '../types'
-import { BaseDirectory, readTextFile, writeTextFile, remove, rename, copyFile, stat } from '@tauri-apps/plugin-fs'
+import { BaseDirectory, readTextFile, writeTextFile, remove, rename, copyFile, stat, exists } from '@tauri-apps/plugin-fs'
 import { appDataDir } from '@tauri-apps/api/path'
 import { getAllMarkdownFiles, MarkdownFile } from '@/lib/files'
 import { ensureSafeWorkspaceRelativePath, getFilePathOptions } from '@/lib/workspace'
@@ -343,6 +343,16 @@ export const createFileTool: Tool = {
         : await exists(path)
 
       if (fileAlreadyExists) {
+        const existingContent = baseDir
+          ? await readTextFile(path, { baseDir })
+          : await readTextFile(path)
+        if (existingContent === params.content) {
+          return {
+            success: true,
+            data: { filePath, alreadyExists: true },
+            message: `文件已存在且内容一致，无需重复创建: ${filePath}`,
+          }
+        }
         return {
           success: false,
           error: `文件已存在: ${filePath}。create_file 只能创建新文件，已取消本次创建；如需覆盖或更新，请让用户明确提出更新请求。`,
@@ -404,6 +414,7 @@ export const createFileTool: Tool = {
         data: {
           filePath,
           fullPath,
+          alreadyExists: false,
         },
         message: `成功创建文件: ${fullPath}`,
       }
@@ -476,6 +487,24 @@ export const updateMarkdownFileTool: Tool = {
         }
       }
 
+      const currentContent = baseDir
+        ? await readTextFile(path, { baseDir })
+        : await readTextFile(path)
+      if (currentContent === params.content) {
+        const currentStat = baseDir
+          ? await stat(path, { baseDir })
+          : await stat(path)
+        return {
+          success: true,
+          data: {
+            filePath: normalizedFilePath,
+            modifiedAt: currentStat.mtime?.toISOString(),
+            unchanged: true,
+          },
+          message: `文件已是目标内容，无需重复更新: ${normalizedFilePath}`,
+        }
+      }
+
       if (baseDir) {
         await writeTextFile(path, params.content, { baseDir })
       } else {
@@ -539,11 +568,16 @@ export const deleteMarkdownFileTool: Tool = {
 
       // 统一使用 getFilePathOptions 来处理路径
       const { path, baseDir } = await getFilePathOptions(normalizedFilePath)
+      const fileExists = baseDir
+        ? await exists(path, { baseDir })
+        : await exists(path)
 
-      if (baseDir) {
-        await remove(path, { baseDir })
-      } else {
-        await remove(path)
+      if (fileExists) {
+        if (baseDir) {
+          await remove(path, { baseDir })
+        } else {
+          await remove(path)
+        }
       }
 
       // 删除向量数据库中的记录
@@ -570,7 +604,13 @@ export const deleteMarkdownFileTool: Tool = {
 
       return {
         success: true,
-        message: `成功删除文件: ${normalizedFilePath}`,
+        data: {
+          filePath: normalizedFilePath,
+          alreadyAbsent: !fileExists,
+        },
+        message: fileExists
+          ? `成功删除文件: ${normalizedFilePath}`
+          : `文件已不存在，无需重复删除: ${normalizedFilePath}`,
       }
     } catch (error) {
       return {
@@ -1137,6 +1177,23 @@ export const renameFileTool: Tool = {
         ? await exists(newPath, { baseDir: newBaseDir })
         : await exists(newPath)
 
+      const sourceExists = baseDir
+        ? await exists(oldPath, { baseDir })
+        : await exists(oldPath)
+
+      if (targetExists && (!sourceExists || newRelativePath === normalizedFilePath)) {
+        return {
+          success: true,
+          data: {
+            oldPath: normalizedFilePath,
+            newPath: newRelativePath,
+            newName,
+            alreadyRenamed: true,
+          },
+          message: `文件已位于重命名后的路径，无需重复操作: ${newRelativePath}`,
+        }
+      }
+
       if (targetExists) {
         return {
           success: false,
@@ -1278,6 +1335,22 @@ export const moveFileTool: Tool = {
       const targetExists = newBaseDir
         ? await exists(newPath, { baseDir: newBaseDir })
         : await exists(newPath)
+
+      const sourceExists = oldBaseDir
+        ? await exists(oldPath, { baseDir: oldBaseDir })
+        : await exists(oldPath)
+
+      if (targetExists && (!sourceExists || newRelativePath === normalizedFilePath)) {
+        return {
+          success: true,
+          data: {
+            oldPath: normalizedFilePath,
+            newPath: newRelativePath,
+            alreadyMoved: true,
+          },
+          message: `文件已位于目标位置，无需重复移动: ${newRelativePath}`,
+        }
+      }
 
       if (targetExists) {
         return {

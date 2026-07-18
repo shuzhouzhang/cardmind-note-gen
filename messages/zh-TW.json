@@ -2155,6 +2155,14 @@
           "acting": "執行中",
           "observation": "觀察結果",
           "toolCalls": "工具調用",
+          "permissionMode": {
+            "label": "Agent 權限模式",
+            "modes": {
+              "read-only": { "title": "唯讀", "description": "允許讀取與分析，禁止修改內容。" },
+              "ask": { "title": "修改前確認", "description": "模型自由規劃；每個具體修改在執行前顯示預覽。" },
+              "auto-edit": { "title": "自動修改", "description": "本機可復原修改自動執行；刪除、腳本與外部操作仍需確認。" }
+            }
+          },
           "autoFinal": {
             "createNote": "已建立筆記《{name}》。",
             "createFile": "已建立檔案《{name}》。"
@@ -2170,12 +2178,7 @@
             "confirm": "確認",
             "confirmed": "已確認",
             "cancelled": "已取消",
-            "intent": {
-              "title": "是否繼續修改？",
-              "description": "你的請求可能需要修改內容。請確認是否繼續執行這一次操作。",
-              "continue": "繼續",
-              "session": "本次對話允許"
-            }
+            "session": "本次對話允許"
           }
         },
         "fileLink": {

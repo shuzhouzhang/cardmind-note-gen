@@ -17,7 +17,6 @@ export function confirmPendingAgentAction(scope: AgentApprovalScope = "once") {
     scope: effectiveScope,
     sessionApprovalType: pendingConfirmation.sessionApprovalType,
     sessionApprovalSkillId: pendingConfirmation.sessionApprovalSkillId,
-    approvalKind: pendingConfirmation.approvalKind,
   }
 
   if (effectiveScope === "conversation" && latestState.currentConversationId !== null) {
@@ -48,7 +47,6 @@ export function cancelPendingAgentAction() {
     params: pendingConfirmation.params,
     status: "cancelled" as const,
     timestamp: Date.now(),
-    approvalKind: pendingConfirmation.approvalKind,
   }
 
   agentDebugLog("approval_user_cancelled", confirmationRecord)

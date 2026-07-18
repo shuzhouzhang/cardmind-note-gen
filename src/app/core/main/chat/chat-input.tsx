@@ -29,6 +29,7 @@ import { QuoteDisplay } from "./quote-display"
 import type { PendingQuote } from "@/stores/chat"
 import { AgentApprovalPanel } from "./agent-approval-panel"
 import { cancelPendingAgentAction, confirmPendingAgentAction } from "./agent-approval-actions"
+import { AgentPermissionModeSelect } from "./agent-permission-mode"
 import { convertFileSrc } from "@tauri-apps/api/core"
 import { readTextFile, writeFile, BaseDirectory, exists, mkdir, stat } from "@tauri-apps/plugin-fs"
 import { ShineBorder } from "@/components/ui/shine-border"
@@ -1207,6 +1208,7 @@ ${previewLines.join('\n')}
             )}
           </div>
           <div className="flex items-center justify-end gap-2 pr-1">
+            <AgentPermissionModeSelect />
             <TooltipButton
               variant={isMobile ? "ghost" : "link"}
               size="sm"

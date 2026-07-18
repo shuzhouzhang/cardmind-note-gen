@@ -16,6 +16,7 @@ import { enqueueAutoDataSync, isAutoDataSyncApplyingRemote } from '@/lib/sync/au
 import { shouldExcludeFromSync } from '@/config/sync-exclusions'
 import { DEFAULT_SYSTEM_PROMPT } from '@/lib/ai/system-prompt'
 import { APP_FONT_SYSTEM_VALUE, applyAppFontFamily } from '@/lib/font-settings'
+import type { AgentPermissionMode } from '@/lib/agent/types'
 
 export enum GenTemplateRange {
   All = 'all',
@@ -100,6 +101,9 @@ interface SettingState {
 
   systemPrompt: string
   setSystemPrompt: (systemPrompt: string) => Promise<void>
+
+  agentPermissionMode: AgentPermissionMode
+  setAgentPermissionMode: (mode: AgentPermissionMode) => Promise<void>
 
   templateList: GenTemplate[]
   setTemplateList: (templateList: GenTemplate[]) => Promise<void>
@@ -749,6 +753,14 @@ const useSettingStore = create<SettingState>((set, get) => ({
     set({ systemPrompt })
     const store = await Store.load('store.json')
     await store.set('systemPrompt', systemPrompt)
+    await store.save()
+  },
+
+  agentPermissionMode: 'ask',
+  setAgentPermissionMode: async (agentPermissionMode) => {
+    set({ agentPermissionMode })
+    const store = await Store.load('store.json')
+    await store.set('agentPermissionMode', agentPermissionMode)
     await store.save()
   },
 

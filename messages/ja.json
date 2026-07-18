@@ -2149,6 +2149,14 @@
           "acting": "実行中",
           "observation": "観察結果",
           "toolCalls": "ツール呼び出し",
+          "permissionMode": {
+            "label": "Agent の権限モード",
+            "modes": {
+              "read-only": { "title": "読み取り専用", "description": "読み取りと分析を許可し、変更を禁止します。" },
+              "ask": { "title": "編集前に確認", "description": "モデルが自由に計画し、具体的な変更を実行前にプレビューします。" },
+              "auto-edit": { "title": "自動編集", "description": "元に戻せるローカル変更は自動実行し、削除・スクリプト・外部操作は確認します。" }
+            }
+          },
           "autoFinal": {
             "createNote": "ノート「{name}」を作成しました。",
             "createFile": "ファイル「{name}」を作成しました。"
@@ -2164,12 +2172,7 @@
             "confirm": "確認",
             "confirmed": "確認済み",
             "cancelled": "キャンセル済み",
-            "intent": {
-              "title": "この変更を続行しますか？",
-              "description": "リクエストには内容の変更が必要な可能性があります。この操作を続行するか確認してください。",
-              "continue": "続行",
-              "session": "このセッションで許可"
-            }
+            "session": "このセッションで許可"
           }
         },
         "imageSelector": {

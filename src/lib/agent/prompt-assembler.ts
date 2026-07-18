@@ -73,6 +73,7 @@ function formatActiveFile(context: AgentContextSnapshot) {
     '## Current Open File',
     `The current editor file is "${context.activeFilePath}".`,
     'Use editor tools only for this current open file. If the user explicitly names a different Markdown file path, use note_read_file and note_update_file for that target file instead of editor tools.',
+    `Every editor write call must pass filePath="${context.activeFilePath}" exactly. The runtime validates this structured target against the active editor before applying changes.`,
     canInlineEditorState
       ? `A complete editor snapshot is included below (version=${editorState?.version}, totalLines=${editorState?.totalLines}, charCount=${editorState?.charCount}). It includes unsaved changes. Use it directly and do not call editor_get_state before the first write. Pass version=${editorState?.version} to editor write tools. Only call editor_get_state if a write reports that the content or version changed.`
       : editorState
@@ -113,43 +114,6 @@ function formatQuote(context: AgentContextSnapshot) {
   ].filter(Boolean).join('\n')
 }
 
-function formatMultipleFileCreation(context: AgentContextSnapshot) {
-  if (!context.multipleFileCreation) {
-    return ''
-  }
-
-  const countInstruction = context.requestedFileCount
-    ? `Create exactly ${context.requestedFileCount} Markdown files.`
-    : 'Create all Markdown files requested by the user.'
-
-  return [
-    '## Multiple File Creation',
-    countInstruction,
-    'Use a unique filename for every file.',
-    'Emit all note_create_file tool calls together in the same model response instead of creating one file per model iteration.',
-    'Do not retry a filename that already exists.',
-  ].join('\n')
-}
-
-function formatMultipleFileUpdate(context: AgentContextSnapshot) {
-  if (!context.multipleFileUpdate) {
-    return ''
-  }
-
-  const countInstruction = context.requestedFileCount
-    ? `Update exactly ${context.requestedFileCount} existing Markdown files.`
-    : 'Update all existing Markdown files referenced by the user.'
-
-  return [
-    '## Multiple File Update',
-    countInstruction,
-    'Use note_list_files, note_search_files, note_read_files_batch, or note_read_file to resolve and read the target files before editing them.',
-    'Use note_update_file once for each target file and preserve its existing path.',
-    'Do not use note_create_file for this task. The user asked to update existing files, not create replacements.',
-    'When possible, emit all independent note_update_file calls together in the same model response.',
-  ].join('\n')
-}
-
 export class AgentPromptAssembler {
   assemble(context: AgentContextSnapshot, tools: AgentTool[], systemPrompt = DEFAULT_SYSTEM_PROMPT) {
     const sections = [
@@ -161,8 +125,6 @@ export class AgentPromptAssembler {
       formatToolCatalog(tools),
       formatActiveFile(context),
       formatQuote(context),
-      formatMultipleFileCreation(context),
-      formatMultipleFileUpdate(context),
       formatSkills(context),
       formatMcpCatalog(),
     ].filter((section) => section.trim().length > 0)

@@ -5,11 +5,12 @@ import { useSkillsStore } from '@/stores/skills'
 import { reloadMcpTools } from './tools'
 import { AgentRuntime, isRequestAbortError } from './runtime'
 import { readCurrentEditorState } from './tools/editor-tools'
-import type { AgentApprovalDecision, AgentApprovalKind, AgentChange, AgentRuntimeResult, AgentSkillSummary, AgentSteeringPayload, AgentStep, AgentTraceEvent, ToolCall } from './types'
+import type { AgentApprovalDecision, AgentChange, AgentPermissionMode, AgentRuntimeResult, AgentSkillSummary, AgentSteeringPayload, AgentStep, AgentTraceEvent, ToolCall } from './types'
 
 export interface AgentHandlerConfig {
   activeChatId?: number
   activeFilePath?: string
+  permissionMode?: AgentPermissionMode
   onThought?: (thought: string) => void
   onAction?: (action: string, params: Record<string, any>) => void
   onObservation?: (observation: string) => void
@@ -27,7 +28,6 @@ export interface AgentHandlerConfig {
       filePath?: string
       from?: number
       to?: number
-      approvalKind?: AgentApprovalKind
     }
   ) => Promise<AgentApprovalDecision>
   currentQuote?: {
@@ -107,6 +107,7 @@ export class AgentHandler {
         currentEditorState,
         currentQuote: this.config.currentQuote,
         availableSkills: skillsInfo,
+        permissionMode: this.config.permissionMode,
       }, {
         onStatus: (status) => {
           store.setAgentState({
@@ -198,6 +199,22 @@ export class AgentHandler {
 
   stop() {
     this.stopped = true
+    const state = useChatStore.getState()
+    const pending = state.agentState.pendingConfirmation
+    if (pending) {
+      state.setAgentState({
+        pendingConfirmation: undefined,
+        confirmationHistory: [
+          ...state.agentState.confirmationHistory,
+          {
+            toolName: pending.toolName,
+            params: pending.params,
+            status: 'cancelled',
+            timestamp: Date.now(),
+          },
+        ],
+      })
+    }
     this.runtime?.stop()
   }
 

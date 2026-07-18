@@ -2201,6 +2201,14 @@
           "thought": "思考",
           "action": "行动",
           "toolCalls": "工具调用",
+          "permissionMode": {
+            "label": "Agent 权限模式",
+            "modes": {
+              "read-only": { "title": "只读", "description": "允许读取和分析，禁止修改内容。" },
+              "ask": { "title": "修改前确认", "description": "模型自由规划；每个具体修改在执行前展示预览。" },
+              "auto-edit": { "title": "自动修改", "description": "本地可恢复修改自动执行；删除、脚本和外部操作仍需确认。" }
+            }
+          },
           "autoFinal": {
             "createNote": "已创建笔记《{name}》。",
             "createFile": "已创建文件《{name}》。"
@@ -2214,12 +2222,7 @@
             "confirm": "确认",
             "confirmed": "已确认",
             "cancelled": "已取消",
-            "intent": {
-              "title": "是否继续修改？",
-              "description": "你的请求可能需要修改内容。请确认是否继续执行这一次操作。",
-              "continue": "继续",
-              "session": "本次会话允许"
-            },
+            "session": "本次会话允许",
             "fallback": {
               "title": "即将执行操作",
               "description": "请确认这次操作的目标和内容。"

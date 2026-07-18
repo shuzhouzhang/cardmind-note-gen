@@ -2286,6 +2286,14 @@
           "thought": "Thought",
           "action": "Action",
           "toolCalls": "Tool Calls",
+          "permissionMode": {
+            "label": "Agent permission mode",
+            "modes": {
+              "read-only": { "title": "Read only", "description": "Allow reading and analysis, but block changes." },
+              "ask": { "title": "Ask before edits", "description": "Let the model plan freely and preview each concrete change before execution." },
+              "auto-edit": { "title": "Auto edit", "description": "Run reversible local changes automatically; still ask for deletes, scripts, and external actions." }
+            }
+          },
           "autoFinal": {
             "createNote": "Created note \"{name}\".",
             "createFile": "Created file \"{name}\"."
@@ -2299,12 +2307,7 @@
             "confirm": "Confirm",
             "confirmed": "Confirmed",
             "cancelled": "Cancelled",
-            "intent": {
-              "title": "Continue with this change?",
-              "description": "Your request may require changing content. Confirm whether to continue with this operation.",
-              "continue": "Continue",
-              "session": "Allow for this session"
-            },
+            "session": "Allow for this session",
             "fallback": {
               "title": "Review action",
               "description": "Please confirm the target and content of this action."

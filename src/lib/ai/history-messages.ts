@@ -81,7 +81,10 @@ export function buildMessagesWithHistory(
   if (!includeLatestUserMessage) {
     const lastUserIndex = [...chatsAfterClear].map(chat => chat.role).lastIndexOf('user')
     if (lastUserIndex !== -1) {
-      chatsAfterClear = chatsAfterClear.filter((_, index) => index !== lastUserIndex)
+      // The current user message is appended explicitly below. Remove it together
+      // with any placeholder assistant rows created after it so history remains a
+      // sequence of completed turns.
+      chatsAfterClear = chatsAfterClear.slice(0, lastUserIndex)
     }
   }
 
@@ -89,14 +92,16 @@ export function buildMessagesWithHistory(
     const userIndexes = chatsAfterClear
       .map((chat, index) => chat.role === 'user' ? index : -1)
       .filter(index => index !== -1)
-    const allowedUserIndexes = new Set(userIndexes.slice(-maxUserMessages))
-    chatsAfterClear = chatsAfterClear.filter((chat, index) => {
-      if (chat.role !== 'user') {
-        return true
-      }
 
-      return allowedUserIndexes.has(index)
-    })
+    if (maxUserMessages === 0 || userIndexes.length === 0) {
+      chatsAfterClear = []
+    } else {
+      const firstRetainedUserIndex = userIndexes.at(-maxUserMessages) ?? userIndexes[0]
+      // Retain complete chronological turns. Keeping old assistant messages while
+      // dropping the user messages they answered creates misleading, orphaned
+      // assertions that smaller models may treat as current app state.
+      chatsAfterClear = chatsAfterClear.slice(firstRetainedUserIndex)
+    }
   }
 
   for (const chat of chatsAfterClear) {

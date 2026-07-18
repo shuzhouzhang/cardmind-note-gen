@@ -21,7 +21,7 @@ import { ImageAttachment } from "./image-attachments"
 import type { RagSource } from "@/lib/rag"
 import { cn } from "@/lib/utils"
 import type { AgentTraceEvent } from "@/lib/agent/types"
-import type { AgentApprovalDecision, AgentApprovalKind, AgentSteeringPayload } from "@/lib/agent/types"
+import type { AgentApprovalDecision, AgentSteeringPayload } from "@/lib/agent/types"
 
 function getLastDisplayableAgentContent(
   liveContent: string | undefined,
@@ -71,7 +71,7 @@ interface ChatSendProps {
 }
 
 export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ inputValue, onSent, linkedResource, attachedImages = [], quoteData = null, dockStyle = false }, ref) => {
-  const { primaryModel } = useSettingStore()
+  const { primaryModel, agentPermissionMode } = useSettingStore()
   const { currentTagId } = useTagStore()
   const {
     insert,
@@ -129,16 +129,6 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
       // 过滤掉停用词和单字
       return !stopWords.has(text) && text.length > 1
     })
-  }
-
-  const shouldCarryUserHistoryForAgent = (input: string) => {
-    const normalized = input.trim().toLowerCase()
-    if (!normalized) {
-      return false
-    }
-
-    return /^(继续|接着|然后|再来|再生成|再做|顺便|另外|刚才|基于刚才|在此基础上|那个|这个|它|继续用|再用)/.test(normalized)
-      || /(继续|接着|然后|再来|再生成|再做|顺便|另外|刚才|基于刚才|在此基础上|那个|这个|它)/.test(normalized)
   }
 
   const buildPartialSuccessContent = (result: string, toolCalls: { result?: { success?: boolean; data?: any; error?: string } }[]) => {
@@ -268,7 +258,6 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
       filePath?: string
       from?: number
       to?: number
-      approvalKind?: AgentApprovalKind
     }
   ): Promise<AgentApprovalDecision> => {
     const tool = getToolByName(toolName)
@@ -302,7 +291,6 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
         context,
         canApproveForSession,
         sessionApprovalScope,
-        approvalKind: context?.approvalKind,
       })
 
       // 将确认请求保存到 store，在对话中显示
@@ -373,6 +361,7 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
     const agentHandler = new AgentHandler({
       activeChatId: placeholderMessage.id,
       activeFilePath: articleStore.activeFilePath,
+      permissionMode: agentPermissionMode,
       requestConfirmation,
       currentQuote: quoteData
         ? {
@@ -787,13 +776,15 @@ ${hasValidRange ? `**仅在用户明确要求修改/改写/补充/插入时才�
         chats,
         undefined, // systemPrompt - Agent 会自己构建
         context,   // additionalContext - 包含文章、RAG、关联文件、引用等
-        inputValue, // currentUserInput - 当前用户输入
+        undefined, // currentUserInput - AgentRuntime 负责且只注入一次
         {
           // Agent 自己会在 think() 里重新注入当前请求，避免重复。
           // 保留 assistant 历史，优先使用 condensedContent，避免丢失多轮上下文。
           includeAssistantMessages: true,
           includeLatestUserMessage: false,
-          maxUserMessages: shouldCarryUserHistoryForAgent(inputValue) ? 3 : 0,
+          // Always preserve a bounded amount of user history. The model, rather
+          // than a keyword matcher, decides whether the current request refers to it.
+          maxUserMessages: 3,
         }
       )
 

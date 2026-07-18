@@ -78,9 +78,18 @@ Parameters:
   ],
   execute: async (params): Promise<ToolResult> => {
     try {
+      const memories = await getAllMemories()
+      if (!memories.some(memory => memory.id === params.id)) {
+        return {
+          success: true,
+          data: { id: params.id, alreadyAbsent: true },
+          message: `Memory already absent`,
+        }
+      }
       await deleteMemory(params.id)
       return {
         success: true,
+        data: { id: params.id, alreadyAbsent: false },
         message: `Memory deleted`,
       }
     } catch {
@@ -152,12 +161,14 @@ Examples:
       if (result.replaced) {
         return {
           success: true,
+          data: { replaced: true },
           message: `Memory updated (similar memory replaced)`,
         }
       }
 
       return {
         success: true,
+        data: { replaced: false },
         message: `Memory saved`,
       }
     } catch {
@@ -186,9 +197,18 @@ WARNING: This operation is irreversible, use with caution`,
   parameters: [],
   execute: async (): Promise<ToolResult> => {
     try {
+      const memories = await getAllMemories()
+      if (memories.length === 0) {
+        return {
+          success: true,
+          data: { scope: 'all', alreadyAbsent: true },
+          message: `All memories are already cleared`,
+        }
+      }
       await clearAllMemories()
       return {
         success: true,
+        data: { scope: 'all', alreadyAbsent: false },
         message: `All memories cleared`,
       }
     } catch {

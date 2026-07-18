@@ -3,7 +3,7 @@ import { createChatCompletionStreamWithToolChoiceFallback, createOpenAIClient, g
 import { estimateTokens } from '@/lib/ai/token-counter'
 import { AgentContextManager } from './context-manager'
 import { agentEventBus } from './event-bus'
-import { AgentPermissionEngine, hasAuthoringIntent, hasEffectiveWriteIntent } from './permission-engine'
+import { AgentPermissionEngine } from './permission-engine'
 import { AgentPromptAssembler, hasInlineCurrentEditorState } from './prompt-assembler'
 import { AgentRecoveryManager } from './recovery-manager'
 import { createAgentId, AgentTraceRecorder } from './trace-recorder'
@@ -12,6 +12,7 @@ import { agentDebugLog, previewText } from './debug-log'
 import type {
   AgentChange,
   AgentContextSnapshot,
+  AgentPermissionMode,
   AgentRuntimeCallbacks,
   AgentRuntimeInput,
   AgentRuntimeResult,
@@ -24,9 +25,9 @@ import type {
 } from './types'
 
 const DEFAULT_MAX_ITERATIONS = 15
-const MAX_MISSING_WRITE_TOOL_REPAIRS = 2
 const MAX_INVALID_QUOTED_WRITE_REPAIRS = 2
 const MAX_IDENTICAL_READ_RESULT_REPEATS = 2
+const MAX_IDENTICAL_FAILED_TOOL_RESULT_REPEATS = 1
 const MUTATING_TOOL_RISKS = new Set(['editor-write', 'file-create', 'file-update', 'delete', 'medium'])
 
 export function isRequestAbortError(error: unknown) {
@@ -65,6 +66,7 @@ function toolResultToLegacy(result: AgentToolResult): ToolResult {
     message: result.message,
     data: result.data,
     error: result.error,
+    changes: result.changes,
   }
 }
 
@@ -145,167 +147,8 @@ function summarizeMessage(message: OpenAI.Chat.ChatCompletionMessageParam, index
   }
 }
 
-function getForcedWriteTool(context: AgentContextSnapshot): string | undefined {
-  if (!hasEffectiveWriteIntent(context)) {
-    return undefined
-  }
-
-  const quote = context.currentQuote
-  if (!quote) {
-    return undefined
-  }
-
-  if (quote.from >= 0 && quote.to >= quote.from) {
-    return 'editor_replace_range'
-  }
-
-  if (quote.startLine > 0 && quote.endLine >= quote.startLine) {
-    return 'editor_replace_lines'
-  }
-
-  return undefined
-}
-
-function hasDocumentWideBatchEditorIntent(context: AgentContextSnapshot) {
-  if (context.currentQuote || !isCurrentEditorWriteIntent(context)) {
-    return false
-  }
-
-  const hasBatchScope = /(全文|整篇|整个(?:文档|文件|笔记|文章)|全部|全都|所有|每一处|各处|多处|都)/i.test(context.userInput)
-  const hasBatchAction = /(翻译|译成|替换|修改|改写|重写|润色|统一|转换|删除|移除|translate|replace|rewrite|edit|remove)/i.test(context.userInput)
-
-  return hasBatchScope && hasBatchAction
-}
-
-function forceToolChoice(toolName: string): OpenAI.Chat.ChatCompletionToolChoiceOption {
-  return {
-    type: 'function',
-    function: {
-      name: toolName,
-    },
-  }
-}
-
-function requiresSelectedContext(userInput: string) {
-  return /(这段|这句话|这行|选中|所选|引用|这部分|当前选区|selected|selection|this text|this paragraph|this line)/i.test(userInput)
-}
-
-function hasExplicitCursorInsertIntent(userInput: string) {
-  return /(光标|当前位置|当前光标|cursor|caret)/i.test(userInput)
-}
-
-function hasExplicitMcpIntent(userInput: string) {
-  const mcpToken = '(?:\\bMCP\\b|Model\\s+Context\\s+Protocol)'
-  const negatedMcpPattern = new RegExp(`(不要|不使用|无需|禁止|别)[^\\n。；;，,]{0,12}${mcpToken}|without[^\\n。；;，,]{0,12}${mcpToken}`, 'i')
-  const explicitMcpPattern = new RegExp(`(使用|用|通过(?!的)|调用|借助)[^\\n。；;，,]{0,12}${mcpToken}|\\b(use|using|call|invoke|via|with)\\b[^\\n。；;，,]{0,12}${mcpToken}`, 'i')
-
-  if (negatedMcpPattern.test(userInput)) {
-    return false
-  }
-
-  return explicitMcpPattern.test(userInput)
-}
-
-function requiresDocumentPositioning(userInput: string) {
-  return /(在.{0,30}(上面|下面|前面|后面|之前|之后)|放到|移动到|插入到|追加到|补充到|结论|标题|段落|章节|小节|列表|第\s*\d+\s*行|line\s*\d+)/i.test(userInput)
-}
-
 function normalizeFilePathForCompare(filePath: string) {
   return filePath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+/g, '/').trim()
-}
-
-function getExplicitTargetFilePath(userInput: string) {
-  const match = userInput.match(/(?:^|[\s"'`：:，,（(])((?:[\w.-]+\/)+[\w.-]+\.md|[\w.-]+\.md)(?=$|[\s"'`。；;，,）)])/i)
-  return match?.[1] ? normalizeFilePathForCompare(match[1]) : undefined
-}
-
-function hasCreateOnlyFileIntent(userInput: string) {
-  if (/(新建|创建).{0,20}(文件夹|目录)|create.{0,20}(folder|directory)|mkdir/i.test(userInput)) {
-    return false
-  }
-
-  return /(新建|创建|create)\s+[\w./-]+\.md|(?:新建|创建).{0,20}文件|create.{0,20}file/i.test(userInput) &&
-    !/(更新|覆盖|替换|改写|改成|改为|如果.{0,8}存在|若.{0,8}存在|不存在.{0,8}则|update|overwrite|replace|upsert)/i.test(userInput)
-}
-
-function getRequestedFileCount(userInput: string) {
-  const numericMatch = userInput.match(/(?:^|[^第\d])([2-9]\d*)\s*(?:篇|个|份|则)/) ||
-    userInput.match(/\b([2-9]\d*)\s+(?:articles?|notes?|documents?|files?)\b/i)
-  if (numericMatch?.[1]) {
-    return Number(numericMatch[1])
-  }
-
-  const chineseMatch = userInput.match(/(?:^|[^第])([两二三四五六七八九十])\s*(?:篇|个|份|则)/)
-  if (!chineseMatch?.[1]) {
-    return undefined
-  }
-
-  const chineseNumbers: Record<string, number> = {
-    '两': 2,
-    '二': 2,
-    '三': 3,
-    '四': 4,
-    '五': 5,
-    '六': 6,
-    '七': 7,
-    '八': 8,
-    '九': 9,
-    '十': 10,
-  }
-
-  return chineseNumbers[chineseMatch[1]]
-}
-
-function hasMultipleFileCreationIntent(userInput: string) {
-  const hasCreationAction = /(创建|新建|生成|撰写|起草|编写|创作|(?:^|帮我|请|给我|为我|替我|再)写|\b(?:create|generate|write|draft)\b)/i.test(userInput)
-  const hasMultipleQuantity = getRequestedFileCount(userInput) !== undefined ||
-    /(多篇|几篇|若干篇|多份|多个|分别|各自)/i.test(userInput)
-
-  return hasCreationAction && hasMultipleQuantity
-}
-
-function hasMultipleFileUpdateIntent(userInput: string) {
-  const hasUpdateAction = /(改成|改为|更新|翻译|转换|润色|重写|改写|替换|编辑|英文版|中文版|\b(?:update|translate|convert|rewrite|replace|edit)\b)/i.test(userInput)
-  const hasMultipleReference = getRequestedFileCount(userInput) !== undefined ||
-    /(多篇|几篇|逐篇|每篇)/i.test(userInput) ||
-    /(?:这些|上述|全部|全都|所有).{0,8}(?:笔记|文件|文档|文章|Markdown|md)|(?:笔记|文件|文档|文章).{0,8}(?:这些|上述|分别)/i.test(userInput)
-
-  return hasUpdateAction && hasMultipleReference
-}
-
-function isSameTargetFile(targetFilePath: string, activeFilePath: string) {
-  const target = normalizeFilePathForCompare(targetFilePath)
-  const active = normalizeFilePathForCompare(activeFilePath)
-
-  return target === active || (!target.includes('/') && active.endsWith(`/${target}`))
-}
-
-function getDifferentExplicitTargetFile(context: AgentContextSnapshot) {
-  const targetFilePath = getExplicitTargetFilePath(context.userInput)
-  const activeFilePath = context.activeFilePath
-
-  if (!targetFilePath || !activeFilePath || isSameTargetFile(targetFilePath, activeFilePath)) {
-    return null
-  }
-
-  return {
-    targetFilePath,
-    activeFilePath,
-  }
-}
-
-function getCreateOnlyExistingActiveFile(context: AgentContextSnapshot) {
-  if (!hasCreateOnlyFileIntent(context.userInput)) {
-    return null
-  }
-
-  const targetFilePath = getExplicitTargetFilePath(context.userInput)
-  const activeFilePath = context.activeFilePath
-  if (!targetFilePath || !activeFilePath || !isSameTargetFile(targetFilePath, activeFilePath)) {
-    return null
-  }
-
-  return activeFilePath
 }
 
 function getStringArg(args: Record<string, unknown>, key: string) {
@@ -389,82 +232,69 @@ function validateQuotedEditorWrite(
   return null
 }
 
-function validateCursorInsertTool(
-  context: AgentContextSnapshot,
-  toolName: string
-): AgentToolResult | null {
-  if (toolName !== 'editor_insert_at_cursor') {
-    return null
-  }
-
-  const userInput = context.userInput
-  if (!requiresDocumentPositioning(userInput) || hasExplicitCursorInsertIntent(userInput)) {
-    return null
-  }
-
-  return {
-    ok: false,
-    message: '工具选择不安全：用户指定了文档位置，但没有要求在当前光标处插入。请先用 editor_get_state 获取行号，然后用 editor_replace_lines 或 editor_apply_transaction 精确修改目标位置。',
-    error: 'CURSOR_INSERT_WITH_POSITIONAL_REQUEST',
-  }
-}
-
 function validateEditorTargetFile(
   context: AgentContextSnapshot,
-  tool: AgentTool
+  tool: AgentTool,
+  args: Record<string, unknown>
 ): AgentToolResult | null {
-  if (tool.category !== 'editor') {
+  if (tool.category !== 'editor' || tool.risk === 'read') {
     return null
   }
 
-  const target = getDifferentExplicitTargetFile(context)
-  if (!target) {
+  const activeFilePath = context.activeFilePath
+  const targetFilePath = typeof args.filePath === 'string' ? args.filePath : ''
+
+  if (!activeFilePath) {
+    return {
+      ok: false,
+      message: '当前没有打开的编辑器文件，不能执行 editor_* 写入工具。请改用带明确 filePath 的 note_* 工具。',
+      error: 'EDITOR_TOOL_WITHOUT_ACTIVE_FILE',
+    }
+  }
+
+  if (!targetFilePath) {
+    return {
+      ok: false,
+      message: `editor_* 写入工具必须在结构化参数 filePath 中声明目标文件。当前编辑器文件是 ${activeFilePath}，请使用这个完整路径重试。`,
+      error: 'EDITOR_TOOL_MISSING_TARGET_FILE',
+    }
+  }
+
+  if (normalizeFilePathForCompare(targetFilePath) === normalizeFilePathForCompare(activeFilePath)) {
     return null
   }
 
   return {
     ok: false,
-    message: `工具选择不安全：用户指定的目标文件是 ${target.targetFilePath}，但当前编辑器文件是 ${target.activeFilePath}。请不要使用 editor_* 工具，改用 note_read_file 和 note_update_file 针对目标文件操作。`,
+    message: `工具参数中的目标文件是 ${targetFilePath}，但当前编辑器文件是 ${activeFilePath}。请不要使用 editor_* 工具，改用 note_read_file 和 note_update_file 针对目标文件操作。`,
     error: 'EDITOR_TOOL_WRONG_TARGET_FILE',
   }
 }
 
-function validateExplicitMcpTool(
-  context: AgentContextSnapshot,
-  tool: AgentTool
-): AgentToolResult | null {
-  if (!hasExplicitMcpIntent(context.userInput) || tool.category === 'mcp') {
-    return null
+function validateToolInputShape(tool: AgentTool, args: Record<string, unknown>): AgentToolResult | null {
+  const properties = tool.inputSchema.properties || {}
+  const allowedKeys = new Set(Object.keys(properties))
+  const unknownKeys = Object.keys(args).filter((key) => !allowedKeys.has(key))
+  if (unknownKeys.length > 0) {
+    return {
+      ok: false,
+      message: `工具参数包含未声明字段：${unknownKeys.join(', ')}。请只使用结构化工具定义中的参数。`,
+      error: 'UNKNOWN_TOOL_ARGUMENTS',
+    }
   }
 
-  return {
-    ok: false,
-    message: '工具选择不符合用户要求：用户明确要求使用 MCP，请使用 mcp_list_tools 或 mcp_call_tool，不要改用笔记/编辑器工具。',
-    error: 'EXPLICIT_MCP_REQUEST_REQUIRES_MCP_TOOL',
-  }
-}
-
-function validateCreateOnlyTool(
-  context: AgentContextSnapshot,
-  tool: AgentTool
-): AgentToolResult | null {
-  if (!hasCreateOnlyFileIntent(context.userInput)) {
-    return null
+  const missingKeys = (tool.inputSchema.required || []).filter((key) =>
+    args[key] === undefined || args[key] === null
+  )
+  if (missingKeys.length > 0) {
+    return {
+      ok: false,
+      message: `工具缺少必填参数：${missingKeys.join(', ')}。`,
+      error: 'MISSING_TOOL_ARGUMENTS',
+    }
   }
 
-  if (tool.name === 'note_create_file' || tool.risk === 'read') {
-    return null
-  }
-
-  if (!isMutatingTool(tool) && tool.category !== 'editor') {
-    return null
-  }
-
-  return {
-    ok: false,
-    message: '工具选择不安全：用户要求新建 Markdown 文件，只能使用 note_create_file。若文件已存在，请直接说明已存在，不能改用更新、替换或编辑器工具覆盖已有内容。',
-    error: 'CREATE_ONLY_REQUEST_CANNOT_UPDATE_EXISTING_FILE',
-  }
+  return null
 }
 
 function extractSingleLineReplacement(content: string) {
@@ -521,141 +351,24 @@ function repairQuotedEditorWriteArgs(
   return repairedArgs
 }
 
-function buildToolChoice(context: AgentContextSnapshot): OpenAI.Chat.ChatCompletionToolChoiceOption {
-  const forcedTool = getForcedActionTool(context)
-  if (!forcedTool) {
-    return 'auto'
-  }
-
-  return forceToolChoice(forcedTool)
-}
-
-function getForcedActionTool(context: AgentContextSnapshot) {
-  if (hasExplicitMcpIntent(context.userInput)) {
-    return undefined
-  }
-
-  const forcedWriteTool = getForcedWriteTool(context)
-  if (forcedWriteTool) {
-    return forcedWriteTool
-  }
-
-  if (hasMultipleFileCreationIntent(context.userInput)) {
-    return undefined
-  }
-
-  if (hasCreateOnlyFileIntent(context.userInput)) {
-    return 'note_create_file'
-  }
-
-  if (!context.activeFilePath && hasAuthoringIntent(context.userInput)) {
-    return 'note_create_file'
-  }
-
-  return undefined
-}
-
-function isCurrentEditorWriteIntent(context: AgentContextSnapshot) {
-  if (
-    !context.activeFilePath ||
-    !hasEffectiveWriteIntent(context) ||
-    hasCreateOnlyFileIntent(context.userInput) ||
-    hasMultipleFileCreationIntent(context.userInput) ||
-    hasMultipleFileUpdateIntent(context.userInput) ||
-    getExplicitTargetFilePath(context.userInput)
-  ) {
-    return false
-  }
-
-  return !/(标签|tag\b|记录|mark\b|记忆|记住|memory\b|文件夹|目录|folder\b|skill\b|技能|脚本|script\b|mcp\b|删除.{0,8}(文件|笔记)|重命名|移动.{0,8}(文件|笔记)|复制.{0,8}(文件|笔记))/i.test(context.userInput)
-}
-
-function selectToolsForContext(context: AgentContextSnapshot, tools: AgentTool[]) {
+function selectToolsForContext(
+  context: AgentContextSnapshot,
+  tools: AgentTool[],
+  permissionMode: AgentPermissionMode = 'ask'
+) {
   let selectedTools = tools
 
-  if (hasExplicitMcpIntent(context.userInput)) {
-    return selectedTools.filter((tool) => tool.category === 'mcp')
-  }
-
-  if (hasMultipleFileUpdateIntent(context.userInput)) {
-    const batchUpdateToolNames = new Set([
-      'note_list_files',
-      'note_search_files',
-      'note_read_file',
-      'note_read_files_batch',
-      'note_update_file',
-    ])
-    return tools.filter((tool) => batchUpdateToolNames.has(tool.name))
-  }
-
-  const forcedTool = getForcedActionTool(context)
-  if (forcedTool) {
-    return tools.filter((tool) => tool.name === forcedTool)
-  }
-
-  if (hasMultipleFileCreationIntent(context.userInput)) {
-    return tools.filter((tool) => tool.name === 'note_create_file')
-  }
-
-  if (isCurrentEditorWriteIntent(context)) {
-    return selectedTools.filter((tool) =>
-      tool.category === 'editor' ||
-      tool.category === 'skill'
-    )
-  }
-
-  if (hasCreateOnlyFileIntent(context.userInput)) {
+  if (permissionMode === 'read-only') {
     selectedTools = selectedTools.filter((tool) =>
-      tool.name === 'note_create_file' ||
-      tool.risk === 'read'
+      tool.risk === 'read' || tool.risk === 'external'
     )
-  }
-
-  if (getDifferentExplicitTargetFile(context)) {
-    selectedTools = selectedTools.filter((tool) => tool.category !== 'editor')
-  }
-
-  if (requiresDocumentPositioning(context.userInput) && !hasExplicitCursorInsertIntent(context.userInput)) {
-    selectedTools = selectedTools.filter((tool) => tool.name !== 'editor_insert_at_cursor')
   }
 
   if (!context.activeFilePath) {
     selectedTools = selectedTools.filter((tool) => tool.category !== 'editor')
   }
 
-  if (!hasEffectiveWriteIntent(context)) {
-    selectedTools = selectedTools.filter((tool) => !isMutatingTool(tool))
-  }
-
   return selectedTools
-}
-
-function indicatesWriteCompletedClaim(content: string) {
-  return /(已|已经|完成|成功).{0,12}(修改|更新|删除|添加|插入|写入|创建)|done|completed|updated|modified|deleted|inserted|added/i.test(content)
-}
-
-function buildMissingWriteToolReminder(context: AgentContextSnapshot, assistantContent: string) {
-  const quote = context.currentQuote
-  const replacementHint = previewText(assistantContent, 800)
-  const completionClaim = indicatesWriteCompletedClaim(assistantContent)
-  const targetHint = quote
-    ? quote.from >= 0 && quote.to >= quote.from
-      ? `Call editor_replace_range with from=${quote.from}, to=${quote.to}, and content set to ONLY the rewritten selected text.`
-      : `Call editor_replace_lines with startLine=${quote.startLine}, endLine=${quote.endLine}, and replaceContent set to ONLY the rewritten selected text.`
-    : 'Call the appropriate write tool for the requested change.'
-
-  return [
-    completionClaim
-      ? 'You claimed the requested change was completed, but you did not call any write tool.'
-      : 'The user explicitly asked you to modify content, but your previous response did not call a write tool.',
-    'Do not return rewritten text as the final answer.',
-    targetHint,
-    replacementHint ? `Your previous proposed text was:\n---\n${replacementHint}\n---` : '',
-  ].filter(Boolean).join('\n\n')
-}
-
-function indicatesNoChangeNeeded(content: string) {
-  return /(已经存在|已存在|无需(重复)?(添加|修改|写入|更新)|不需要(重复)?(添加|修改|写入|更新)|无需重复|不要重复|already exists|no need to|nothing to change|no changes? needed)/i.test(content)
 }
 
 function buildStep(tool: AgentTool, input: Record<string, unknown>, result: AgentToolResult, duration: number): AgentStep {
@@ -682,14 +395,6 @@ function getReadToolCallSignature(tool: AgentTool, args: Record<string, unknown>
   return `${tool.name}:${JSON.stringify(args)}`
 }
 
-function getOpenAITools(tools: AgentTool[], editorStateReadLocked: boolean) {
-  const availableTools = editorStateReadLocked
-    ? tools.filter((tool) => tool.name !== 'editor_get_state')
-    : tools
-
-  return agentToolRegistry.toOpenAITools(availableTools)
-}
-
 function isEditorStateStaleResult(tool: AgentTool, result: AgentToolResult) {
   if (result.ok || !isMutatingTool(tool)) {
     return false
@@ -705,7 +410,6 @@ export class AgentRuntime {
   private readonly promptAssembler = new AgentPromptAssembler()
   private readonly permissionEngine = new AgentPermissionEngine()
   private readonly recoveryManager = new AgentRecoveryManager()
-  private readonly approvedIntentTools = new Set<string>()
   private abortController: AbortController | null = null
   private stopped = false
   private steeringRequested = false
@@ -746,9 +450,6 @@ export class AgentRuntime {
     const toolCalls: ToolCall[] = []
     const changes: AgentChange[] = []
 
-    const multipleFileCreation = hasMultipleFileCreationIntent(input.userInput)
-    const multipleFileUpdate = hasMultipleFileUpdateIntent(input.userInput)
-    const requestedFileCount = getRequestedFileCount(input.userInput)
     const context: AgentContextSnapshot = {
       activeChatId: input.activeChatId,
       activeFilePath: input.activeFilePath,
@@ -756,9 +457,6 @@ export class AgentRuntime {
       userInput: input.userInput,
       currentQuote: input.currentQuote,
       availableSkills: input.availableSkills,
-      multipleFileCreation,
-      multipleFileUpdate,
-      requestedFileCount,
     }
 
     agentDebugLog('run_start', {
@@ -772,71 +470,8 @@ export class AgentRuntime {
       availableSkillCount: input.availableSkills?.length || 0,
     })
 
-    if (
-      !this.steeringRequested &&
-      hasEffectiveWriteIntent(context) &&
-      requiresSelectedContext(input.userInput) &&
-      !input.currentQuote
-    ) {
-      const content = '没有检测到当前选区。请先在编辑器中选中要修改的文本，再发送这条指令。'
-      agentDebugLog('missing_selection_for_write', {
-        runId,
-        userInput: input.userInput,
-      })
-      callbacks.onStatus?.('completed')
-      callbacks.onFinalAnswerRender?.(content)
-      const finalTrace = recorder.add({
-        type: 'final',
-        title: '缺少选区',
-        status: 'error',
-        message: content,
-      })
-      callbacks.onTrace?.(finalTrace)
-
-      return {
-        runId,
-        content,
-        stopped: false,
-        steps,
-        toolCalls,
-        changes,
-        trace: recorder.all(),
-      }
-    }
-
-    const existingActiveCreateTarget = this.steeringRequested
-      ? undefined
-      : getCreateOnlyExistingActiveFile(context)
-    if (existingActiveCreateTarget) {
-      const content = `文件 \`${existingActiveCreateTarget}\` 已经存在，已取消新建操作，未修改现有内容。`
-      agentDebugLog('create_target_already_active_final', {
-        runId,
-        targetFilePath: existingActiveCreateTarget,
-        userInput: input.userInput,
-      })
-      callbacks.onStatus?.('completed')
-      callbacks.onFinalAnswerRender?.(content)
-      const finalTrace = recorder.add({
-        type: 'final',
-        title: '文件已存在',
-        status: 'success',
-        message: content,
-      })
-      callbacks.onTrace?.(finalTrace)
-
-      return {
-        runId,
-        content,
-        stopped: false,
-        steps,
-        toolCalls,
-        changes,
-        trace: recorder.all(),
-      }
-    }
-
     const allTools = agentToolRegistry.listTools()
-    let tools = selectToolsForContext(context, allTools)
+    let tools = selectToolsForContext(context, allTools, input.permissionMode)
     const customSystemPrompt = await getSystemPromptContent()
     let systemPrompt = this.promptAssembler.assemble(
       context,
@@ -874,7 +509,7 @@ export class AgentRuntime {
 
     const aiConfig = await getAISettings()
     const validatedBaseURL = await validateAIService(aiConfig?.baseURL)
-    if (validatedBaseURL === null) {
+    if (!aiConfig || validatedBaseURL === null) {
       agentDebugLog('ai_service_invalid', { runId })
       return {
         runId,
@@ -889,21 +524,14 @@ export class AgentRuntime {
 
     const client = await createOpenAIClient(aiConfig)
     let editorStateReadLocked = hasInlineCurrentEditorState(context)
-    let openAITools = getOpenAITools(tools, editorStateReadLocked)
-    let baseToolChoice = buildToolChoice(context)
-    let documentWideBatchEditorIntent = hasDocumentWideBatchEditorIntent(context)
-    let documentWideSnapshotRead = editorStateReadLocked
     let finalContent = ''
-    let missingWriteToolRepairCount = 0
     let invalidQuotedWriteRepairCount = 0
     let writeActionCompleted = false
-    let multiCreateAttemptCount = 0
-    let multiCreateSuccessCount = 0
-    const multiCreateMessages: string[] = []
-    let multiUpdateAttemptCount = 0
-    let multiUpdateSuccessCount = 0
-    const multiUpdateMessages: string[] = []
     const readToolResultHistory = new Map<string, {
+      result: string
+      repeatCount: number
+    }>()
+    const failedToolResultHistory = new Map<string, {
       result: string
       repeatCount: number
     }>()
@@ -913,6 +541,17 @@ export class AgentRuntime {
     let activeModelReasoning = ''
     let activeModelContent = ''
     let activeModelStreamedTokenCount = 0
+
+    const getSafeStoppedContent = () => {
+      if (toolCalls.length > 0 && !finalContent) {
+        return [
+          '已停止生成最终说明；已成功执行的操作请以工具结果和改动记录为准。',
+          changes.length > 0 ? `本轮已记录 ${changes.length} 项成功改动。` : '',
+        ].filter(Boolean).join('\n')
+      }
+
+      return activeModelContent || finalContent
+    }
 
     const drainSteering = async () => {
       if (!this.steeringRequested) return false
@@ -939,16 +578,8 @@ export class AgentRuntime {
       context.userInput = latest.text
       context.currentQuote = latest.currentQuote
       context.currentEditorState = undefined
-      context.multipleFileCreation = hasMultipleFileCreationIntent(latest.text)
-      context.multipleFileUpdate = hasMultipleFileUpdateIntent(latest.text)
-      context.requestedFileCount = getRequestedFileCount(latest.text)
-      tools = selectToolsForContext(context, allTools)
+      tools = selectToolsForContext(context, allTools, input.permissionMode)
       editorStateReadLocked = false
-      openAITools = getOpenAITools(tools, editorStateReadLocked)
-      baseToolChoice = buildToolChoice(context)
-      documentWideBatchEditorIntent = hasDocumentWideBatchEditorIntent(context)
-      documentWideSnapshotRead = false
-      missingWriteToolRepairCount = 0
       invalidQuotedWriteRepairCount = 0
       systemPrompt = this.promptAssembler.assemble(context, tools, customSystemPrompt)
       messages[0] = { role: 'system', content: systemPrompt }
@@ -990,12 +621,13 @@ export class AgentRuntime {
       for (let iteration = 1; iteration <= DEFAULT_MAX_ITERATIONS; iteration += 1) {
         if (this.stopped) {
           callbacks.onStatus?.('stopped')
-          if (finalContent) {
-            callbacks.onFinalAnswerRender?.(finalContent)
+          const stoppedContent = getSafeStoppedContent()
+          if (stoppedContent) {
+            callbacks.onFinalAnswerRender?.(stoppedContent)
           }
           return {
             runId,
-            content: finalContent,
+            content: stoppedContent,
             stopped: true,
             steps,
             toolCalls,
@@ -1029,9 +661,11 @@ export class AgentRuntime {
         activeModelStreamedTokenCount = 0
         callbacks.onTrace?.(modelTrace)
 
-        const toolChoice = documentWideBatchEditorIntent
-          ? forceToolChoice(documentWideSnapshotRead ? 'editor_apply_transaction' : 'editor_get_state')
-          : baseToolChoice
+        const offeredTools = editorStateReadLocked
+          ? tools.filter((tool) => tool.name !== 'editor_get_state')
+          : tools
+        const offeredToolNames = new Set(offeredTools.map((tool) => tool.name))
+        const openAITools = agentToolRegistry.toOpenAITools(offeredTools)
         const stream = await this.recoveryManager.withRetry(() =>
           createChatCompletionStreamWithToolChoiceFallback(client, withFastAiRequestOptions({
             model: aiConfig?.model || '',
@@ -1039,7 +673,7 @@ export class AgentRuntime {
             temperature: aiConfig?.temperature,
             top_p: aiConfig?.topP,
             tools: openAITools,
-            tool_choice: toolChoice,
+            tool_choice: 'auto',
             stream: true,
             ...getChatTokenLimitParams(aiConfig),
           }, aiConfig), {
@@ -1087,7 +721,10 @@ export class AgentRuntime {
             assistantContent += delta.content
             streamedText += delta.content
             activeModelContent = assistantContent
-            if (!toolCallsStarted && assistantContent.trim()) {
+            if (
+              !toolCallsStarted &&
+              assistantContent.trim()
+            ) {
               candidateAnswerRendered = true
               callbacks.onCandidateAnswerRender?.(assistantContent)
             }
@@ -1153,10 +790,6 @@ export class AgentRuntime {
           iteration -= 1
           continue
         }
-        finalContent = assistantContent || finalContent
-        if (!assistantContent && toolUses.length === 0) {
-          throw new Error('AI response did not include a message')
-        }
         agentDebugLog('model_call_end', {
           runId,
           iteration,
@@ -1202,79 +835,28 @@ export class AgentRuntime {
         await agentEventBus.emit('after-model-call', { runId, content: assistantContent })
 
         if (toolUses.length === 0) {
-          if (hasEffectiveWriteIntent(context) && indicatesNoChangeNeeded(assistantContent)) {
-            agentDebugLog('no_change_needed_final', {
-              runId,
-              iteration,
-              assistantPreview: previewText(assistantContent),
-            })
-            callbacks.onStatus?.('completed')
-            callbacks.onFinalAnswerRender?.(assistantContent)
-            const finalTrace = recorder.add({
-              type: 'final',
-              title: '无需修改',
-              status: 'success',
-              message: assistantContent,
-            })
-            callbacks.onTrace?.(finalTrace)
-
-            return {
-              runId,
-              content: assistantContent,
-              stopped: false,
-              steps,
-              toolCalls,
-              changes,
-              trace: recorder.all(),
-            }
+          const resolvedContent = assistantContent || finalContent
+          if (!resolvedContent) {
+            throw new Error('AI response did not include a message')
           }
-
-          if (
-            !writeActionCompleted &&
-            hasEffectiveWriteIntent(context) &&
-            missingWriteToolRepairCount < MAX_MISSING_WRITE_TOOL_REPAIRS
-          ) {
-            missingWriteToolRepairCount += 1
-            callbacks.onCandidateAnswerClear?.()
-            const reminder = buildMissingWriteToolReminder(context, assistantContent)
-            messages.push({
-              role: 'assistant',
-              content: assistantContent || null,
-            })
-            messages.push({
-              role: 'user',
-              content: reminder,
-            })
-            agentDebugLog('missing_write_tool_repair', {
-              runId,
-              iteration,
-              repairCount: missingWriteToolRepairCount,
-              forcedTool: getForcedWriteTool(context),
-              completionClaim: indicatesWriteCompletedClaim(assistantContent),
-              assistantPreview: previewText(assistantContent),
-              reminder: previewText(reminder, 500),
-            })
-            continue
-          }
-
           agentDebugLog('final_answer', {
             runId,
-            contentLength: assistantContent.length,
-            preview: previewText(assistantContent),
+            contentLength: resolvedContent.length,
+            preview: previewText(resolvedContent),
           })
           callbacks.onStatus?.('completed')
-          callbacks.onFinalAnswerRender?.(assistantContent)
+          callbacks.onFinalAnswerRender?.(resolvedContent)
           const finalTrace = recorder.add({
             type: 'final',
             title: '完成',
             status: 'success',
-            message: assistantContent,
+            message: resolvedContent,
           })
           callbacks.onTrace?.(finalTrace)
 
           return {
             runId,
-            content: assistantContent,
+            content: resolvedContent,
             stopped: false,
             steps,
             toolCalls,
@@ -1378,47 +960,43 @@ export class AgentRuntime {
           toolCalls.push(toolCall)
           callbacks.onToolCall?.(toolCall)
 
-          const invalidMcpTool = validateExplicitMcpTool(context, tool)
-          if (invalidMcpTool) {
-            agentDebugLog('tool_args_rejected', {
+          if (!offeredToolNames.has(toolName)) {
+            const blockedResult: AgentToolResult = {
+              ok: false,
+              message: `已阻止当前上下文或权限模式未提供的工具调用：${toolName}。`,
+              error: 'BLOCKED_UNAVAILABLE_TOOL',
+            }
+            agentDebugLog('tool_blocked_as_unavailable', {
               runId,
               toolName,
               args,
-              reason: invalidMcpTool.message,
-              error: invalidMcpTool.error,
+              offeredToolNames: [...offeredToolNames],
             })
             toolCall.status = 'error'
-            toolCall.result = toolResultToLegacy(invalidMcpTool)
+            toolCall.result = toolResultToLegacy(blockedResult)
             callbacks.onToolCall?.(toolCall)
             messages.push({
               role: 'tool',
               tool_call_id: toolUse.id,
-              content: stringifyToolResult(invalidMcpTool),
+              content: stringifyToolResult(blockedResult),
             })
             continue
           }
 
-          const invalidCreateOnlyTool = validateCreateOnlyTool(context, tool)
-          if (invalidCreateOnlyTool) {
-            agentDebugLog('tool_args_rejected', {
-              runId,
-              toolName,
-              args,
-              reason: invalidCreateOnlyTool.message,
-              error: invalidCreateOnlyTool.error,
-            })
+          const invalidToolInput = validateToolInputShape(tool, args)
+          if (invalidToolInput) {
             toolCall.status = 'error'
-            toolCall.result = toolResultToLegacy(invalidCreateOnlyTool)
+            toolCall.result = toolResultToLegacy(invalidToolInput)
             callbacks.onToolCall?.(toolCall)
             messages.push({
               role: 'tool',
               tool_call_id: toolUse.id,
-              content: stringifyToolResult(invalidCreateOnlyTool),
+              content: stringifyToolResult(invalidToolInput),
             })
             continue
           }
 
-          const invalidEditorTarget = validateEditorTargetFile(context, tool)
+          const invalidEditorTarget = validateEditorTargetFile(context, tool, args)
           if (invalidEditorTarget) {
             agentDebugLog('tool_args_rejected', {
               runId,
@@ -1434,26 +1012,6 @@ export class AgentRuntime {
               role: 'tool',
               tool_call_id: toolUse.id,
               content: stringifyToolResult(invalidEditorTarget),
-            })
-            continue
-          }
-
-          const invalidCursorInsert = validateCursorInsertTool(context, toolName)
-          if (invalidCursorInsert) {
-            agentDebugLog('tool_args_rejected', {
-              runId,
-              toolName,
-              args,
-              reason: invalidCursorInsert.message,
-              error: invalidCursorInsert.error,
-            })
-            toolCall.status = 'error'
-            toolCall.result = toolResultToLegacy(invalidCursorInsert)
-            callbacks.onToolCall?.(toolCall)
-            messages.push({
-              role: 'tool',
-              tool_call_id: toolUse.id,
-              content: stringifyToolResult(invalidCursorInsert),
             })
             continue
           }
@@ -1553,22 +1111,17 @@ export class AgentRuntime {
             continue
           }
 
-          const permission = this.permissionEngine.evaluate(tool, args, context)
-          const reusesIntentApproval = permission.approvalKind === 'intent' &&
-            this.approvedIntentTools.has(tool.name)
-          const requiresApproval = permission.requiresApproval && !reusesIntentApproval
+          const permission = this.permissionEngine.evaluate(tool, args, input.permissionMode)
           agentDebugLog('permission_decision', {
             runId,
             toolName,
             risk: tool.risk,
             allowed: permission.allowed,
-            requiresApproval,
+            requiresApproval: permission.requiresApproval,
             reason: permission.reason,
             canApproveForSession: permission.canApproveForSession,
             sessionApprovalType: permission.sessionApprovalType,
             sessionApprovalSkillId: permission.sessionApprovalSkillId,
-            approvalKind: permission.approvalKind,
-            reusesIntentApproval,
           })
           if (!permission.allowed) {
             const deniedResult: AgentToolResult = {
@@ -1592,7 +1145,7 @@ export class AgentRuntime {
             continue
           }
 
-          if (requiresApproval) {
+          if (permission.requiresApproval) {
             callbacks.onStatus?.('waiting_approval')
             agentDebugLog('approval_request', {
               runId,
@@ -1601,7 +1154,7 @@ export class AgentRuntime {
             })
             const approvalTrace = recorder.add({
               type: 'approval',
-              title: permission.approvalKind === 'intent' ? '等待用户确认是否继续' : '等待用户确认',
+              title: '等待用户确认',
               status: 'running',
               toolName,
               input: args,
@@ -1609,22 +1162,30 @@ export class AgentRuntime {
             callbacks.onTrace?.(approvalTrace)
 
             const approvalPreview = await buildEditorApprovalPreview(tool.name, args)
-            const approvalDecision = await callbacks.requestConfirmation?.(
-              tool.name,
-              args,
-              {
-                ...(approvalPreview ?? { previewParams: args }),
-                approvalKind: permission.approvalKind,
-              }
-            )
+            if (this.stopped) {
+              throw new Error('USER_STOPPED')
+            }
+            let approvalDecision = this.steeringRequested
+              ? 'steered'
+              : await callbacks.requestConfirmation?.(
+                  tool.name,
+                  args,
+                  approvalPreview ?? { previewParams: args }
+                )
 
             agentDebugLog('approval_result', {
               runId,
               toolName,
               approved: approvalDecision === 'approved',
               decision: approvalDecision,
-              approvalKind: permission.approvalKind,
             })
+
+            if (this.stopped) {
+              throw new Error('USER_STOPPED')
+            }
+            if (this.steeringRequested) {
+              approvalDecision = 'steered'
+            }
 
             if (approvalDecision === 'steered') {
               const supersededResult: AgentToolResult = {
@@ -1669,7 +1230,9 @@ export class AgentRuntime {
                 tool_call_id: toolUse.id,
                 content: stringifyToolResult(deniedResult),
               })
-              finalContent = '已取消本次操作，未修改笔记。'
+              finalContent = changes.length > 0
+                ? `已取消当前待确认操作；此前已有 ${changes.length} 项改动成功执行，请以改动记录为准。`
+                : '已取消当前待确认操作，未执行该项改动。'
               agentDebugLog('approval_denied_final', {
                 runId,
                 toolName,
@@ -1694,10 +1257,6 @@ export class AgentRuntime {
                 changes,
                 trace: recorder.all(),
               }
-            }
-
-            if (permission.approvalKind === 'intent') {
-              this.approvedIntentTools.add(tool.name)
             }
 
             const updatedApprovalTrace = recorder.update(approvalTrace.id, {
@@ -1836,6 +1395,52 @@ export class AgentRuntime {
             content: stringifyToolResult(modelFacingResult),
           })
 
+          if (!result.ok) {
+            const failedCallSignature = `${tool.name}:${JSON.stringify(args)}`
+            const serializedResult = stringifyToolResult(result)
+            const previousFailure = failedToolResultHistory.get(failedCallSignature)
+            const repeatCount = previousFailure?.result === serializedResult
+              ? previousFailure.repeatCount + 1
+              : 0
+            failedToolResultHistory.set(failedCallSignature, {
+              result: serializedResult,
+              repeatCount,
+            })
+
+            const mustStopWithoutRetry = tool.risk !== 'read'
+            if (mustStopWithoutRetry || repeatCount >= MAX_IDENTICAL_FAILED_TOOL_RESULT_REPEATS) {
+              callbacks.onCandidateAnswerClear?.()
+              finalContent = [
+                mustStopWithoutRetry
+                  ? `${tool.title}执行失败。为避免重复副作用，已禁止自动重试。`
+                  : `${tool.title}以相同参数连续失败，已停止重复调用。`,
+                result.message || result.error || '工具未返回可确认的成功结果。',
+                changes.length > 0 ? `此前已有 ${changes.length} 项改动成功执行，请以改动记录为准。` : '本次操作未确认完成。',
+              ].join('\n')
+              callbacks.onStatus?.('completed')
+              callbacks.onFinalAnswerRender?.(finalContent)
+              const finalTrace = recorder.add({
+                type: 'final',
+                title: '停止重复执行',
+                status: 'error',
+                message: finalContent,
+              })
+              callbacks.onTrace?.(finalTrace)
+
+              return {
+                runId,
+                content: finalContent,
+                stopped: false,
+                steps,
+                toolCalls,
+                changes,
+                trace: recorder.all(),
+              }
+            }
+          } else {
+            failedToolResultHistory.delete(`${tool.name}:${JSON.stringify(args)}`)
+          }
+
           if (identicalReadResultRepeatCount >= MAX_IDENTICAL_READ_RESULT_REPEATS) {
             callbacks.onCandidateAnswerClear?.()
             finalContent = [
@@ -1868,12 +1473,9 @@ export class AgentRuntime {
             readToolResultHistory.clear()
             latestEditorStateResult = undefined
             editorStateReadLocked = false
-            openAITools = getOpenAITools(tools, editorStateReadLocked)
           } else if (isEditorStateStaleResult(tool, result)) {
             latestEditorStateResult = undefined
             editorStateReadLocked = false
-            documentWideSnapshotRead = false
-            openAITools = getOpenAITools(tools, editorStateReadLocked)
           }
 
           if (result.ok && tool.name === 'editor_get_state') {
@@ -1881,163 +1483,8 @@ export class AgentRuntime {
               latestEditorStateResult = result
             }
             editorStateReadLocked = true
-            openAITools = getOpenAITools(tools, editorStateReadLocked)
-            if (documentWideBatchEditorIntent) {
-              documentWideSnapshotRead = true
-            }
           }
 
-          if (result.ok && documentWideBatchEditorIntent && tool.name === 'editor_apply_transaction') {
-            finalContent = '已在一次批量操作中完成当前文档的全部修改。'
-            agentDebugLog('document_wide_batch_write_completed', {
-              runId,
-              operationCount: Array.isArray(args.operations) ? args.operations.length : 0,
-            })
-            callbacks.onStatus?.('completed')
-            callbacks.onFinalAnswerRender?.(finalContent)
-            const finalTrace = recorder.add({
-              type: 'final',
-              title: '完成批量修改',
-              status: 'success',
-              message: finalContent,
-            })
-            callbacks.onTrace?.(finalTrace)
-
-            return {
-              runId,
-              content: finalContent,
-              stopped: false,
-              steps,
-              toolCalls,
-              changes,
-              trace: recorder.all(),
-            }
-          }
-
-          if (context.multipleFileCreation && tool.name === 'note_create_file') {
-            multiCreateAttemptCount += 1
-            if (result.ok) {
-              multiCreateSuccessCount += 1
-            }
-            multiCreateMessages.push(result.message)
-
-            if (context.requestedFileCount && multiCreateAttemptCount >= context.requestedFileCount) {
-              finalContent = [
-                `已完成 ${multiCreateAttemptCount} 次文件创建尝试，成功 ${multiCreateSuccessCount} 个。`,
-                ...multiCreateMessages.map((message) => `- ${message}`),
-              ].join('\n')
-              callbacks.onStatus?.('completed')
-              callbacks.onFinalAnswerRender?.(finalContent)
-              const finalTrace = recorder.add({
-                type: 'final',
-                title: multiCreateSuccessCount > 0 ? '完成' : '创建失败',
-                status: multiCreateSuccessCount > 0 ? 'success' : 'error',
-                message: finalContent,
-              })
-              callbacks.onTrace?.(finalTrace)
-
-              return {
-                runId,
-                content: finalContent,
-                stopped: false,
-                steps,
-                toolCalls,
-                changes,
-                trace: recorder.all(),
-              }
-            }
-          }
-
-          if (context.multipleFileUpdate && tool.name === 'note_update_file') {
-            multiUpdateAttemptCount += 1
-            if (result.ok) {
-              multiUpdateSuccessCount += 1
-            }
-            multiUpdateMessages.push(result.message)
-
-            if (context.requestedFileCount && multiUpdateAttemptCount >= context.requestedFileCount) {
-              finalContent = [
-                `已完成 ${multiUpdateAttemptCount} 次文件更新尝试，成功 ${multiUpdateSuccessCount} 个。`,
-                ...multiUpdateMessages.map((message) => `- ${message}`),
-              ].join('\n')
-              callbacks.onStatus?.('completed')
-              callbacks.onFinalAnswerRender?.(finalContent)
-              const finalTrace = recorder.add({
-                type: 'final',
-                title: multiUpdateSuccessCount > 0 ? '完成' : '更新失败',
-                status: multiUpdateSuccessCount > 0 ? 'success' : 'error',
-                message: finalContent,
-              })
-              callbacks.onTrace?.(finalTrace)
-
-              return {
-                runId,
-                content: finalContent,
-                stopped: false,
-                steps,
-                toolCalls,
-                changes,
-                trace: recorder.all(),
-              }
-            }
-          }
-
-          const forcedActionTool = getForcedActionTool(context)
-          if (forcedActionTool === 'note_create_file' && tool.name === forcedActionTool) {
-            finalContent = result.message || (
-              result.ok
-                ? '已按要求创建笔记文件。'
-                : '未能创建笔记文件。'
-            )
-            callbacks.onStatus?.('completed')
-            callbacks.onFinalAnswerRender?.(finalContent)
-            const finalTrace = recorder.add({
-              type: 'final',
-              title: result.ok ? '完成' : '创建失败',
-              status: result.ok ? 'success' : 'error',
-              message: finalContent,
-            })
-            callbacks.onTrace?.(finalTrace)
-            return {
-              runId,
-              content: finalContent,
-              stopped: false,
-              steps,
-              toolCalls,
-              changes,
-              trace: recorder.all(),
-            }
-          }
-
-          const forcedWriteTool = getForcedWriteTool(context)
-          if (result.ok && forcedWriteTool && tool.name === forcedWriteTool) {
-            writeActionCompleted = true
-            finalContent = '已按要求修改选中内容。'
-            agentDebugLog('forced_write_completed_final', {
-              runId,
-              toolName,
-              content: finalContent,
-            })
-            callbacks.onStatus?.('completed')
-            callbacks.onFinalAnswerRender?.(finalContent)
-            const finalTrace = recorder.add({
-              type: 'final',
-              title: '完成',
-              status: 'success',
-              message: finalContent,
-            })
-            callbacks.onTrace?.(finalTrace)
-
-            return {
-              runId,
-              content: finalContent,
-              stopped: false,
-              steps,
-              toolCalls,
-              changes,
-              trace: recorder.all(),
-            }
-          }
         }
 
       }
@@ -2062,7 +1509,7 @@ export class AgentRuntime {
         // AbortController may surface an AbortError before the stream loop can throw
         // USER_STOPPED. Treat both paths as a normal stop and preserve what the
         // current model has already streamed to the user.
-        finalContent = activeModelContent || finalContent
+        finalContent = getSafeStoppedContent()
         finalizeInterruptedModelTrace('success', '模型响应已停止')
         callbacks.onStatus?.('stopped')
         if (finalContent) {

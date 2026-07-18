@@ -199,43 +199,35 @@ export const deleteFolderTool: Tool = {
       }
 
       const normalizedFolderPath = await ensureSafeWorkspaceRelativePath(params.folderPath)
-      const filePathsInFolder = await getMarkdownFilesForFolder(normalizedFolderPath)
-
       const workspace = await getWorkspacePath()
+      const articleStore = useArticleStore.getState()
+      let folderExists = false
+      let filePathsInFolder: string[] = []
 
       if (workspace.isCustom) {
         // 自定义工作区：使用绝对路径
         const fullPath = await join(workspace.path, normalizedFolderPath)
         
         // 检查文件夹是否存在
-        const folderExists = await exists(fullPath)
-        if (!folderExists) {
-          return {
-            success: false,
-            error: `文件夹不存在: ${normalizedFolderPath}`,
-          }
-        }
+        folderExists = await exists(fullPath)
 
-        // 删除文件夹
-        await remove(fullPath, { recursive: true })
+        if (folderExists) {
+          filePathsInFolder = await getMarkdownFilesForFolder(normalizedFolderPath)
+          await remove(fullPath, { recursive: true })
+        }
       } else {
         // 默认工作区：使用 baseDir
         const { path, baseDir } = await getFilePathOptions(normalizedFolderPath)
         
         // 检查文件夹是否存在
-        const folderExists = await exists(path, { baseDir })
-        if (!folderExists) {
-          return {
-            success: false,
-            error: `文件夹不存在: ${normalizedFolderPath}`,
-          }
-        }
+        folderExists = await exists(path, { baseDir })
 
-        // 删除文件夹
-        await remove(path, { baseDir, recursive: true })
+        if (folderExists) {
+          filePathsInFolder = await getMarkdownFilesForFolder(normalizedFolderPath)
+          await remove(path, { baseDir, recursive: true })
+        }
       }
 
-      const articleStore = useArticleStore.getState()
       const removed = articleStore.removeLocalEntry(normalizedFolderPath)
       if (!removed) {
         await articleStore.loadFileTree()
@@ -252,7 +244,10 @@ export const deleteFolderTool: Tool = {
 
       return {
         success: true,
-        message: `成功删除文件夹: ${normalizedFolderPath}`,
+        data: { folderPath: normalizedFolderPath, alreadyAbsent: !folderExists },
+        message: folderExists
+          ? `成功删除文件夹: ${normalizedFolderPath}`
+          : `文件夹已不存在，无需重复删除: ${normalizedFolderPath}`,
       }
     } catch (error) {
       return {
