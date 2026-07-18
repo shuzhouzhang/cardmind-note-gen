@@ -4,7 +4,7 @@ import { estimateTokens } from '@/lib/ai/token-counter'
 import { AgentContextManager } from './context-manager'
 import { agentEventBus } from './event-bus'
 import { AgentPermissionEngine } from './permission-engine'
-import { AgentPromptAssembler, hasInlineCurrentEditorState } from './prompt-assembler'
+import { AgentPromptAssembler, hasInlineCurrentEditorSelection, hasInlineCurrentEditorState } from './prompt-assembler'
 import { AgentRecoveryManager } from './recovery-manager'
 import { createAgentId, AgentTraceRecorder } from './trace-recorder'
 import { agentToolRegistry, buildEditorApprovalPreview } from './tool-registry'
@@ -525,6 +525,7 @@ export class AgentRuntime {
 
     const client = await createOpenAIClient(aiConfig)
     let editorStateReadLocked = hasInlineCurrentEditorState(context)
+    let editorSelectionReadLocked = hasInlineCurrentEditorSelection(context)
     let finalContent = ''
     let invalidQuotedWriteRepairCount = 0
     let writeActionCompleted = false
@@ -583,6 +584,7 @@ export class AgentRuntime {
       context.currentEditorState = undefined
       tools = selectToolsForContext(context, allTools, input.permissionMode)
       editorStateReadLocked = false
+      editorSelectionReadLocked = hasInlineCurrentEditorSelection(context)
       invalidQuotedWriteRepairCount = 0
       consecutiveNoProgressRounds = 0
       systemPrompt = this.promptAssembler.assemble(context, tools, customSystemPrompt)
@@ -666,9 +668,15 @@ export class AgentRuntime {
         activeModelStreamedTokenCount = 0
         callbacks.onTrace?.(modelTrace)
 
-        const offeredTools = editorStateReadLocked
-          ? tools.filter((tool) => tool.name !== 'editor_get_state')
-          : tools
+        const offeredTools = tools.filter((tool) => {
+          if (editorStateReadLocked && tool.name === 'editor_get_state') {
+            return false
+          }
+          if (editorSelectionReadLocked && tool.name === 'editor_get_selection') {
+            return false
+          }
+          return true
+        })
         const offeredToolNames = new Set(offeredTools.map((tool) => tool.name))
         const openAITools = agentToolRegistry.toOpenAITools(offeredTools)
         const stream = await this.recoveryManager.withRetry(() =>
@@ -1486,9 +1494,11 @@ export class AgentRuntime {
             readToolResultHistory.clear()
             latestEditorStateResult = undefined
             editorStateReadLocked = false
+            editorSelectionReadLocked = false
           } else if (isEditorStateStaleResult(tool, result)) {
             latestEditorStateResult = undefined
             editorStateReadLocked = false
+            editorSelectionReadLocked = false
           }
 
           if (result.ok && tool.name === 'editor_get_state') {
@@ -1496,6 +1506,16 @@ export class AgentRuntime {
               latestEditorStateResult = result
             }
             editorStateReadLocked = true
+            const editorStateData = result.data && typeof result.data === 'object'
+              ? result.data as { selection?: unknown }
+              : undefined
+            if (editorStateData?.selection) {
+              editorSelectionReadLocked = true
+            }
+          }
+
+          if (result.ok && tool.name === 'editor_get_selection') {
+            editorSelectionReadLocked = true
           }
 
         }

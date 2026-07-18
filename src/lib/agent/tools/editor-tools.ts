@@ -61,6 +61,7 @@ export async function readCurrentEditorState(): Promise<AgentEditorStateSnapshot
           totalLines: data.totalLines ?? data.markdown.split('\n').length,
           numberedLines: data.numberedLines ?? buildEditorContentPayload(data.markdown, data.version).numberedLines,
           version: data.version,
+          selection: data.selection,
         })
       },
     })
@@ -318,11 +319,11 @@ export const getEditorSelectionTool: Tool = {
         resolve: (data) => {
           clearTimeout(timeoutId)
           finalize({
-            success: !!data.text,
+            success: true,
             data,
             message: data.text
               ? `选中内容：${data.text.slice(0, 50)}${data.text.length > 50 ? '...' : ''} (行 ${data.startLine}-${data.endLine})`
-              : '当前没有选中文本',
+              : `当前没有选中文本，光标位于第 ${data.startLine || 1} 行，位置 ${data.from}。`,
           })
         },
       })

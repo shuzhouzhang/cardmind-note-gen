@@ -58,6 +58,15 @@ export interface AgentEditorStateSnapshot {
   totalLines: number
   numberedLines: string
   version: number
+  selection?: AgentEditorSelectionSnapshot
+}
+
+export interface AgentEditorSelectionSnapshot {
+  text: string
+  from: number
+  to: number
+  startLine: number
+  endLine: number
 }
 
 export interface AgentQuoteSnapshot {

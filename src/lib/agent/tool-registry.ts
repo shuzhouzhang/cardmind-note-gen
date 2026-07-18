@@ -37,8 +37,8 @@ import type {
   Tool,
   ToolResult,
 } from './types'
-import type { EditorTransactionInput, EditorTransactionOperation } from './editor-adapter'
-import { buildEditorChange } from './editor-adapter'
+import type { EditorTransactionInput } from './editor-adapter'
+import { buildEditorChange, prepareEditorLineTransaction } from './editor-adapter'
 
 const EMPTY_SCHEMA: JsonSchema = {
   type: 'object',
@@ -188,52 +188,6 @@ function currentOpenFileGuard(input: Record<string, unknown>, mode: 'read' | 'wr
   }
 }
 
-function editorOperationContent(operation: EditorTransactionOperation) {
-  return typeof operation.content === 'string' ? operation.content : ''
-}
-
-function applyLineOperation(lines: string[], operation: EditorTransactionOperation) {
-  if (operation.type === 'replace_lines') {
-    const start = Math.max(1, operation.startLine || 1)
-    const end = Math.max(start, operation.endLine || start)
-    lines.splice(start - 1, end - start + 1, ...editorOperationContent(operation).split('\n'))
-    return
-  }
-
-  if (operation.type === 'insert_after_line') {
-    const line = Math.max(0, operation.line || 0)
-    lines.splice(line, 0, ...editorOperationContent(operation).split('\n'))
-    return
-  }
-
-  if (operation.type === 'insert_before_line') {
-    const line = Math.max(1, operation.line || 1)
-    lines.splice(line - 1, 0, ...editorOperationContent(operation).split('\n'))
-  }
-}
-
-function applyEditorTransactionOperations(
-  before: string,
-  operations: EditorTransactionOperation[]
-) {
-  let after = before
-
-  for (const operation of operations) {
-    if (operation.type === 'replace_range') {
-      const from = Math.max(0, operation.from ?? 0)
-      const to = Math.max(from, operation.to ?? from)
-      after = `${after.slice(0, from)}${editorOperationContent(operation)}${after.slice(to)}`
-      continue
-    }
-
-    const lines = after.split('\n')
-    applyLineOperation(lines, operation)
-    after = lines.join('\n')
-  }
-
-  return after
-}
-
 export interface EditorApprovalPreview {
   previewParams: Record<string, unknown>
   originalContent: string
@@ -299,7 +253,11 @@ export async function buildEditorApprovalPreview(
     if (!Array.isArray(transaction.operations) || transaction.operations.length === 0) {
       return undefined
     }
-    after = applyEditorTransactionOperations(before, transaction.operations)
+    const prepared = prepareEditorLineTransaction(before, transaction.operations)
+    if (!prepared.ok) {
+      return undefined
+    }
+    after = prepared.markdown
   } else if (toolName === 'editor_replace_lines') {
     const startLine = typeof input.startLine === 'number' ? input.startLine : 1
     const endLine = typeof input.endLine === 'number' ? input.endLine : startLine
@@ -348,7 +306,31 @@ async function executeEditorTransaction(input: Record<string, unknown>): Promise
     version?: number
   }
   const before = state.markdown || ''
-  const after = applyEditorTransactionOperations(before, transaction.operations)
+  if (typeof transaction.version !== 'number') {
+    return {
+      ok: false,
+      message: '缺少编辑器版本 version，请使用执行开始时提供的版本。',
+      error: 'EDITOR_VERSION_REQUIRED',
+    }
+  }
+  if (transaction.version !== state.version) {
+    return {
+      ok: false,
+      message: `编辑器内容版本已变化：请求版本 ${transaction.version}，当前版本 ${state.version}。请重新读取编辑器状态后再修改。`,
+      error: 'EDITOR_VERSION_MISMATCH',
+      data: { expectedVersion: transaction.version, currentVersion: state.version },
+    }
+  }
+
+  const prepared = prepareEditorLineTransaction(before, transaction.operations)
+  if (!prepared.ok) {
+    return {
+      ok: false,
+      message: prepared.error,
+      error: 'INVALID_EDITOR_TRANSACTION',
+    }
+  }
+  const after = prepared.markdown
 
   if (after === before) {
     return {
@@ -362,7 +344,7 @@ async function executeEditorTransaction(input: Record<string, unknown>): Promise
     startLine: 1,
     endLine: state.totalLines || before.split('\n').length,
     replaceContent: after,
-    version: transaction.version ?? state.version,
+    version: transaction.version,
   })
 
   const normalized = resultFromLegacy(replaceResult)
@@ -700,26 +682,24 @@ async function executeStructuralToolWithChange(
 const editorApplyTransactionTool: AgentTool = {
   name: 'editor_apply_transaction',
   title: '应用编辑器事务',
-  description: 'Apply one or more precise edits to the current Markdown editor using the latest editor snapshot. For document-wide or multi-location changes, include every edit in this single operations array so the user receives one combined preview and approval.',
+  description: 'Atomically apply one or more non-overlapping line edits to the current Markdown editor. Every line number refers to the same original editor version, so operation order does not matter. Use editor_replace_range instead for an exact quoted selection.',
   category: 'editor',
   risk: 'editor-write',
   inputSchema: {
     type: 'object',
     properties: {
       filePath: { type: 'string', description: 'Exact current editor file path.' },
-      version: { type: 'number', description: 'Editor version from editor_get_state.' },
+      version: { type: 'number', description: 'Required editor version from the run-start snapshot or editor_get_state.' },
       operations: {
         type: 'array',
-        description: 'Ordered edit operations.',
+        description: 'Non-overlapping edits whose line numbers all refer to the original editor snapshot.',
         items: {
           type: 'object',
           properties: {
             type: {
               type: 'string',
-              enum: ['replace_range', 'replace_lines', 'insert_after_line', 'insert_before_line'],
+              enum: ['replace_lines', 'insert_after_line', 'insert_before_line'],
             },
-            from: { type: 'number' },
-            to: { type: 'number' },
             startLine: { type: 'number' },
             endLine: { type: 'number' },
             line: { type: 'number' },
@@ -730,7 +710,7 @@ const editorApplyTransactionTool: AgentTool = {
         },
       },
     },
-    required: ['filePath', 'operations'],
+    required: ['filePath', 'version', 'operations'],
     additionalProperties: false,
   },
   execute: executeEditorTransaction,
@@ -900,7 +880,7 @@ function buildTools(): AgentTool[] {
     adaptLegacyTool({
       name: 'editor_get_selection',
       title: '读取编辑器选区',
-      description: 'Read the current editor selection with text, from/to offsets, and line numbers.',
+      description: 'Refresh the current editor selection with text, from/to offsets, and line numbers. The run-start selection is already provided in context when available; call this only after it becomes stale or is missing.',
       category: 'editor',
       risk: 'read',
       legacy: getEditorSelectionTool,

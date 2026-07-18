@@ -4218,6 +4218,21 @@ export function TipTapEditor({
       useChatStore.getState().setEditorSelectionQuote(null)
     }
 
+    const getCurrentEditorSelection = () => {
+      if (!editor) {
+        return { text: '', from: 0, to: 0, startLine: 1, endLine: 1 }
+      }
+
+      const { from, to } = editor.state.selection
+      const text = editor.state.doc.textBetween(from, to)
+      const textBeforeFrom = editor.state.doc.textBetween(0, from, '\n', '\n')
+      const startLine = (textBeforeFrom.match(/\n/g)?.length || 0) + 1
+      const textBeforeTo = editor.state.doc.textBetween(0, to, '\n', '\n')
+      const endLine = (textBeforeTo.match(/\n/g)?.length || 0) + 1
+
+      return { text, from, to, startLine, endLine }
+    }
+
     // Get editor selection
     const handleGetSelection = ({ resolve }: { resolve: (data: { text: string; from: number; to: number; html?: string; startLine?: number; endLine?: number }) => void }) => {
       if (!editor) {
@@ -4225,28 +4240,16 @@ export function TipTapEditor({
         return
       }
 
-      const { from, to } = editor.state.selection
-      const text = editor.state.doc.textBetween(from, to)
-
-      // Calculate line numbers (1-indexed) by counting newlines before position
-      const textBeforeFrom = editor.state.doc.textBetween(0, from, '\n', '\n')
-      const startLine = (textBeforeFrom.match(/\n/g)?.length || 0) + 1
-
-      const textBeforeTo = editor.state.doc.textBetween(0, to, '\n', '\n')
-      const endLine = (textBeforeTo.match(/\n/g)?.length || 0) + 1
+      const selection = getCurrentEditorSelection()
 
       resolve({
-        text,
-        from,
-        to,
+        ...selection,
         html: editor.getHTML(),
-        startLine,
-        endLine,
       })
     }
 
     // Get editor content
-    const handleGetContent = ({ resolve }: { resolve: (data: { markdown: string; text: string; wordCount: number; charCount: number; totalLines?: number; numberedLines?: string; version: number }) => void }) => {
+    const handleGetContent = ({ resolve }: { resolve: (data: { markdown: string; text: string; wordCount: number; charCount: number; totalLines?: number; numberedLines?: string; version: number; selection?: { text: string; from: number; to: number; startLine: number; endLine: number } }) => void }) => {
       if (!editor) {
         resolve({ markdown: '', text: '', wordCount: 0, charCount: 0, totalLines: 1, numberedLines: '1 | ', version: 0 })
         return
@@ -4269,6 +4272,7 @@ export function TipTapEditor({
         totalLines,
         numberedLines,
         version: contentVersionRef.current,
+        selection: getCurrentEditorSelection(),
       })
     }
 
