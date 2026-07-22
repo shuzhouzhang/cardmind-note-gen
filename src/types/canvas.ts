@@ -1,4 +1,11 @@
-export type CanvasProjectType = 'blank' | 'flowchart' | 'mindmap'
+export type CanvasProjectType =
+  | 'blank'
+  | 'flowchart'
+  | 'mindmap'
+  | 'timeline'
+  | 'quadrant'
+  | 'kanban'
+  | 'swot'
 
 export type CanvasTool =
   | 'select'

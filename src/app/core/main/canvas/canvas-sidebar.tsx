@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { ArrowDownAZ, BrainCircuit, CalendarDays, CopyPlus, EllipsisVertical, FilePlus2, LayoutGrid, List, MoreHorizontal, Pencil, Pin, PinOff, RefreshCw, RotateCcw, Shapes, Trash2, Workflow, XCircle } from 'lucide-react'
+import { open } from '@tauri-apps/plugin-dialog'
+import { readTextFile } from '@tauri-apps/plugin-fs'
+import { ArrowDownAZ, BrainCircuit, CalendarDays, Columns3, CopyPlus, EllipsisVertical, FileInput, FilePlus2, Grid2X2, LayoutGrid, List, MoreHorizontal, Pencil, Pin, PinOff, RefreshCw, RotateCcw, Shapes, ShieldQuestion, Timer, Trash2, Workflow, XCircle } from 'lucide-react'
+import { toast } from 'sonner'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import {
@@ -53,6 +56,8 @@ import useArticleStore from '@/stores/article'
 import { createCanvasTab, getCanvasTabPath } from './canvas-tab'
 import { setCanvasDragData } from '@/lib/canvas/canvas-dnd'
 import { canvasDocumentToSvg } from '@/lib/canvas/static-export'
+import { parseCanvasProjectFile } from '@/lib/canvas/file-format'
+import { mermaidToCanvasDocument } from '@/lib/canvas/mermaid'
 
 function CanvasThumbnail({ project, compact = false }: { project: CanvasProject; compact?: boolean }) {
   const fallback = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(canvasDocumentToSvg(project.document))}`
@@ -80,6 +85,7 @@ function CanvasThumbnail({ project, compact = false }: { project: CanvasProject;
 export function CanvasActions() {
   const t = useTranslations('canvas')
   const createProject = useCanvasStore(state => state.createProject)
+  const createProjectFromDocument = useCanvasStore(state => state.createProjectFromDocument)
   const viewMode = useCanvasStore(state => state.viewMode)
   const setViewMode = useCanvasStore(state => state.setViewMode)
   const refreshAllThumbnails = useCanvasStore(state => state.refreshAllThumbnails)
@@ -111,6 +117,29 @@ export function CanvasActions() {
     }
   }
 
+  const handleImport = async () => {
+    try {
+      const path = await open({
+        multiple: false,
+        filters: [{ name: t('import.fileType'), extensions: ['json', 'canvas', 'mmd', 'mermaid'] }],
+      })
+      if (!path || Array.isArray(path)) return
+      const source = await readTextFile(path)
+      const fileName = path.split(/[\\/]/).pop()?.replace(/\.(canvas\.)?json$|\.(mmd|mermaid)$/i, '') || t('import.defaultTitle')
+      const imported = /\.(mmd|mermaid)$/i.test(path)
+        ? { title: fileName, canvasType: 'flowchart' as const, document: mermaidToCanvasDocument(source) }
+        : parseCanvasProjectFile(source)
+      const project = await createProjectFromDocument(imported.document, imported.title, imported.canvasType)
+      if (project) {
+        await addTab(createCanvasTab(project))
+        toast.success(t('import.success'))
+      }
+    } catch (error) {
+      console.error('Failed to import canvas:', error)
+      toast.error(t('import.error'))
+    }
+  }
+
   const changeSortMode = (mode: string) => {
     if (mode !== 'updated' && mode !== 'created' && mode !== 'name') return
     setSortMode(mode as CanvasSortMode)
@@ -132,6 +161,10 @@ export function CanvasActions() {
             <DropdownMenuItem onClick={() => void handleCreate('blank')}><FilePlus2 />{t('templates.blank')}</DropdownMenuItem>
             <DropdownMenuItem onClick={() => void handleCreate('flowchart')}><Workflow />{t('templates.flowchart')}</DropdownMenuItem>
             <DropdownMenuItem onClick={() => void handleCreate('mindmap')}><BrainCircuit />{t('templates.mindmap')}</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void handleCreate('timeline')}><Timer />{t('templates.timeline')}</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void handleCreate('quadrant')}><Grid2X2 />{t('templates.quadrant')}</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void handleCreate('kanban')}><Columns3 />{t('templates.kanban')}</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void handleCreate('swot')}><ShieldQuestion />{t('templates.swot')}</DropdownMenuItem>
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -170,6 +203,10 @@ export function CanvasActions() {
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
+            <DropdownMenuItem onSelect={() => void handleImport()}>
+              <FileInput />
+              {t('import.action')}
+            </DropdownMenuItem>
             <DropdownMenuItem disabled={refreshing} onSelect={() => void handleRefreshThumbnails()}>
               <RefreshCw className={cn(refreshing && 'animate-spin')} />
               {t('manager.refreshThumbnails')}

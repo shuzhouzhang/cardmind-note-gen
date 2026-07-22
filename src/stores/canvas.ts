@@ -30,6 +30,7 @@ interface CanvasState {
   trashMode: boolean
   loadProjects: () => Promise<void>
   createProject: (canvasType?: CanvasProjectType, title?: string) => Promise<CanvasProject | null>
+  createProjectFromDocument: (document: CanvasDocument, title: string, canvasType?: CanvasProjectType) => Promise<CanvasProject | null>
   duplicateProject: (id: string, title?: string) => Promise<CanvasProject | null>
   openProject: (id: string) => Promise<CanvasProject | null>
   setActiveCanvasId: (id: string | null) => void
@@ -80,6 +81,23 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
       title,
       canvasType,
       document: createCanvasDocument(canvasType),
+    })
+    if (!project) return null
+    set(state => ({
+      projects: [project, ...state.projects],
+      documents: { ...state.documents, [project.id]: project.document },
+      activeCanvasId: project.id,
+    }))
+    void get().refreshThumbnail(project.id)
+    return project
+  },
+
+  createProjectFromDocument: async (document, title, canvasType = 'blank') => {
+    const project = await insertCanvasProject({
+      id: crypto.randomUUID(),
+      title: title.trim() || '未命名画布',
+      canvasType,
+      document: structuredClone(document),
     })
     if (!project) return null
     set(state => ({

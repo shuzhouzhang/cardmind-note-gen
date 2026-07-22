@@ -1,6 +1,7 @@
 'use client'
 
-import { memo } from 'react'
+import { memo, useEffect, useState, type CSSProperties } from 'react'
+import Image from 'next/image'
 import { Handle, NodeResizer, Position, useReactFlow, type Node, type NodeProps } from '@xyflow/react'
 import { CheckSquare2, ExternalLink, FileText, ImageIcon, Square } from 'lucide-react'
 import { openUrl } from '@tauri-apps/plugin-opener'
@@ -9,8 +10,7 @@ import emitter from '@/lib/emitter'
 import type { CanvasNodeData, CanvasNodeType } from '@/types/canvas'
 import useArticleStore from '@/stores/article'
 import { useSidebarStore } from '@/stores/sidebar'
-import { cn } from '@/lib/utils'
-import { ImageViewer } from '@/components/image-viewer'
+import { cn, convertImageByWorkspace } from '@/lib/utils'
 
 export type FlowCanvasNode = Node<CanvasNodeData, CanvasNodeType>
 
@@ -33,6 +33,10 @@ function previewClassName(state?: CanvasNodeData['previewState']) {
   )
 }
 
+function colorStyle(color?: string): CSSProperties | undefined {
+  return color ? { borderColor: color, boxShadow: `0 0 0 1px ${color}20` } : undefined
+}
+
 const EditableLabel = memo(function EditableLabel({ id, value, className }: { id: string; value: string; className?: string }) {
   const { updateNodeData } = useReactFlow<FlowCanvasNode>()
   return (
@@ -49,7 +53,7 @@ const EditableLabel = memo(function EditableLabel({ id, value, className }: { id
 
 export const ProcessNode = memo(function ProcessNode({ id, data }: NodeProps<FlowCanvasNode>) {
   return (
-    <BaseNode className={cn('min-w-40 max-w-72 shadow-sm', previewClassName(data.previewState))}>
+    <BaseNode style={colorStyle(data.color)} className={cn('min-w-40 max-w-72 shadow-sm', previewClassName(data.previewState))}>
       <ConnectionHandles />
       <BaseNodeContent className="items-center text-center text-sm">
         <EditableLabel id={id} value={data.label || '处理步骤'} />
@@ -60,7 +64,7 @@ export const ProcessNode = memo(function ProcessNode({ id, data }: NodeProps<Flo
 
 export const DecisionNode = memo(function DecisionNode({ id, data }: NodeProps<FlowCanvasNode>) {
   return (
-    <div className={cn('relative flex size-36 rotate-45 items-center justify-center border bg-card text-card-foreground shadow-sm in-[.selected]:shadow-lg', previewClassName(data.previewState))}>
+    <div style={colorStyle(data.color)} className={cn('relative flex size-36 rotate-45 items-center justify-center border bg-card text-card-foreground shadow-sm in-[.selected]:shadow-lg', previewClassName(data.previewState))}>
       <ConnectionHandles />
       <EditableLabel id={id} value={data.label || '判断条件'} className="max-w-24 -rotate-45 text-sm" />
     </div>
@@ -69,7 +73,7 @@ export const DecisionNode = memo(function DecisionNode({ id, data }: NodeProps<F
 
 export const TerminatorNode = memo(function TerminatorNode({ id, data }: NodeProps<FlowCanvasNode>) {
   return (
-    <div className={cn('relative flex min-h-14 min-w-40 items-center justify-center rounded-full border bg-card px-6 text-card-foreground shadow-sm in-[.selected]:shadow-lg', previewClassName(data.previewState))}>
+    <div style={colorStyle(data.color)} className={cn('relative flex min-h-14 min-w-40 items-center justify-center rounded-full border bg-card px-6 text-card-foreground shadow-sm in-[.selected]:shadow-lg', previewClassName(data.previewState))}>
       <ConnectionHandles />
       <EditableLabel id={id} value={data.label || '开始 / 结束'} className="text-sm" />
     </div>
@@ -78,7 +82,7 @@ export const TerminatorNode = memo(function TerminatorNode({ id, data }: NodePro
 
 export const TextCanvasNode = memo(function TextCanvasNode({ id, data }: NodeProps<FlowCanvasNode>) {
   return (
-    <div className={cn('min-w-24 rounded-md px-2 py-1 text-sm text-foreground in-[.selected]:ring-1 in-[.selected]:ring-ring', previewClassName(data.previewState))}>
+    <div style={data.color ? { color: data.color } : undefined} className={cn('min-w-24 rounded-md px-2 py-1 text-sm text-foreground in-[.selected]:ring-1 in-[.selected]:ring-ring', previewClassName(data.previewState))}>
       <EditableLabel id={id} value={data.label || '文本'} />
     </div>
   )
@@ -94,6 +98,7 @@ export const NoteCanvasNode = memo(function NoteCanvasNode({ data }: NodeProps<F
 
   return (
     <BaseNode
+      style={colorStyle(data.color)}
       className={cn('min-w-52 max-w-72 shadow-sm', previewClassName(data.previewState))}
       onDoubleClick={() => void openNote()}
     >
@@ -112,6 +117,7 @@ export const NoteCanvasNode = memo(function NoteCanvasNode({ data }: NodeProps<F
 export const LinkCanvasNode = memo(function LinkCanvasNode({ id, data }: NodeProps<FlowCanvasNode>) {
   return (
     <BaseNode
+      style={colorStyle(data.color)}
       className={cn('min-w-52 max-w-80 shadow-sm', previewClassName(data.previewState))}
       onDoubleClick={() => data.url && void openUrl(data.url)}
     >
@@ -130,7 +136,7 @@ export const LinkCanvasNode = memo(function LinkCanvasNode({ id, data }: NodePro
 export const TodoCanvasNode = memo(function TodoCanvasNode({ id, data }: NodeProps<FlowCanvasNode>) {
   const { updateNodeData } = useReactFlow<FlowCanvasNode>()
   return (
-    <BaseNode className={cn('min-w-52 max-w-80 shadow-sm', previewClassName(data.previewState))}>
+    <BaseNode style={colorStyle(data.color)} className={cn('min-w-52 max-w-80 shadow-sm', previewClassName(data.previewState))}>
       <ConnectionHandles />
       <BaseNodeContent className="flex-row items-center gap-2">
         <button
@@ -152,11 +158,32 @@ export const TodoCanvasNode = memo(function TodoCanvasNode({ id, data }: NodePro
 })
 
 export const ImageCanvasNode = memo(function ImageCanvasNode({ id, data }: NodeProps<FlowCanvasNode>) {
+  const [imageUrl, setImageUrl] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    if (!data.imagePath) {
+      setImageUrl('')
+      return
+    }
+    void convertImageByWorkspace(data.imagePath).then(url => {
+      if (!cancelled) setImageUrl(url)
+    })
+    return () => { cancelled = true }
+  }, [data.imagePath])
+
   return (
-    <BaseNode className={cn('w-64 overflow-hidden shadow-sm', previewClassName(data.previewState))}>
+    <BaseNode style={colorStyle(data.color)} className={cn('w-64 overflow-hidden shadow-sm', previewClassName(data.previewState))}>
       <ConnectionHandles />
-      {data.imagePath ? (
-        <ImageViewer path={data.imagePath} imageClassName="h-36 w-full rounded-t-lg object-cover" />
+      {imageUrl ? (
+        <Image
+          src={imageUrl}
+          alt=""
+          width={256}
+          height={144}
+          unoptimized
+          className="h-36 w-full rounded-t-lg object-cover"
+        />
       ) : (
         <div className="flex h-36 items-center justify-center bg-muted text-muted-foreground"><ImageIcon /></div>
       )}
@@ -169,7 +196,7 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ id, data }: NodeP
 
 export const GroupCanvasNode = memo(function GroupCanvasNode({ id, data, selected }: NodeProps<FlowCanvasNode>) {
   return (
-    <div className={cn('relative size-full rounded-2xl border border-dashed bg-muted/30', previewClassName(data.previewState))}>
+    <div style={colorStyle(data.color)} className={cn('relative size-full rounded-2xl border border-dashed bg-muted/30', previewClassName(data.previewState))}>
       <NodeResizer
         isVisible={selected}
         minWidth={240}

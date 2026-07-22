@@ -83,6 +83,9 @@ import { getEditorContentContainerClass } from '@/lib/editor-layout-styles'
 import { getCanvasDragId, hasCanvasDragData } from '@/lib/canvas/canvas-dnd'
 import { canvasDocumentToPngFile } from '@/lib/canvas/static-export'
 import { getCanvasProject } from '@/db/canvases'
+import useCanvasStore from '@/stores/canvas'
+import { useSidebarStore } from '@/stores/sidebar'
+import { createCanvasTab } from '../../canvas/canvas-tab'
 import { getResultIndexToFocus } from './search-navigation'
 import {
   DEFAULT_OUTLINE_WIDTH,
@@ -4725,6 +4728,28 @@ export function TipTapEditor({
     })
   }
 
+  const handleCreateCanvasFromSelection = async (type: 'flowchart' | 'mindmap' | 'timeline' | 'tasks') => {
+    const { from, to } = editor.state.selection
+    const selectedText = editor.state.doc.textBetween(from, to, '\n', '\n').trim()
+    if (!selectedText) return
+    const labels = {
+      flowchart: t('bubbleMenu.canvasFlowchart'),
+      mindmap: t('bubbleMenu.canvasMindmap'),
+      timeline: t('bubbleMenu.canvasTimeline'),
+      tasks: t('bubbleMenu.canvasTasks'),
+    }
+    const titleSource = selectedText.split('\n').find(Boolean)?.slice(0, 32) || labels[type]
+    const project = await useCanvasStore.getState().createProject('blank', titleSource)
+    if (!project) return
+    await useArticleStore.getState().addTab(createCanvasTab(project))
+    await useSidebarStore.getState().setLeftSidebarTab('canvases')
+    if (!useSidebarStore.getState().rightSidebarVisible) await useSidebarStore.getState().toggleRightSidebar()
+    const instruction = t(`bubbleMenu.canvasPrompts.${type}`)
+    useChatStore.getState().setOnboardingPromptDraft(
+      `${instruction}\n\n${t('bubbleMenu.canvasSource')}\n---\n${selectedText.slice(0, 12000)}\n---\n${t('bubbleMenu.canvasPromptSuffix')}`
+    )
+  }
+
   return (
     <div
       ref={editorContainerRef}
@@ -4788,6 +4813,7 @@ export function TipTapEditor({
               onAIConcise={handleAIConcise}
               onAIExpand={handleAIExpand}
               onAITranslate={handleAITranslate}
+              onCreateCanvas={type => void handleCreateCanvasFromSelection(type)}
               openAiMenuSignal={openAiMenuSignal}
               openTranslateMenuSignal={openTranslateMenuSignal}
               openLinkInputSignal={openLinkInputSignal}

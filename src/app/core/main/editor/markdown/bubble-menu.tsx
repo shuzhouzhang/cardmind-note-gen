@@ -17,7 +17,11 @@ import {
   Minimize2,
   Maximize2,
   Languages,
-  ChevronRight
+  ChevronRight,
+  Workflow,
+  BrainCircuit,
+  Timer,
+  ListTodo,
 } from 'lucide-react'
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
@@ -63,6 +67,7 @@ interface BubbleMenuProps {
   onAIConcise?: () => void
   onAIExpand?: () => void
   onAITranslate?: (targetLanguage: string) => void
+  onCreateCanvas?: (type: 'flowchart' | 'mindmap' | 'timeline' | 'tasks') => void
   openAiMenuSignal?: number
   openTranslateMenuSignal?: number
   openLinkInputSignal?: number
@@ -108,6 +113,7 @@ export function BubbleMenu({
   onAIConcise,
   onAIExpand,
   onAITranslate,
+  onCreateCanvas,
   openAiMenuSignal = 0,
   openTranslateMenuSignal = 0,
   openLinkInputSignal = 0,
@@ -554,6 +560,21 @@ export function BubbleMenu({
               </Button>
               <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => { setShowAISubmenu(false); onAIExpand?.() }}>
                 <Maximize2 data-icon="inline-start" /><span>{t('bubbleMenu.expand')}</span>
+              </Button>
+
+              <Separator className="my-1" />
+              <p className="px-2 py-1 text-xs font-medium text-muted-foreground">{t('bubbleMenu.generateCanvas')}</p>
+              <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => { hideMenu(); onCreateCanvas?.('flowchart') }}>
+                <Workflow data-icon="inline-start" /><span>{t('bubbleMenu.canvasFlowchart')}</span>
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => { hideMenu(); onCreateCanvas?.('mindmap') }}>
+                <BrainCircuit data-icon="inline-start" /><span>{t('bubbleMenu.canvasMindmap')}</span>
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => { hideMenu(); onCreateCanvas?.('timeline') }}>
+                <Timer data-icon="inline-start" /><span>{t('bubbleMenu.canvasTimeline')}</span>
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className="w-full justify-start" onClick={() => { hideMenu(); onCreateCanvas?.('tasks') }}>
+                <ListTodo data-icon="inline-start" /><span>{t('bubbleMenu.canvasTasks')}</span>
               </Button>
 
               <Separator className="my-1" />

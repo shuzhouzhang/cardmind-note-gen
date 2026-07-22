@@ -18,11 +18,12 @@ import {
   type EdgeChange,
   type NodeChange,
   type NodeTypes,
+  SelectionMode,
 } from '@xyflow/react'
 import ELK from 'elkjs/lib/elk.bundled.js'
 import { toPng, toSvg } from 'html-to-image'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { mkdir, readFile, writeFile } from '@tauri-apps/plugin-fs'
+import { mkdir, readFile, readTextFile, writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -40,6 +41,7 @@ import {
   Highlighter,
   ImagePlus,
   Link2,
+  LockKeyhole,
   MousePointer2,
   Palette,
   Pencil,
@@ -50,6 +52,7 @@ import {
   Trash2,
   Type,
   Undo2,
+  UnlockKeyhole,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTranslations } from 'next-intl'
@@ -121,6 +124,8 @@ import {
 import { CanvasFooter } from './canvas-footer'
 import { getCanvasVersions, type CanvasVersion } from '@/db/canvases'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { canvasDocumentToMermaid, mermaidToCanvasDocument } from '@/lib/canvas/mermaid'
+import { serializeCanvasProject } from '@/lib/canvas/file-format'
 
 const elk = new ELK()
 
@@ -223,6 +228,9 @@ function CanvasEditorInner({ canvasId }: CanvasEditorProps) {
   const [versionPickerOpen, setVersionPickerOpen] = useState(false)
   const [versions, setVersions] = useState<CanvasVersion[]>([])
   const [isExporting, setIsExporting] = useState(false)
+  const [edgeEditorOpen, setEdgeEditorOpen] = useState(false)
+  const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null)
+  const [edgeLabelDraft, setEdgeLabelDraft] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
   const historyRef = useRef<CanvasSnapshot[]>([])
   const redoRef = useRef<CanvasSnapshot[]>([])
@@ -251,6 +259,7 @@ function CanvasEditorInner({ canvasId }: CanvasEditorProps) {
   const selectedNodeCount = nodes.filter(node => node.selected).length
   const selectedEdgeCount = edges.filter(edge => edge.selected).length
   const selectedCount = selectedNodeCount + selectedEdgeCount
+  const selectedNodesLocked = nodes.some(node => node.selected && node.draggable === false)
   const shortcutModifier = typeof navigator !== 'undefined' && navigator.platform.includes('Mac') ? '⌘' : 'Ctrl+'
   const availableNotes = useMemo(() => flattenFileTree(fileTree).filter(entry => (
     entry.isFile && /\.(md|markdown|txt)$/i.test(entry.name)
@@ -571,8 +580,10 @@ function CanvasEditorInner({ canvasId }: CanvasEditorProps) {
         event.preventDefault()
         copySelection()
       } else if (modifier && event.key.toLowerCase() === 'v') {
-        event.preventDefault()
-        pasteSelection()
+        if (clipboardRef.current) {
+          event.preventDefault()
+          pasteSelection()
+        }
       } else if (modifier && event.key.toLowerCase() === 'd') {
         event.preventDefault()
         duplicateSelection()
@@ -691,6 +702,46 @@ function CanvasEditorInner({ canvasId }: CanvasEditorProps) {
     }])
   }, [loadFileTree, pushHistory, screenToFlowPosition, setNodes, t])
 
+  useEffect(() => {
+    const handlePaste = async (event: ClipboardEvent) => {
+      if (useCanvasStore.getState().activeCanvasId !== canvasId) return
+      const target = event.target
+      if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, [role="textbox"]'))) return
+      const image = [...(event.clipboardData?.files || [])].find(file => file.type.startsWith('image/'))
+      if (!image) return
+      event.preventDefault()
+      try {
+        const extension = image.type.split('/')[1]?.replace('svg+xml', 'svg') || 'png'
+        const relativePath = `画布资源/${crypto.randomUUID()}.${extension}`
+        const directoryOptions = await getFilePathOptions('画布资源')
+        await mkdir(
+          directoryOptions.path,
+          directoryOptions.baseDir ? { baseDir: directoryOptions.baseDir, recursive: true } : { recursive: true }
+        )
+        const targetOptions = await getFilePathOptions(relativePath)
+        await writeFile(
+          targetOptions.path,
+          new Uint8Array(await image.arrayBuffer()),
+          targetOptions.baseDir ? { baseDir: targetOptions.baseDir } : undefined
+        )
+        await loadFileTree({ skipRemoteSync: true })
+        pushHistory()
+        setNodes(current => [...current, {
+          id: crypto.randomUUID(),
+          type: 'image',
+          position: screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }),
+          data: { label: image.name || t('nodes.image'), imagePath: relativePath },
+        }])
+        toast.success(t('selection.imagePasted'))
+      } catch (error) {
+        console.error('Failed to paste image into canvas:', error)
+        toast.error(t('selection.imagePasteError'))
+      }
+    }
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [canvasId, loadFileTree, pushHistory, screenToFlowPosition, setNodes, t])
+
   const alignSelection = useCallback((axis: 'horizontal' | 'vertical') => {
     const selected = nodes.filter(node => node.selected)
     if (selected.length < 2) return
@@ -753,11 +804,38 @@ function CanvasEditorInner({ canvasId }: CanvasEditorProps) {
   const editSelectedEdgeLabel = useCallback(() => {
     const selected = edges.find(edge => edge.selected)
     if (!selected) return
-    const label = window.prompt(t('edge.labelPrompt'), typeof selected.label === 'string' ? selected.label : '')
-    if (label === null) return
+    setEditingEdgeId(selected.id)
+    setEdgeLabelDraft(typeof selected.label === 'string' ? selected.label : '')
+    setEdgeEditorOpen(true)
+  }, [edges])
+
+  const saveEdgeLabel = useCallback(() => {
+    if (!editingEdgeId) return
     pushHistory()
-    setEdges(current => current.map(edge => edge.selected ? { ...edge, label } : edge))
-  }, [edges, pushHistory, setEdges, t])
+    setEdges(current => current.map(edge => edge.id === editingEdgeId ? { ...edge, label: edgeLabelDraft.trim() } : edge))
+    setEdgeEditorOpen(false)
+  }, [edgeLabelDraft, editingEdgeId, pushHistory, setEdges])
+
+  const updateSelectedNodeColor = useCallback((color: string) => {
+    if (selectedNodeCount === 0) return
+    pushHistory()
+    setNodes(current => current.map(node => node.selected ? { ...node, data: { ...node.data, color } } : node))
+  }, [pushHistory, selectedNodeCount, setNodes])
+
+  const convertSelectedNodes = useCallback((type: 'process' | 'decision' | 'terminator' | 'text') => {
+    if (selectedNodeCount === 0) return
+    pushHistory()
+    setNodes(current => current.map(node => node.selected && node.type !== 'freehand' && node.type !== 'group'
+      ? { ...node, type }
+      : node))
+  }, [pushHistory, selectedNodeCount, setNodes])
+
+  const toggleSelectedNodeLock = useCallback(() => {
+    if (selectedNodeCount === 0) return
+    pushHistory()
+    const lock = !selectedNodesLocked
+    setNodes(current => current.map(node => node.selected ? { ...node, draggable: !lock } : node))
+  }, [pushHistory, selectedNodeCount, selectedNodesLocked, setNodes])
 
   const runSelectionAi = useCallback((instruction: string) => {
     const selectedIds = nodes.filter(node => node.selected).map(node => node.id)
@@ -924,6 +1002,58 @@ function CanvasEditorInner({ canvasId }: CanvasEditorProps) {
     }
   }, [canvasId, getNodesBounds, nodes, projects, t])
 
+  const getCurrentDocument = useCallback((): CanvasDocument => ({
+    ...document,
+    nodes: serializeNodes(nodes),
+    edges: edges.map(edge => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      label: typeof edge.label === 'string' ? edge.label : undefined,
+      type: edge.type,
+    })),
+    viewport: getViewport(),
+  }), [document, edges, getViewport, nodes])
+
+  const exportPortableFile = useCallback(async (format: 'canvas' | 'mermaid') => {
+    try {
+      const project = projects.find(item => item.id === canvasId)
+      const title = project?.title || t('untitled')
+      const safeTitle = title.replace(/[\\/:*?"<>|]/g, '-').trim() || 'NoteGen-Canvas'
+      const path = await save({
+        defaultPath: `${safeTitle}.${format === 'canvas' ? 'canvas.json' : 'mmd'}`,
+        filters: [{ name: format === 'canvas' ? 'NoteGen Canvas' : 'Mermaid', extensions: format === 'canvas' ? ['json'] : ['mmd'] }],
+      })
+      if (!path) return
+      const currentDocument = getCurrentDocument()
+      const content = format === 'canvas'
+        ? serializeCanvasProject({ title, canvasType: project?.canvasType || 'blank', document: currentDocument })
+        : canvasDocumentToMermaid(currentDocument)
+      await writeTextFile(path, content)
+      toast.success(t('exportSuccess'))
+    } catch (error) {
+      console.error('Failed to export canvas source:', error)
+      toast.error(t('exportError'))
+    }
+  }, [canvasId, getCurrentDocument, projects, t])
+
+  const importMermaid = useCallback(async () => {
+    try {
+      const path = await open({ multiple: false, filters: [{ name: 'Mermaid', extensions: ['mmd', 'mermaid'] }] })
+      if (!path || Array.isArray(path)) return
+      const nextDocument = mermaidToCanvasDocument(await readTextFile(path))
+      pushHistory()
+      setNodes(nextDocument.nodes as FlowCanvasNode[])
+      setEdges(nextDocument.edges as Edge[])
+      updateDocument(canvasId, nextDocument)
+      requestAnimationFrame(() => void fitView({ padding: 0.2, duration: 300 }))
+      toast.success(t('import.success'))
+    } catch (error) {
+      console.error('Failed to import Mermaid:', error)
+      toast.error(t('import.error'))
+    }
+  }, [canvasId, fitView, pushHistory, setEdges, setNodes, t, updateDocument])
+
   const drawOverlayEnabled = tool === 'pen' || tool === 'highlighter' || tool === 'eraser'
 
   const eraseAtPoint = useCallback((point: { x: number; y: number }) => {
@@ -1085,6 +1215,11 @@ function CanvasEditorInner({ canvasId }: CanvasEditorProps) {
             setEdges(current => current.map(edge => ({ ...edge, selected: edge.id === targetEdge.id })))
           }
         }}
+        onEdgeDoubleClick={(_event, targetEdge) => {
+          setEditingEdgeId(targetEdge.id)
+          setEdgeLabelDraft(typeof targetEdge.label === 'string' ? targetEdge.label : '')
+          setEdgeEditorOpen(true)
+        }}
         onMoveEnd={(_event, viewport) => persistViewport(viewport)}
         onNodeDragStart={(_event, node) => {
           pushHistory()
@@ -1110,8 +1245,9 @@ function CanvasEditorInner({ canvasId }: CanvasEditorProps) {
         nodesDraggable={!previewSnapshot && tool === 'select'}
         nodesConnectable={!previewSnapshot && (tool === 'select' || tool === 'connector')}
         elementsSelectable={!previewSnapshot && tool === 'select'}
-        panOnDrag={tool === 'hand' || tool === 'select'}
+        panOnDrag={tool === 'hand'}
         selectionOnDrag={tool === 'select'}
+        selectionMode={SelectionMode.Partial}
         snapToGrid={document.settings.snapToGrid}
         snapGrid={[20, 20]}
         defaultViewport={document.viewport}
@@ -1144,6 +1280,10 @@ function CanvasEditorInner({ canvasId }: CanvasEditorProps) {
                 <CopyPlus />
                 {t('contextMenu.duplicate')}
                 <ContextMenuShortcut>{shortcutModifier}D</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem disabled={selectedNodeCount === 0} onSelect={toggleSelectedNodeLock}>
+                {selectedNodesLocked ? <UnlockKeyhole /> : <LockKeyhole />}
+                {selectedNodesLocked ? t('selection.unlock') : t('selection.lock')}
               </ContextMenuItem>
             </ContextMenuGroup>
             <ContextMenuSeparator />
@@ -1224,6 +1364,34 @@ function CanvasEditorInner({ canvasId }: CanvasEditorProps) {
               </div>
             </PopoverContent>
           </Popover>
+          )}
+          {selectedNodeCount > 0 && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon-sm" title={t('selection.style')}><Palette /></Button>
+              </PopoverTrigger>
+              <PopoverContent align="center" className="w-60">
+                <PopoverHeader>
+                  <PopoverTitle>{t('selection.style')}</PopoverTitle>
+                  <PopoverDescription>{t('selection.styleDescription')}</PopoverDescription>
+                </PopoverHeader>
+                <div className="grid grid-cols-6 gap-2">
+                  {['#64748b', '#3b82f6', '#8b5cf6', '#22c55e', '#f59e0b', '#ef4444'].map(color => (
+                    <button key={color} type="button" aria-label={color} className="size-7 rounded-full border shadow-sm" style={{ backgroundColor: color }} onClick={() => updateSelectedNodeColor(color)} />
+                  ))}
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-1">
+                  <Button variant="ghost" size="sm" onClick={() => convertSelectedNodes('process')}>{t('nodes.process')}</Button>
+                  <Button variant="ghost" size="sm" onClick={() => convertSelectedNodes('decision')}>{t('nodes.decision')}</Button>
+                  <Button variant="ghost" size="sm" onClick={() => convertSelectedNodes('terminator')}>{t('nodes.terminator')}</Button>
+                  <Button variant="ghost" size="sm" onClick={() => convertSelectedNodes('text')}>{t('nodes.text')}</Button>
+                </div>
+                <Button variant="ghost" size="sm" className="mt-2 w-full justify-start" onClick={toggleSelectedNodeLock}>
+                  {selectedNodesLocked ? <UnlockKeyhole data-icon="inline-start" /> : <LockKeyhole data-icon="inline-start" />}
+                  {selectedNodesLocked ? t('selection.unlock') : t('selection.lock')}
+                </Button>
+              </PopoverContent>
+            </Popover>
           )}
 
           <Button variant="ghost" size="icon-sm" onClick={() => addNode('process')} title={t('nodes.process')}>
@@ -1355,6 +1523,8 @@ function CanvasEditorInner({ canvasId }: CanvasEditorProps) {
         onLayout={() => void layoutNodes()}
         onHistory={() => void openVersionHistory()}
         onExport={(format, pixelRatio, destination) => void exportCanvas(format, pixelRatio, destination)}
+        onExportSource={format => void exportPortableFile(format)}
+        onImportMermaid={() => void importMermaid()}
       />
 
       <Dialog open={notePickerOpen} onOpenChange={setNotePickerOpen}>
@@ -1410,6 +1580,23 @@ function CanvasEditorInner({ canvasId }: CanvasEditorProps) {
               ))}
             </div>
           </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={edgeEditorOpen} onOpenChange={setEdgeEditorOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t('edge.editLabel')}</DialogTitle>
+            <DialogDescription>{t('edge.labelDescription')}</DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={edgeLabelDraft}
+            onChange={event => setEdgeLabelDraft(event.target.value)}
+            onKeyDown={event => { if (event.key === 'Enter') saveEdgeLabel() }}
+            placeholder={t('edge.labelPrompt')}
+          />
+          <Button onClick={saveEdgeLabel}>{t('edge.saveLabel')}</Button>
         </DialogContent>
       </Dialog>
     </div>

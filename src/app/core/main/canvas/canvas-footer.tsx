@@ -43,6 +43,8 @@ interface CanvasFooterProps {
   onLayout: () => void
   onHistory: () => void
   onExport: (format: 'png' | 'svg', pixelRatio: number, destination: 'computer' | 'workspace') => void
+  onExportSource: (format: 'canvas' | 'mermaid') => void
+  onImportMermaid: () => void
 }
 
 function FooterButton({
@@ -88,6 +90,8 @@ export function CanvasFooter({
   onLayout,
   onHistory,
   onExport,
+  onExportSource,
+  onImportMermaid,
 }: CanvasFooterProps) {
   const t = useTranslations('canvas.footer')
   const DirectionIcon = layoutDirection === 'TB' ? AlignVerticalSpaceAround : AlignHorizontalSpaceAround
@@ -178,6 +182,22 @@ export function CanvasFooter({
               <DropdownMenuItem onSelect={() => onExport('svg', 1, 'computer')}>
                 <FileCode2 />
                 {t('exportMenu.svg')}
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>{t('exportMenu.source')}</DropdownMenuLabel>
+            <DropdownMenuGroup>
+              <DropdownMenuItem onSelect={() => onExportSource('canvas')}>
+                <FileCode2 />
+                {t('exportMenu.canvasFile')}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onExportSource('mermaid')}>
+                <FileCode2 />
+                {t('exportMenu.mermaid')}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onImportMermaid}>
+                <FileCode2 />
+                {t('exportMenu.importMermaid')}
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />

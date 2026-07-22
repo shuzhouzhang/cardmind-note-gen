@@ -19,8 +19,11 @@ function normalizeRemoteCanvasProject(value: unknown): CanvasProject | null {
     || typeof candidate.title !== 'string'
     || typeof candidate.createdAt !== 'number'
     || typeof candidate.updatedAt !== 'number') return null
-  const canvasType: CanvasProjectType = candidate.canvasType === 'flowchart' || candidate.canvasType === 'mindmap'
-    ? candidate.canvasType
+  const canvasTypes = new Set<CanvasProjectType>([
+    'blank', 'flowchart', 'mindmap', 'timeline', 'quadrant', 'kanban', 'swot',
+  ])
+  const canvasType: CanvasProjectType = canvasTypes.has(candidate.canvasType as CanvasProjectType)
+    ? candidate.canvasType as CanvasProjectType
     : 'blank'
   return {
     id: candidate.id,
