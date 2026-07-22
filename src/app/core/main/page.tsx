@@ -95,11 +95,18 @@ function ResizableWrapper() {
 
   // 当面板可见性变化时，控制面板的折叠和展开
   useEffect(() => {
+    const expandPanel = (panel: PanelImperativeHandle, fallbackSize: number) => {
+      panel.expand()
+      if (panel.getSize().asPercentage < 1) {
+        panel.resize(`${fallbackSize}%`)
+      }
+    }
+
     const timer = setTimeout(() => {
       // 左侧面板
       if (leftPanelRef.current) {
         if (leftSidebarVisible) {
-          leftPanelRef.current.expand()
+          expandPanel(leftPanelRef.current, minSidebarSize)
         } else {
           leftPanelRef.current.collapse()
         }
@@ -108,7 +115,7 @@ function ResizableWrapper() {
       // 中间面板
       if (centerPanelRef.current) {
         if (centerPanelVisible) {
-          centerPanelRef.current.expand()
+          expandPanel(centerPanelRef.current, minEditorSize)
         } else {
           centerPanelRef.current.collapse()
         }
@@ -117,14 +124,14 @@ function ResizableWrapper() {
       // 右侧面板
       if (rightPanelRef.current) {
         if (rightSidebarVisible) {
-          rightPanelRef.current.expand()
+          expandPanel(rightPanelRef.current, minSidebarSize)
         } else {
           rightPanelRef.current.collapse()
         }
       }
     }, 100)
     return () => clearTimeout(timer)
-  }, [leftSidebarVisible, centerPanelVisible, rightSidebarVisible])
+  }, [leftSidebarVisible, centerPanelVisible, rightSidebarVisible, minEditorSize, minSidebarSize])
 
   // 根据面板可见性渲染布局
   // 注意：左侧面板始终渲染，所以 layoutKey 用于存储，但实际布局计算需要考虑左侧始终存在

@@ -13,6 +13,7 @@ import { retainCompletedAgentTraceEvents } from './trace-retention'
 export interface AgentHandlerConfig {
   activeChatId?: number
   activeFilePath?: string
+  activeCanvasId?: string
   permissionMode?: AgentPermissionMode
   onThought?: (thought: string) => void
   onAction?: (action: string, params: Record<string, any>) => void
@@ -110,6 +111,7 @@ export class AgentHandler {
         imageUrls,
         activeChatId: this.config.activeChatId,
         activeFilePath: this.config.activeFilePath,
+        activeCanvasId: this.config.activeCanvasId,
         currentEditorState,
         currentQuote: this.config.currentQuote,
         availableSkills: skillsInfo,

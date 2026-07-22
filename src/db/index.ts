@@ -20,6 +20,7 @@ export async function initAllDatabases() {
   const { initConversationsDb } = await import('./conversations');
   const { initMemoriesDb } = await import('./memories');
   const { initActivityDb } = await import('./activity');
+  const { initCanvasesDb } = await import('./canvases');
 
   // 执行初始化：先确保基础表存在，再做 conversations 对 chats 的迁移/补列。
   await initChatsDb();
@@ -30,4 +31,5 @@ export async function initAllDatabases() {
   await initVectorDb();
   await initMemoriesDb();
   await initActivityDb();
+  await initCanvasesDb();
 }

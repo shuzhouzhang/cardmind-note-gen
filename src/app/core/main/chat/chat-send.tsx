@@ -371,11 +371,14 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
 
     const useArticleStore = (await import('@/stores/article')).default
     const articleStore = useArticleStore.getState()
+    const useCanvasStore = (await import('@/stores/canvas')).default
+    const canvasStore = useCanvasStore.getState()
 
     // 每次都创建新的 AgentHandler，使用当前的 placeholderMessage
     const agentHandler = new AgentHandler({
       activeChatId: placeholderMessage.id,
       activeFilePath: articleStore.activeFilePath,
+      activeCanvasId: canvasStore.activeCanvasId || undefined,
       permissionMode: agentPermissionMode,
       requestConfirmation,
       currentQuote: quoteData

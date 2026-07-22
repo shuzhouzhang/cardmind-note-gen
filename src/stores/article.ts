@@ -80,7 +80,7 @@ export interface EditorViewState {
   scrollTop: number
 }
 
-export type EditorTabKind = 'file' | 'record'
+export type EditorTabKind = 'file' | 'record' | 'canvas'
 
 export interface OpenTabInfo {
   id: string
@@ -90,6 +90,7 @@ export interface OpenTabInfo {
   kind?: EditorTabKind
   markId?: number
   markType?: Mark['type']
+  canvasId?: string
 }
 
 const RECORD_TAB_PATH_PREFIX = 'record://mark/'
@@ -98,12 +99,16 @@ function isRecordOpenTabPath(path: string): boolean {
   return path.startsWith(RECORD_TAB_PATH_PREFIX)
 }
 
+function isCanvasOpenTabPath(path: string): boolean {
+  return path.startsWith('canvas://project/')
+}
+
 function isRecordOpenTab(tab?: OpenTabInfo | null): boolean {
   return !!tab && (tab.kind === 'record' || isRecordOpenTabPath(tab.path))
 }
 
 function getActiveFilePathForTab(tab?: OpenTabInfo | null): string {
-  return tab && !isRecordOpenTab(tab) ? tab.path : ''
+  return tab && !isRecordOpenTab(tab) && !isCanvasOpenTabPath(tab.path) ? tab.path : ''
 }
 
 // 查找文件夹节点
@@ -506,7 +511,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
 
   activeFilePath: '',
   setActiveFilePath: async (path: string) => {
-    const nextPath = isRecordOpenTabPath(path) ? '' : path
+    const nextPath = isRecordOpenTabPath(path) || isCanvasOpenTabPath(path) ? '' : path
     // 切换文件时，先清空 currentArticle，避免内容覆盖
     set({ currentArticle: '', activeFilePath: nextPath, selectedFilePaths: [] })
     const store = await getStore();

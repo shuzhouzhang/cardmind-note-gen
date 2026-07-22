@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
+import dynamic from 'next/dynamic'
 import useArticleStore, { findFolderInTree } from '@/stores/article'
 import useMarkStore from '@/stores/mark'
 import emitter from '@/lib/emitter'
@@ -26,6 +27,8 @@ import { UnsupportedFile } from './unsupported-file'
 import { useShallow } from 'zustand/react/shallow'
 import { MarkDetailPanel } from '../mark/mark-detail-panel'
 import { getRecordIdFromTabPath, isRecordTabPath } from '../mark/mark-record-tab'
+import { getCanvasIdFromTabPath, isCanvasTabPath } from '../canvas/canvas-tab'
+import useCanvasStore from '@/stores/canvas'
 import {
   createDefaultOnboardingProgress,
   getCompletionFeedbackMode,
@@ -52,6 +55,10 @@ const MARKDOWN_EXTENSIONS = new Set([
 
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg'])
 const ONBOARDING_PROGRESS_STORE_KEY = 'desktopOnboardingProgress'
+const CanvasEditor = dynamic(
+  () => import('../canvas/canvas-editor').then(module => module.CanvasEditor),
+  { ssr: false }
+)
 
 export function EditorLayout() {
   const {
@@ -83,6 +90,7 @@ export function EditorLayout() {
   const { setOnboardingPromptDraft } = useChatStore()
   const setActiveMarkId = useMarkStore((state) => state.setActiveMarkId)
   const clearActiveMark = useMarkStore((state) => state.clearActiveMark)
+  const setActiveCanvasId = useCanvasStore((state) => state.setActiveCanvasId)
   const tOnboarding = useTranslations('article.emptyState.onboarding')
 
   const tabContentsRef = useRef<Record<string, string>>({})
@@ -280,6 +288,10 @@ export function EditorLayout() {
     return tab.kind === 'record' || isRecordTabPath(tab.path)
   }, [])
 
+  const isCanvasEditorTab = useCallback((tab: TabInfo): boolean => {
+    return tab.kind === 'canvas' || isCanvasTabPath(tab.path)
+  }, [])
+
   const getRecordIdForTab = useCallback((tab: TabInfo): number | null => {
     return tab.markId ?? getRecordIdFromTabPath(tab.path)
   }, [])
@@ -294,6 +306,10 @@ export function EditorLayout() {
 
       for (const tab of tabs) {
         if (isRecordEditorTab(tab)) {
+          validTabs.push(tab)
+          continue
+        }
+        if (isCanvasEditorTab(tab)) {
           validTabs.push(tab)
           continue
         }
@@ -323,7 +339,7 @@ export function EditorLayout() {
     }
 
     cleanupTabs()
-  }, [fileTree, tabs.length, isFolderInTree, isFileInTree, checkPathExists, isRecordEditorTab, setOpenTabs])
+  }, [fileTree, tabs.length, isFolderInTree, isFileInTree, checkPathExists, isRecordEditorTab, isCanvasEditorTab, setOpenTabs])
 
   // Initialize and update tabs when active path changes
   useEffect(() => {
@@ -356,6 +372,7 @@ export function EditorLayout() {
   const activateTab = useCallback((tab?: TabInfo | null) => {
     if (!tab) {
       clearActiveMark()
+      setActiveCanvasId(null)
       setActiveTabId('')
       setActiveFilePath('')
       return
@@ -366,13 +383,31 @@ export function EditorLayout() {
     if (isRecordEditorTab(tab)) {
       const markId = getRecordIdForTab(tab)
       setActiveMarkId(markId)
+      setActiveCanvasId(null)
+      setActiveFilePath('')
+      return
+    }
+
+    if (isCanvasEditorTab(tab)) {
+      clearActiveMark()
+      setActiveCanvasId(getCanvasIdFromTabPath(tab.path))
       setActiveFilePath('')
       return
     }
 
     clearActiveMark()
+    setActiveCanvasId(null)
     setActiveFilePath(tab.path)
-  }, [clearActiveMark, getRecordIdForTab, isRecordEditorTab, setActiveFilePath, setActiveMarkId, setActiveTabId])
+  }, [clearActiveMark, getRecordIdForTab, isCanvasEditorTab, isRecordEditorTab, setActiveCanvasId, setActiveFilePath, setActiveMarkId, setActiveTabId])
+
+  useEffect(() => {
+    const restoredActiveTab = openTabs.find(tab => tab.id === activeTabId)
+    setActiveCanvasId(
+      restoredActiveTab && isCanvasEditorTab(restoredActiveTab)
+        ? getCanvasIdFromTabPath(restoredActiveTab.path)
+        : null
+    )
+  }, [activeTabId, isCanvasEditorTab, openTabs, setActiveCanvasId])
 
   // Handle tab switch
   const handleTabSwitch = useCallback((path: string) => {
@@ -389,7 +424,8 @@ export function EditorLayout() {
       setActiveTabId(''),
     ])
     clearActiveMark()
-  }, [clearActiveMark, setActiveFilePath, setActiveTabId])
+    setActiveCanvasId(null)
+  }, [clearActiveMark, setActiveCanvasId, setActiveFilePath, setActiveTabId])
 
   // Handle close tab
   const handleCloseTab = useCallback((closedPath: string) => {
@@ -608,6 +644,19 @@ export function EditorLayout() {
       )
     }
 
+    if (isCanvasEditorTab(tab)) {
+      const canvasId = tab.canvasId || getCanvasIdFromTabPath(tab.path)
+      return (
+        <div
+          key={tab.id}
+          className="flex min-h-0 flex-1 overflow-hidden"
+          style={{ display: isActive ? 'flex' : 'none' }}
+        >
+          {canvasId ? <CanvasEditor canvasId={canvasId} /> : <UnsupportedFile filePath={tab.path} />}
+        </div>
+      )
+    }
+
     const itemType = getItemType(tab.path)
 
     return (
@@ -635,7 +684,7 @@ export function EditorLayout() {
         )}
       </div>
     )
-  }, [getItemType, getRecordIdForTab, handleCloseTab, isRecordEditorTab])
+  }, [getItemType, getRecordIdForTab, handleCloseTab, isCanvasEditorTab, isRecordEditorTab])
 
   // No tabs or no active tab - show empty state
   if (tabs.length === 0 || !activeTabId) {

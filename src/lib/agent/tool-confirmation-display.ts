@@ -62,6 +62,12 @@ const TOOL_CONFIRMATION_DISPLAY: Record<string, ToolConfirmationDisplayConfig> =
     summaryFields: ['content'],
     contentFields: ['content'],
   },
+  canvas_apply_operations: {
+    titleKey: 'record.chat.input.agent.confirmation.tools.canvas_apply_operations.title',
+    descriptionKey: 'record.chat.input.agent.confirmation.tools.canvas_apply_operations.description',
+    summaryFields: ['operations'],
+    contentFields: ['operations'],
+  },
   note_delete_file: {
     titleKey: 'record.chat.input.agent.confirmation.tools.delete_markdown_file.title',
     descriptionKey: 'record.chat.input.agent.confirmation.tools.delete_markdown_file.description',

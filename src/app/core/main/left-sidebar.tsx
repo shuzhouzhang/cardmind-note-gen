@@ -1,7 +1,7 @@
 'use client'
 
 import { Tabs, TabsContent } from "@/components/ui/tabs"
-import { Files, Highlighter } from "lucide-react"
+import { Files, Highlighter, Shapes } from "lucide-react"
 import { FileSidebar } from "./file"
 import { NoteSidebar } from "./mark"
 import { FileActions } from "./file/file-actions"
@@ -11,10 +11,12 @@ import { useSidebarStore } from "@/stores/sidebar"
 import { ExpandableTabs } from "@/components/ui/expandable-tabs"
 import { cn } from "@/lib/utils"
 import { motion } from "framer-motion"
+import { CanvasActions, CanvasSidebar } from './canvas/canvas-sidebar'
 
 const SIDEBAR_TABS = [
   { title: "files", icon: Files },
   { title: "notes", icon: Highlighter },
+  { title: "canvases", icon: Shapes },
 ] as const
 
 export function LeftSidebar() {
@@ -45,6 +47,7 @@ export function LeftSidebar() {
             tabs={tabs}
             onChange={handleTabChange}
             selected={getSelectedIndex()}
+            className="shrink-0 flex-nowrap"
           />
           <div className="grid shrink-0">
             <motion.div
@@ -73,6 +76,19 @@ export function LeftSidebar() {
             >
               <MarkActions />
             </motion.div>
+            <motion.div
+              initial={false}
+              animate={leftSidebarTab === "canvases"
+                ? { opacity: 1, x: 0 }
+                : { opacity: 0, x: 10 }}
+              transition={{ duration: 0.2 }}
+              className={cn(
+                "col-start-1 row-start-1",
+                leftSidebarTab !== "canvases" && "pointer-events-none"
+              )}
+            >
+              <CanvasActions />
+            </motion.div>
           </div>
         </div>
         <div className="relative min-h-0 flex-1">
@@ -89,6 +105,13 @@ export function LeftSidebar() {
             className="absolute inset-0 m-0 overflow-hidden data-[state=inactive]:hidden"
           >
             <NoteSidebar />
+          </TabsContent>
+          <TabsContent
+            forceMount
+            value="canvases"
+            className="absolute inset-0 m-0 overflow-hidden data-[state=inactive]:hidden"
+          >
+            <CanvasSidebar />
           </TabsContent>
         </div>
       </Tabs>

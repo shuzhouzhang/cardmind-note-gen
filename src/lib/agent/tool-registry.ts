@@ -38,6 +38,7 @@ import { listTagsTool, createTagTool, updateTagTool, deleteTagTool, searchTagsTo
 import { readMarksTool, searchMarksTool, createMarkTool, updateMarkTool, deleteMarkTool } from './tools/mark-tools'
 import { saveMemoryTool, listMemoriesTool, deleteMemoryTool, clearMemoriesTool } from './tools/memory-tools'
 import { attachmentTools } from './tools/attachment-tools'
+import { canvasTools } from './tools/canvas-tools'
 import {
   executeRegisteredSkillScript,
   executeSkillScriptTool,
@@ -1778,6 +1779,7 @@ function buildTools(): AgentTool[] {
     buildMcpListResourceTemplatesTool(),
     buildMcpReadResourceTool(),
     buildMcpCallTool(),
+    ...canvasTools,
     ...attachmentTools,
   ]
 }

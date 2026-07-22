@@ -2410,6 +2410,10 @@
                 "title": "在光标处插入内容",
                 "description": "会把内容插入到当前光标位置。"
               },
+              "canvas_apply_operations": {
+                "title": "修改当前画布",
+                "description": "预览 AI 即将在原生画布中执行的节点和连线操作。"
+              },
               "delete_markdown_file": {
                 "title": "删除文件",
                 "description": "将永久删除所选文件。"
@@ -2580,13 +2584,14 @@
     }
   },
   "search": {
-    "placeholder": "搜索笔记和文章...",
+    "placeholder": "搜索笔记、记录和画布...",
     "results": "{count} 个搜索结果",
     "noResults": "暂无搜索结果",
     "tryDifferentKeywords": "尝试使用不同的关键词搜索",
     "item": {
       "record": "记录",
       "article": "文章",
+      "canvas": "画布",
       "matches": "{count}个匹配项",
       "scanType": "截图"
     }
@@ -2600,7 +2605,64 @@
       "howToUse": "如何使用同步功能？"
     }
   },
+  "canvas": {
+    "new": "新建画布",
+    "chooseTemplate": "选择模板",
+    "manager": { "title": "绘图管理器", "view": "视图", "grid": "缩略图视图", "list": "列表视图", "switchToGrid": "切换到缩略图视图", "switchToList": "切换到列表视图", "sort": { "title": "排序", "updated": "最近修改", "created": "创建时间", "name": "名称" }, "pin": "置顶画布", "unpin": "取消置顶", "refreshThumbnails": "重新生成缩略图", "closeTrash": "关闭最近删除", "trashEmpty": "最近删除为空", "trashEmptyDescription": "删除的画布会显示在这里。", "trashCount": "共 {count} 个已删除画布", "count": "共 {count} 个画布" },
+    "templates": { "blank": "空白画布", "flowchart": "流程图", "mindmap": "思维导图" },
+    "untitled": "未命名画布",
+    "more": "更多操作",
+    "open": "打开画布",
+    "duplicate": "创建副本",
+    "duplicateTitle": "{title} 副本",
+    "delete": "删除画布",
+    "trash": "最近删除",
+    "restore": "恢复画布",
+    "deleteDialog": { "title": "删除这张画布？", "description": "“{title}”会移到最近删除，你可以稍后恢复。", "cancel": "取消", "confirm": "移到最近删除" },
+    "rename": "重命名",
+    "loading": "正在加载画布...",
+    "undo": "撤销",
+    "redo": "重做",
+    "layout": "整理",
+    "export": "导出",
+    "exportSuccess": "画布已导出",
+    "exportWorkspaceSuccess": "已导出到文件管理器：{path}",
+    "exportError": "导出画布失败",
+    "aiPreview": "AI 修改预览",
+    "tools": { "select": "选择", "hand": "抓手", "pen": "画笔", "highlighter": "荧光笔", "eraser": "橡皮擦" },
+    "brush": { "title": "画笔设置", "description": "调整当前绘画工具的颜色和粗细。", "color": "颜色", "size": "粗细" },
+    "nodes": { "process": "处理步骤", "decision": "判断条件", "terminator": "开始 / 结束", "text": "文本", "note": "笔记引用", "image": "图片", "link": "网页链接", "todo": "待办事项", "group": "分组" },
+    "linkNode": { "urlPrompt": "输入网页地址", "labelPrompt": "输入链接标题" },
+    "utilityNodes": { "title": "实用节点", "description": "添加图片、网页链接或待办事项。" },
+    "arrange": { "title": "对齐与分组", "description": "整理当前选择的多个节点。", "alignHorizontal": "水平居中对齐", "alignVertical": "垂直居中对齐", "distributeHorizontal": "水平均匀分布", "distributeVertical": "垂直均匀分布", "group": "创建分组" },
+    "group": { "defaultLabel": "分组" },
+    "selectionAi": { "title": "选区 AI", "description": "只针对当前选中的节点进行修改。", "expand": "继续拆解步骤", "branches": "生成三个分支", "review": "检查流程问题", "expandPrompt": "继续拆解选中的步骤，补充必要的后续节点和连线。", "branchesPrompt": "从选中的节点生成三个合理分支并连接。", "reviewPrompt": "检查选中节点相关的流程问题，并直接完善这些节点和连线。" },
+    "edge": { "title": "连线样式", "description": "调整选中连线的路径和文字。", "orthogonal": "折线", "straight": "直线", "curve": "曲线", "editLabel": "编辑连线文字", "labelPrompt": "输入连线文字" },
+    "history": { "title": "画布版本历史", "description": "自动保留最近 50 个版本，恢复前也会保存当前版本。", "empty": "还没有历史版本", "summary": "{nodes} 个节点 · {edges} 条连线", "restored": "历史版本已恢复" },
+    "noteNode": { "title": "添加笔记引用", "description": "从文件管理器选择一篇笔记，双击节点可以打开原文件。", "search": "搜索笔记...", "empty": "没有找到笔记", "group": "工作区笔记", "added": "已添加笔记“{name}”" },
+    "footer": {
+      "nodes": "{count} 个节点",
+      "edges": "{count} 条连线",
+      "selected": "已选 {count} 项",
+      "localSave": "本地自动保存",
+      "grid": "显示网格",
+      "snap": "吸附到网格",
+      "fit": "适应视图",
+      "layout": "自动整理",
+      "history": "版本历史",
+      "export": "导出 PNG",
+      "exportMenu": { "computer": "保存到电脑", "workspace": "导出到文件管理器", "png2x": "PNG · 2× 高清", "png4x": "PNG · 4× 超清", "svg": "SVG · 矢量图", "workspacePng": "PNG 到“画布导出”", "workspaceSvg": "SVG 到“画布导出”" },
+      "direction": { "title": "布局方向", "vertical": "从上到下", "horizontal": "从左到右" }
+    },
+    "clipboard": { "copied": "已复制 {count} 个节点" },
+    "contextMenu": { "selectAll": "全选", "copy": "复制", "paste": "粘贴", "duplicate": "创建副本", "delete": "删除所选内容" },
+    "empty": {
+      "title": "还没有画布",
+      "description": "创建画布，用结构图和自由绘画整理想法。"
+    }
+  },
   "navigation": {
+    "canvases": "画布",
     "chat": "对话",
     "record": "记录",
     "quickRecord": "快捷记录",
@@ -2629,7 +2691,7 @@
     "hideCenterPanel": "隐藏编辑器",
     "showRightSidebar": "显示右侧边栏",
     "hideRightSidebar": "隐藏右侧边栏",
-    "searchPlaceholder": "搜索笔记或记录...",
+    "searchPlaceholder": "搜索笔记、记录或画布...",
     "navigate": "导航"
   },
   "activity": {

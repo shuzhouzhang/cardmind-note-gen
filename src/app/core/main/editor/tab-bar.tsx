@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useRef, useState, useEffect, memo } from 'react'
-import { X, FileText, Folder, Plus, Undo2, Redo2 } from 'lucide-react'
+import { X, FileText, Folder, Plus, Undo2, Redo2, Shapes } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import emitter from '@/lib/emitter'
@@ -35,15 +35,17 @@ import useSettingStore from '@/stores/setting'
 import type { Mark } from '@/db/marks'
 import { isRecordTabPath } from '../mark/mark-record-tab'
 import { getMarkTypeListBadgeClasses } from '../mark/mark-type-meta'
+import { isCanvasTabPath } from '../canvas/canvas-tab'
 
 export interface TabInfo {
   id: string
   path: string
   name: string
   isFolder: boolean
-  kind?: 'file' | 'record'
+  kind?: 'file' | 'record' | 'canvas'
   markId?: number
   markType?: Mark['type']
+  canvasId?: string
 }
 
 interface TabBarProps {
@@ -105,6 +107,7 @@ function SortableTabWithMenu({
   const canCloseRight = currentIndex < tabs.length - 1
   const hasOthers = tabs.length > 1
   const isRecordTab = tab.kind === 'record' || isRecordTabPath(tab.path)
+  const isCanvasTab = tab.kind === 'canvas' || isCanvasTabPath(tab.path)
   const recordTypeLabel = isRecordTab ? recordTypeT(tab.markType || 'text') : ''
   const tabTitle = isRecordTab ? `${recordTypeLabel}: ${tab.name}` : tab.path
 
@@ -153,6 +156,8 @@ function SortableTabWithMenu({
             )}>
               {recordTypeLabel}
             </span>
+          ) : isCanvasTab ? (
+            <Shapes className={cn('size-4 shrink-0', isActive && 'text-primary')} />
           ) : tab.isFolder ? (
             <Folder className="w-4 h-4 shrink-0 text-amber-500" />
           ) : (

@@ -8,6 +8,8 @@ import type { Mark } from '@/db/marks'
 import type { Tag } from '@/db/tags'
 import { downloadRecordAssets, uploadRecordAssets } from '@/lib/sync/record-assets'
 import { filterSyncData } from '@/config/sync-exclusions'
+import type { CanvasProject } from '@/types/canvas'
+import { CANVAS_SYNC_PATH, downloadCanvases, uploadCanvases } from '@/lib/sync/canvas-sync'
 
 export type AutoDataSyncDomain = 'records' | 'settings'
 type AutoDataSyncProvider = 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav'
@@ -77,6 +79,7 @@ interface AutoDataSyncRecordSnapshot {
   reason: string
   tags: Tag[]
   marks: Mark[]
+  canvases: CanvasProject[]
 }
 export interface AutoDataSyncDownloadOptions {
   allowRemoteEmptyRecords?: boolean
@@ -608,6 +611,9 @@ export async function downloadAutoDataSyncNow(
         allowMissingRemote: true,
         deferRefresh: true,
       })
+      await downloadCanvases({ allowMissingRemote: true })
+      const { default: useCanvasStore } = await import('@/stores/canvas')
+      await useCanvasStore.getState().loadProjects()
       await downloadRecordAssets(markResult)
       await Promise.all([
         useMarkStore.getState().fetchMarks(),
@@ -1328,12 +1334,14 @@ async function uploadDomain(domain: AutoDataSyncDomain) {
     await uploadRecordAssets(marks)
     const tagResult = await useTagStore.getState().uploadTags()
     const markResult = await useMarkStore.getState().uploadMarks()
+    const canvasResult = await uploadCanvases()
     debugAutoDataSync('records upload results', {
       tags: tagResult,
       marks: markResult,
+      canvases: canvasResult,
     })
 
-    if (!tagResult || !markResult) {
+    if (!tagResult || !markResult || !canvasResult) {
       throw new Error('Failed to upload records')
     }
 
@@ -1362,7 +1370,7 @@ async function uploadAutoDataSyncMeta(uploadedDomains: AutoDataSyncDomain[]) {
     domains: AUTO_DATA_SYNC_DOMAINS,
     lastUploadedDomains: AUTO_DATA_SYNC_DOMAINS.filter(domain => uploadedDomains.includes(domain)),
     files: {
-      records: [AUTO_DATA_SYNC_TAGS_PATH, AUTO_DATA_SYNC_MARKS_PATH],
+      records: [AUTO_DATA_SYNC_TAGS_PATH, AUTO_DATA_SYNC_MARKS_PATH, CANVAS_SYNC_PATH],
       settings: [AUTO_DATA_SYNC_SETTINGS_PATH],
       meta: AUTO_DATA_SYNC_META_PATH,
     },
@@ -1783,17 +1791,19 @@ async function assertRemoteRecordsSafeForDownload(
 
 async function createAutoDataSyncLocalRecordSnapshot(reason: string): Promise<AutoDataSyncRecordSnapshot | null> {
   try {
-    const [tagsDb, marksDb, store] = await Promise.all([
+    const [tagsDb, marksDb, canvasesDb, store] = await Promise.all([
       import('@/db/tags'),
       import('@/db/marks'),
+      import('@/db/canvases'),
       Store.load('store.json'),
     ])
-    const [tags, marks] = await Promise.all([
+    const [tags, marks, canvases] = await Promise.all([
       tagsDb.getTags(),
       marksDb.getAllMarks(),
+      canvasesDb.getCanvasProjects({ includeDeleted: true }),
     ])
 
-    if (tags.length === 0 && marks.length === 0) {
+    if (tags.length === 0 && marks.length === 0 && canvases.length === 0) {
       debugAutoDataSync('local record snapshot skipped because records are empty', { reason })
       return null
     }
@@ -1806,6 +1816,7 @@ async function createAutoDataSyncLocalRecordSnapshot(reason: string): Promise<Au
       reason,
       tags,
       marks,
+      canvases,
     }
     const previousSnapshots = await store.get<AutoDataSyncRecordSnapshot[]>(AUTO_DATA_SYNC_RECORD_SNAPSHOTS_KEY)
     const snapshots = Array.isArray(previousSnapshots) ? previousSnapshots : []
@@ -1819,6 +1830,7 @@ async function createAutoDataSyncLocalRecordSnapshot(reason: string): Promise<Au
       createdAtMs: snapshot.createdAtMs,
       tagsCount: snapshot.tags.length,
       marksCount: snapshot.marks.length,
+      canvasesCount: snapshot.canvases.length,
     })
     return snapshot
   } catch (error) {
@@ -1839,22 +1851,28 @@ async function restoreAutoDataSyncLocalRecordSnapshot(
     const [
       { default: useTagStore },
       { default: useMarkStore },
+      { default: useCanvasStore },
       tagsDb,
       marksDb,
+      canvasesDb,
     ] = await Promise.all([
       import('@/stores/tag'),
       import('@/stores/mark'),
+      import('@/stores/canvas'),
       import('@/db/tags'),
       import('@/db/marks'),
+      import('@/db/canvases'),
     ])
 
     await tagsDb.deleteAllTags()
     await tagsDb.insertTags(snapshot.tags)
     await marksDb.deleteAllMarks()
     await marksDb.insertMarks(snapshot.marks)
+    await canvasesDb.replaceAllCanvasProjects(snapshot.canvases)
     await Promise.all([
       useTagStore.getState().fetchTags(),
       useMarkStore.getState().fetchMarks(),
+      useCanvasStore.getState().loadProjects(),
     ])
     useTagStore.getState().getCurrentTag()
     debugAutoDataSync('local record snapshot restored', {
@@ -1863,6 +1881,7 @@ async function restoreAutoDataSyncLocalRecordSnapshot(
       createdAtMs: snapshot.createdAtMs,
       tagsCount: snapshot.tags.length,
       marksCount: snapshot.marks.length,
+      canvasesCount: snapshot.canvases.length,
     })
   } catch (error) {
     debugAutoDataSync('local record snapshot restore failed', {
@@ -1995,12 +2014,14 @@ async function getAutoDataSyncContentFingerprints(
   const local = await getLocalAutoDataSyncDomainFingerprint(store, domain)
 
   if (domain === 'records') {
-    const [remoteTagsContent, remoteMarksContent] = await Promise.all([
+    const [remoteTagsContent, remoteMarksContent, remoteCanvasesContent] = await Promise.all([
       downloadAutoDataSyncRemoteFileContent(store, provider, AUTO_DATA_SYNC_TAGS_PATH),
       downloadAutoDataSyncRemoteFileContent(store, provider, AUTO_DATA_SYNC_MARKS_PATH),
+      downloadAutoDataSyncRemoteFileContent(store, provider, CANVAS_SYNC_PATH),
     ])
     const remoteTags = parseRemoteJsonArray<Tag>(remoteTagsContent)
     const remoteMarks = parseRemoteJsonArray<Mark>(remoteMarksContent)
+    const remoteCanvases = parseRemoteJsonArray<CanvasProject>(remoteCanvasesContent) || []
     if (!remoteTags || !remoteMarks) {
       return null
     }
@@ -2010,6 +2031,7 @@ async function getAutoDataSyncContentFingerprints(
       remote: stableSerialize({
         tags: remoteTags.map(getTagSyncKey).sort(),
         marks: remoteMarks.map(getMarkSyncKey).sort(),
+        canvases: remoteCanvases.map(project => [project.id, project.updatedAt, project.deletedAt, project.pinnedAt, project.title]),
       }),
     }
   }
@@ -2036,17 +2058,20 @@ async function getLocalAutoDataSyncDomainFingerprint(
   domain: AutoDataSyncDomain
 ): Promise<string> {
   if (domain === 'records') {
-    const [tagsDb, marksDb] = await Promise.all([
+    const [tagsDb, marksDb, canvasesDb] = await Promise.all([
       import('@/db/tags'),
       import('@/db/marks'),
+      import('@/db/canvases'),
     ])
-    const [tags, marks] = await Promise.all([
+    const [tags, marks, canvases] = await Promise.all([
       tagsDb.getTags(),
       marksDb.getAllMarks(),
+      canvasesDb.getCanvasProjects({ includeDeleted: true }),
     ])
     return stableSerialize({
       tags: tags.map(getTagSyncKey).sort(),
       marks: marks.map(getMarkSyncKey).sort(),
+      canvases: canvases.map(project => [project.id, project.updatedAt, project.deletedAt, project.pinnedAt, project.title]),
     })
   }
 

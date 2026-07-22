@@ -2480,13 +2480,14 @@
     }
   },
   "search": {
-    "placeholder": "Pesquisar notas e artigos...",
+    "placeholder": "Pesquisar notas, registros e telas...",
     "results": "{count} resultados da pesquisa",
     "noResults": "Nenhum resultado de pesquisa",
     "tryDifferentKeywords": "Tente usar palavras-chave diferentes",
     "item": {
       "record": "Registro",
       "article": "Artigo",
+      "canvas": "Tela",
       "matches": "{count} correspondências",
       "scanType": "digitalização"
     }
@@ -2500,7 +2501,64 @@
       "howToUse": "Como usar o recurso de sincronização?"
     }
   },
+  "canvas": {
+    "new": "Nova tela",
+    "chooseTemplate": "Escolher um modelo",
+    "manager": { "title": "Gerenciador de telas", "view": "Visualização", "grid": "Visualização em miniaturas", "list": "Visualização em lista", "switchToGrid": "Mudar para miniaturas", "switchToList": "Mudar para lista", "sort": { "title": "Ordenar", "updated": "Última modificação", "created": "Data de criação", "name": "Nome" }, "pin": "Fixar tela", "unpin": "Desafixar tela", "refreshThumbnails": "Gerar miniaturas novamente", "closeTrash": "Fechar excluídos recentemente", "trashEmpty": "Nenhuma exclusão recente", "trashEmptyDescription": "As telas excluídas aparecerão aqui.", "trashCount": "{count} telas excluídas", "count": "{count} telas" },
+    "templates": { "blank": "Tela em branco", "flowchart": "Fluxograma", "mindmap": "Mapa mental" },
+    "untitled": "Tela sem título",
+    "more": "Mais ações",
+    "open": "Abrir tela",
+    "duplicate": "Duplicar",
+    "duplicateTitle": "Cópia de {title}",
+    "delete": "Excluir tela",
+    "trash": "Excluídas recentemente",
+    "restore": "Restaurar tela",
+    "deleteDialog": { "title": "Excluir esta tela?", "description": "“{title}” será movida para Excluídas recentemente e poderá ser restaurada depois.", "cancel": "Cancelar", "confirm": "Mover para Excluídas recentemente" },
+    "rename": "Renomear",
+    "loading": "Carregando tela...",
+    "undo": "Desfazer",
+    "redo": "Refazer",
+    "layout": "Organizar",
+    "export": "Exportar",
+    "exportSuccess": "Tela exportada",
+    "exportWorkspaceSuccess": "Exportado para o gerenciador de arquivos: {path}",
+    "exportError": "Falha ao exportar a tela",
+    "aiPreview": "Prévia das alterações da IA",
+    "tools": { "select": "Selecionar", "hand": "Mão", "pen": "Caneta", "highlighter": "Marca-texto", "eraser": "Borracha" },
+    "brush": { "title": "Configurações do pincel", "description": "Ajuste a cor e a espessura da ferramenta de desenho atual.", "color": "Cor", "size": "Espessura" },
+    "nodes": { "process": "Processo", "decision": "Decisão", "terminator": "Início / Fim", "text": "Texto", "note": "Referência de nota", "image": "Imagem", "link": "Link da web", "todo": "Tarefa", "group": "Grupo" },
+    "linkNode": { "urlPrompt": "Digite o endereço da web", "labelPrompt": "Digite o título do link" },
+    "utilityNodes": { "title": "Nós utilitários", "description": "Adicione imagem, link ou tarefa." },
+    "arrange": { "title": "Alinhar e agrupar", "description": "Organize os nós selecionados.", "alignHorizontal": "Alinhar centros horizontais", "alignVertical": "Alinhar centros verticais", "distributeHorizontal": "Distribuir horizontalmente", "distributeVertical": "Distribuir verticalmente", "group": "Criar grupo" },
+    "group": { "defaultLabel": "Grupo" },
+    "selectionAi": { "title": "IA da seleção", "description": "Modifique apenas os nós selecionados.", "expand": "Detalhar etapas", "branches": "Criar três ramificações", "review": "Revisar o fluxo", "expandPrompt": "Detalhe as etapas selecionadas e adicione os nós e conexões seguintes necessários.", "branchesPrompt": "Crie três ramificações razoáveis a partir dos nós selecionados e conecte-as.", "reviewPrompt": "Revise problemas próximos aos nós selecionados e melhore apenas esses nós e conexões." },
+    "edge": { "title": "Estilo da conexão", "description": "Ajuste o caminho e o rótulo da conexão selecionada.", "orthogonal": "Ortogonal", "straight": "Reta", "curve": "Curva", "editLabel": "Editar rótulo", "labelPrompt": "Digite o rótulo da conexão" },
+    "history": { "title": "Histórico de versões da tela", "description": "Mantém as 50 versões mais recentes e salva a atual antes de restaurar.", "empty": "Nenhuma versão anterior", "summary": "{nodes} nós · {edges} conexões", "restored": "Versão anterior restaurada" },
+    "noteNode": { "title": "Adicionar referência de nota", "description": "Escolha uma nota no gerenciador de arquivos. Clique duas vezes no nó para abrir o arquivo original.", "search": "Buscar notas...", "empty": "Nenhuma nota encontrada", "group": "Notas do espaço de trabalho", "added": "Nota “{name}” adicionada" },
+    "footer": {
+      "nodes": "{count} nós",
+      "edges": "{count} conexões",
+      "selected": "{count} selecionados",
+      "localSave": "Salvo localmente",
+      "grid": "Mostrar grade",
+      "snap": "Alinhar à grade",
+      "fit": "Ajustar visualização",
+      "layout": "Organizar automaticamente",
+      "history": "Histórico de versões",
+      "export": "Exportar PNG",
+      "exportMenu": { "computer": "Salvar no computador", "workspace": "Exportar para o gerenciador", "png2x": "PNG · 2× alta resolução", "png4x": "PNG · 4× ultra resolução", "svg": "SVG · vetorial", "workspacePng": "PNG para Exportações da Tela", "workspaceSvg": "SVG para Exportações da Tela" },
+      "direction": { "title": "Direção do layout", "vertical": "De cima para baixo", "horizontal": "Da esquerda para direita" }
+    },
+    "clipboard": { "copied": "{count} nós copiados" },
+    "contextMenu": { "selectAll": "Selecionar tudo", "copy": "Copiar", "paste": "Colar", "duplicate": "Duplicar", "delete": "Excluir seleção" },
+    "empty": {
+      "title": "Nenhuma tela ainda",
+      "description": "Crie uma tela para organizar ideias com diagramas e desenho livre."
+    }
+  },
   "navigation": {
+    "canvases": "Tela",
     "chat": "Conversa",
     "record": "Registro",
     "quickRecord": "Registro Rápido",
@@ -2527,7 +2585,7 @@
     "showLeftSidebar": "Mostrar Barra Lateral Esquerda",
     "hideRightSidebar": "Ocultar Barra Lateral Direita",
     "showRightSidebar": "Mostrar Barra Lateral Direita",
-    "searchPlaceholder": "Pesquisar notas ou registros...",
+    "searchPlaceholder": "Pesquisar notas, registros ou telas...",
     "showCenterPanel": "Mostrar editor",
     "hideCenterPanel": "Ocultar editor",
     "navigate": "Navegar"

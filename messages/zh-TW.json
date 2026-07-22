@@ -2487,13 +2487,14 @@
     }
   },
   "search": {
-    "placeholder": "搜尋筆記和文章...",
+    "placeholder": "搜尋筆記、記錄和畫布...",
     "results": "{count} 個搜索結果",
     "noResults": "暫無搜索結果",
     "tryDifferentKeywords": "嘗試使用不同的關鍵字搜索",
     "item": {
       "record": "記錄",
       "article": "文章",
+      "canvas": "畫布",
       "matches": "{count}個匹配項",
       "scanType": "截圖"
     }
@@ -2507,7 +2508,64 @@
       "howToUse": "如何使用同步功能？"
     }
   },
+  "canvas": {
+    "new": "新增畫布",
+    "chooseTemplate": "選擇範本",
+    "manager": { "title": "繪圖管理器", "view": "檢視", "grid": "縮圖檢視", "list": "清單檢視", "switchToGrid": "切換到縮圖檢視", "switchToList": "切換到清單檢視", "sort": { "title": "排序", "updated": "最近修改", "created": "建立時間", "name": "名稱" }, "pin": "置頂畫布", "unpin": "取消置頂", "refreshThumbnails": "重新產生縮圖", "closeTrash": "關閉最近刪除", "trashEmpty": "最近刪除是空的", "trashEmptyDescription": "刪除的畫布會顯示在這裡。", "trashCount": "共 {count} 個已刪除畫布", "count": "共 {count} 個畫布" },
+    "templates": { "blank": "空白畫布", "flowchart": "流程圖", "mindmap": "心智圖" },
+    "untitled": "未命名畫布",
+    "more": "更多操作",
+    "open": "開啟畫布",
+    "duplicate": "建立副本",
+    "duplicateTitle": "{title} 副本",
+    "delete": "刪除畫布",
+    "trash": "最近刪除",
+    "restore": "復原畫布",
+    "deleteDialog": { "title": "刪除這張畫布？", "description": "「{title}」會移到最近刪除，你可以稍後復原。", "cancel": "取消", "confirm": "移到最近刪除" },
+    "rename": "重新命名",
+    "loading": "正在載入畫布...",
+    "undo": "復原",
+    "redo": "重做",
+    "layout": "整理",
+    "export": "匯出",
+    "exportSuccess": "畫布已匯出",
+    "exportWorkspaceSuccess": "已匯出到檔案管理器：{path}",
+    "exportError": "匯出畫布失敗",
+    "aiPreview": "AI 修改預覽",
+    "tools": { "select": "選取", "hand": "抓手", "pen": "畫筆", "highlighter": "螢光筆", "eraser": "橡皮擦" },
+    "brush": { "title": "畫筆設定", "description": "調整目前繪圖工具的顏色和粗細。", "color": "顏色", "size": "粗細" },
+    "nodes": { "process": "處理步驟", "decision": "判斷條件", "terminator": "開始 / 結束", "text": "文字", "note": "筆記引用", "image": "圖片", "link": "網頁連結", "todo": "待辦事項", "group": "群組" },
+    "linkNode": { "urlPrompt": "輸入網頁位址", "labelPrompt": "輸入連結標題" },
+    "utilityNodes": { "title": "實用節點", "description": "新增圖片、網頁連結或待辦事項。" },
+    "arrange": { "title": "對齊與群組", "description": "整理目前選取的節點。", "alignHorizontal": "水平置中對齊", "alignVertical": "垂直置中對齊", "distributeHorizontal": "水平平均分布", "distributeVertical": "垂直平均分布", "group": "建立群組" },
+    "group": { "defaultLabel": "群組" },
+    "selectionAi": { "title": "選區 AI", "description": "只修改目前選取的節點。", "expand": "繼續拆解步驟", "branches": "產生三個分支", "review": "檢查流程問題", "expandPrompt": "繼續拆解選取的步驟，補充必要的後續節點與連線。", "branchesPrompt": "從選取的節點產生三個合理分支並連接。", "reviewPrompt": "檢查選取節點相關的流程問題，並只完善這些節點與連線。" },
+    "edge": { "title": "連線樣式", "description": "調整選取連線的路徑和文字。", "orthogonal": "折線", "straight": "直線", "curve": "曲線", "editLabel": "編輯連線文字", "labelPrompt": "輸入連線文字" },
+    "history": { "title": "畫布版本歷史", "description": "自動保留最近 50 個版本，還原前也會儲存目前版本。", "empty": "尚無歷史版本", "summary": "{nodes} 個節點 · {edges} 條連線", "restored": "歷史版本已還原" },
+    "noteNode": { "title": "新增筆記引用", "description": "從檔案管理器選擇一篇筆記，雙擊節點可以開啟原始檔案。", "search": "搜尋筆記...", "empty": "找不到筆記", "group": "工作區筆記", "added": "已新增筆記「{name}」" },
+    "footer": {
+      "nodes": "{count} 個節點",
+      "edges": "{count} 條連線",
+      "selected": "已選 {count} 項",
+      "localSave": "本機自動儲存",
+      "grid": "顯示網格",
+      "snap": "吸附到網格",
+      "fit": "符合檢視",
+      "layout": "自動整理",
+      "history": "版本歷史",
+      "export": "匯出 PNG",
+      "exportMenu": { "computer": "儲存到電腦", "workspace": "匯出到檔案管理器", "png2x": "PNG · 2× 高解析", "png4x": "PNG · 4× 超高解析", "svg": "SVG · 向量圖", "workspacePng": "PNG 到「畫布匯出」", "workspaceSvg": "SVG 到「畫布匯出」" },
+      "direction": { "title": "版面方向", "vertical": "由上至下", "horizontal": "由左至右" }
+    },
+    "clipboard": { "copied": "已複製 {count} 個節點" },
+    "contextMenu": { "selectAll": "全選", "copy": "複製", "paste": "貼上", "duplicate": "建立副本", "delete": "刪除所選內容" },
+    "empty": {
+      "title": "還沒有畫布",
+      "description": "建立畫布，用結構圖和自由繪畫整理想法。"
+    }
+  },
   "navigation": {
+    "canvases": "畫布",
     "chat": "對話",
     "record": "記錄",
     "quickRecord": "快捷記錄",
@@ -2534,7 +2592,7 @@
     "showLeftSidebar": "顯示左側邊欄",
     "hideRightSidebar": "隱藏右側邊欄",
     "showRightSidebar": "顯示右側邊欄",
-    "searchPlaceholder": "搜索筆記或記錄...",
+    "searchPlaceholder": "搜尋筆記、記錄或畫布...",
     "showCenterPanel": "显示编辑器",
     "hideCenterPanel": "隐藏编辑器",
     "navigate": "導覽"

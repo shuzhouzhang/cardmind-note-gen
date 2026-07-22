@@ -63,6 +63,22 @@ export function AgentApprovalPanel({
     }
   }, [pendingConfirmation])
 
+  React.useEffect(() => {
+    if (pendingConfirmation?.toolName !== "canvas_apply_operations") {
+      emitter.emit("canvas-agent-preview-clear")
+      return
+    }
+
+    const operations = pendingConfirmation.params.operations
+    if (!Array.isArray(operations)) {
+      emitter.emit("canvas-agent-preview-clear")
+      return
+    }
+
+    emitter.emit("canvas-agent-preview", { operations })
+    return () => emitter.emit("canvas-agent-preview-clear")
+  }, [pendingConfirmation])
+
   const approvalPreview = React.useMemo(() => {
     if (!pendingConfirmation) return null
     return formatConfirmationPreview(

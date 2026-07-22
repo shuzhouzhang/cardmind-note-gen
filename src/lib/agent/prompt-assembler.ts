@@ -105,6 +105,21 @@ function formatActiveFile(context: AgentContextSnapshot) {
   ].join('\n')
 }
 
+function formatActiveCanvas(context: AgentContextSnapshot) {
+  if (!context.activeCanvasId) {
+    return ''
+  }
+
+  return [
+    '## Current Open Canvas',
+    `The current canvas ID is "${context.activeCanvasId}".`,
+    'The user is working in NoteGen\'s native visual canvas, not in a Markdown or Mermaid file.',
+    'When the request mentions the current canvas, diagram, nodes, or connections, you MUST use canvas_get_state and canvas_apply_operations. Never substitute note, file, or editor tools and never create Mermaid unless the user explicitly asks for a Markdown/Mermaid export.',
+    'Call canvas_get_state before modifying an existing canvas so you can reference its real node IDs. Then use canvas_apply_operations to create or modify nodes and connections on this canvas.',
+    'For a new diagram, choose short stable node IDs, add nodes before their edges, and place nodes on a readable grid. Use decision nodes only for branches or questions. Do not create freehand strokes with AI tools.',
+  ].join('\n')
+}
+
 function formatQuote(context: AgentContextSnapshot) {
   const quote = context.currentQuote
   if (!quote) {
@@ -197,6 +212,7 @@ export class AgentPromptAssembler {
       'Structured tool definitions contain the authoritative descriptions and parameters. Use these exact names:',
       formatToolCatalog(tools),
       formatActiveFile(context),
+      formatActiveCanvas(context),
       formatEditorSelection(context),
       formatQuote(context),
       formatAttachments(context),

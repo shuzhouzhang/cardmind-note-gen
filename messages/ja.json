@@ -2495,7 +2495,64 @@
       "howToUse": "同期機能の使い方は？"
     }
   },
+  "canvas": {
+    "new": "キャンバスを作成",
+    "chooseTemplate": "テンプレートを選択",
+    "manager": { "title": "キャンバスマネージャー", "view": "表示", "grid": "サムネイル表示", "list": "リスト表示", "switchToGrid": "サムネイル表示に切り替え", "switchToList": "リスト表示に切り替え", "sort": { "title": "並び替え", "updated": "更新日時", "created": "作成日時", "name": "名前" }, "pin": "キャンバスを固定", "unpin": "固定を解除", "refreshThumbnails": "サムネイルを再生成", "closeTrash": "最近削除した項目を閉じる", "trashEmpty": "最近削除した項目はありません", "trashEmptyDescription": "削除したキャンバスがここに表示されます。", "trashCount": "削除済みキャンバス {count} 件", "count": "キャンバス {count} 件" },
+    "templates": { "blank": "空白のキャンバス", "flowchart": "フローチャート", "mindmap": "マインドマップ" },
+    "untitled": "無題のキャンバス",
+    "more": "その他の操作",
+    "open": "キャンバスを開く",
+    "duplicate": "複製",
+    "duplicateTitle": "{title} のコピー",
+    "delete": "キャンバスを削除",
+    "trash": "最近削除した項目",
+    "restore": "キャンバスを復元",
+    "deleteDialog": { "title": "このキャンバスを削除しますか？", "description": "「{title}」は最近削除した項目に移動し、後で復元できます。", "cancel": "キャンセル", "confirm": "最近削除した項目に移動" },
+    "rename": "名前を変更",
+    "loading": "キャンバスを読み込み中...",
+    "undo": "元に戻す",
+    "redo": "やり直す",
+    "layout": "整列",
+    "export": "書き出す",
+    "exportSuccess": "キャンバスを書き出しました",
+    "exportWorkspaceSuccess": "ファイルマネージャーに書き出しました：{path}",
+    "exportError": "キャンバスの書き出しに失敗しました",
+    "aiPreview": "AI 変更プレビュー",
+    "tools": { "select": "選択", "hand": "手のひら", "pen": "ペン", "highlighter": "蛍光ペン", "eraser": "消しゴム" },
+    "brush": { "title": "ブラシ設定", "description": "現在の描画ツールの色と太さを調整します。", "color": "色", "size": "太さ" },
+    "nodes": { "process": "処理", "decision": "条件", "terminator": "開始 / 終了", "text": "テキスト", "note": "ノート参照", "image": "画像", "link": "ウェブリンク", "todo": "タスク", "group": "グループ" },
+    "linkNode": { "urlPrompt": "ウェブアドレスを入力", "labelPrompt": "リンクタイトルを入力" },
+    "utilityNodes": { "title": "実用ノード", "description": "画像、ウェブリンク、タスクを追加します。" },
+    "arrange": { "title": "整列とグループ", "description": "選択したノードを整理します。", "alignHorizontal": "水平中央揃え", "alignVertical": "垂直中央揃え", "distributeHorizontal": "水平方向に均等配置", "distributeVertical": "垂直方向に均等配置", "group": "グループを作成" },
+    "group": { "defaultLabel": "グループ" },
+    "selectionAi": { "title": "選択範囲 AI", "description": "現在選択中のノードだけを変更します。", "expand": "手順を分解", "branches": "3つの分岐を作成", "review": "フローを確認", "expandPrompt": "選択した手順を分解し、必要な後続ノードと接続を追加してください。", "branchesPrompt": "選択したノードから合理的な3つの分岐を作成して接続してください。", "reviewPrompt": "選択したノード周辺の問題を確認し、そのノードと接続だけを改善してください。" },
+    "edge": { "title": "接続スタイル", "description": "選択した接続の経路とラベルを調整します。", "orthogonal": "折れ線", "straight": "直線", "curve": "曲線", "editLabel": "ラベルを編集", "labelPrompt": "接続ラベルを入力" },
+    "history": { "title": "キャンバスのバージョン履歴", "description": "最新50件を保持し、復元前に現在の状態も保存します。", "empty": "履歴はまだありません", "summary": "{nodes} ノード · {edges} 接続", "restored": "以前のバージョンを復元しました" },
+    "noteNode": { "title": "ノート参照を追加", "description": "ファイルマネージャーからノートを選択します。ノードをダブルクリックすると元ファイルを開けます。", "search": "ノートを検索...", "empty": "ノートが見つかりません", "group": "ワークスペースのノート", "added": "ノート「{name}」を追加しました" },
+    "footer": {
+      "nodes": "{count} ノード",
+      "edges": "{count} 接続",
+      "selected": "{count} 件を選択",
+      "localSave": "ローカルに自動保存",
+      "grid": "グリッドを表示",
+      "snap": "グリッドにスナップ",
+      "fit": "全体を表示",
+      "layout": "自動整列",
+      "history": "バージョン履歴",
+      "export": "PNGを書き出す",
+      "exportMenu": { "computer": "コンピューターに保存", "workspace": "ファイルマネージャーに書き出す", "png2x": "PNG · 2× 高解像度", "png4x": "PNG · 4× 超高解像度", "svg": "SVG · ベクター", "workspacePng": "PNG をキャンバス書き出しへ", "workspaceSvg": "SVG をキャンバス書き出しへ" },
+      "direction": { "title": "レイアウト方向", "vertical": "上から下", "horizontal": "左から右" }
+    },
+    "clipboard": { "copied": "{count} 個のノードをコピーしました" },
+    "contextMenu": { "selectAll": "すべて選択", "copy": "コピー", "paste": "貼り付け", "duplicate": "複製", "delete": "選択項目を削除" },
+    "empty": {
+      "title": "キャンバスはまだありません",
+      "description": "図とフリーハンド描画でアイデアを整理できます。"
+    }
+  },
   "navigation": {
+    "canvases": "キャンバス",
     "chat": "チャット",
     "record": "記録",
     "quickRecord": "クイック記録",
@@ -2522,7 +2579,7 @@
     "showLeftSidebar": "左サイドバーを表示",
     "hideRightSidebar": "右サイドバーを非表示",
     "showRightSidebar": "右サイドバーを表示",
-    "searchPlaceholder": "ノートまたは記録を検索...",
+    "searchPlaceholder": "ノート、記録、キャンバスを検索...",
     "showCenterPanel": "显示编辑器",
     "hideCenterPanel": "隐藏编辑器",
     "navigate": "ナビゲーション"
@@ -2574,13 +2631,14 @@
     "convert_button": "変換"
   },
   "search": {
-    "placeholder": "ノートと記事を検索...",
+    "placeholder": "ノート、記録、キャンバスを検索...",
     "results": "{count} 件の検索結果",
     "noResults": "検索結果がありません",
     "tryDifferentKeywords": "別のキーワードで検索してみてください",
     "item": {
       "record": "記録",
       "article": "記事",
+      "canvas": "キャンバス",
       "matches": "{count}件の一致",
       "scanType": "スキャン"
     }

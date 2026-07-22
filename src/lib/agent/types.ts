@@ -53,6 +53,7 @@ export type AgentToolCategory =
   | 'mcp'
   | 'system'
   | 'attachment'
+  | 'canvas'
 
 export type AgentToolRisk =
   | 'read'
@@ -70,6 +71,7 @@ export type AgentPermissionMode = 'read-only' | 'ask' | 'auto-edit'
 export interface AgentContextSnapshot {
   activeChatId?: number
   activeFilePath?: string
+  activeCanvasId?: string
   currentEditorState?: AgentEditorStateSnapshot
   userInput: string
   currentQuote?: AgentQuoteSnapshot
@@ -119,7 +121,7 @@ export interface AgentToolExecutionContext {
 
 export interface AgentChange {
   id: string
-  type: 'editor' | 'file' | 'tag' | 'mark' | 'memory' | 'chat' | 'folder'
+  type: 'editor' | 'file' | 'tag' | 'mark' | 'memory' | 'chat' | 'folder' | 'canvas'
   target: string
   before?: string
   after?: string
@@ -213,6 +215,7 @@ export interface AgentRuntimeInput {
   imageUrls?: string[]
   activeChatId?: number
   activeFilePath?: string
+  activeCanvasId?: string
   currentEditorState?: AgentEditorStateSnapshot
   currentQuote?: AgentQuoteSnapshot
   availableSkills?: AgentSkillSummary[]

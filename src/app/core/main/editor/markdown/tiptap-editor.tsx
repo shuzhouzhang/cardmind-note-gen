@@ -37,7 +37,7 @@ import { openPath, openUrl } from '@tauri-apps/plugin-opener'
 import { open } from '@tauri-apps/plugin-dialog'
 import { BaseDirectory, readFile } from '@tauri-apps/plugin-fs'
 import { appDataDir, join } from '@tauri-apps/api/path'
-import { handleImageUpload } from '@/lib/image-handler'
+import { handleImageUpload, saveImageToWorkspace } from '@/lib/image-handler'
 import useArticleStore from '@/stores/article'
 import { cn, convertImageByWorkspace } from '@/lib/utils'
 import { resolveImagePathFromMarkdown } from '@/lib/markdown-image-path'
@@ -80,6 +80,9 @@ import { MobileEditorMoreSheet } from './mobile-editor-more-sheet'
 import { MobileWritingToolbar } from './mobile-writing-toolbar'
 import { shouldRestorePendingQuote } from './quote-session'
 import { getEditorContentContainerClass } from '@/lib/editor-layout-styles'
+import { getCanvasDragId, hasCanvasDragData } from '@/lib/canvas/canvas-dnd'
+import { canvasDocumentToPngFile } from '@/lib/canvas/static-export'
+import { getCanvasProject } from '@/db/canvases'
 import { getResultIndexToFocus } from './search-navigation'
 import {
   DEFAULT_OUTLINE_WIDTH,
@@ -2686,7 +2689,9 @@ export function TipTapEditor({
       const dataTransfer = event.dataTransfer
       if (!dataTransfer) return
 
+      const hasCanvas = hasCanvasDragData(dataTransfer)
       const hasDroppedFiles =
+        hasCanvas ||
         hasFileManagerDragData(dataTransfer) ||
         dataTransfer.files.length > 0 ||
         getFileUrlsFromDataTransfer(dataTransfer).length > 0
@@ -2705,6 +2710,29 @@ export function TipTapEditor({
       const insertPos = pos?.pos || editor.state.selection.from
 
       void (async () => {
+        if (hasCanvas) {
+          const canvasId = getCanvasDragId(dataTransfer)
+          const project = canvasId ? await getCanvasProject(canvasId) : null
+          const activeFilePath = activeFilePathRef.current
+          if (!project || !activeFilePath) throw new Error('无法读取画布或当前 Markdown 文件')
+          const safeTitle = project.title.replace(/[\\/:*?"<>|]/g, '-').trim() || 'NoteGen-Canvas'
+          const imageFile = await canvasDocumentToPngFile(project.document, `${safeTitle}.png`)
+          const result = await saveImageToWorkspace(imageFile, activeFilePath)
+          editor.chain()
+            .focus()
+            .insertContentAt(insertPos, {
+              type: 'image',
+              attrs: {
+                src: result.src,
+                alt: project.title,
+                relativeSrc: result.relativePath,
+              },
+            })
+            .run()
+          toast({ title: '画布已插入', description: `已生成静态图片：${result.relativePath}` })
+          return
+        }
+
         if (droppedImageFiles.length > 0 && droppedImageFiles.length === droppedFiles.length) {
           const uploadedImages = await Promise.all(
             droppedImageFiles.map(async file => ({

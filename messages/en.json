@@ -2496,6 +2496,10 @@
                 "title": "Insert at cursor",
                 "description": "Content will be inserted at the current cursor position."
               },
+              "canvas_apply_operations": {
+                "title": "Modify current canvas",
+                "description": "Preview the node and connection operations AI will apply to the native canvas."
+              },
               "delete_markdown_file": {
                 "title": "Delete file",
                 "description": "The selected file will be permanently deleted."
@@ -2580,13 +2584,14 @@
     }
   },
   "search": {
-    "placeholder": "Search notes and articles...",
+    "placeholder": "Search notes, records, and canvases...",
     "results": "{count} search results",
     "noResults": "No search results",
     "tryDifferentKeywords": "Try using different keywords",
     "item": {
       "record": "Record",
       "article": "Article",
+      "canvas": "Canvas",
       "matches": "{count} matches",
       "scanType": "scan"
     }
@@ -2600,7 +2605,64 @@
       "howToUse": "How to use sync feature?"
     }
   },
+  "canvas": {
+    "new": "New canvas",
+    "chooseTemplate": "Choose a template",
+    "manager": { "title": "Canvas manager", "view": "View", "grid": "Thumbnail view", "list": "List view", "switchToGrid": "Switch to thumbnail view", "switchToList": "Switch to list view", "sort": { "title": "Sort", "updated": "Last modified", "created": "Date created", "name": "Name" }, "pin": "Pin canvas", "unpin": "Unpin canvas", "refreshThumbnails": "Regenerate thumbnails", "closeTrash": "Close recently deleted", "trashEmpty": "Recently deleted is empty", "trashEmptyDescription": "Deleted canvases will appear here.", "trashCount": "{count} deleted canvases", "count": "{count} canvases" },
+    "templates": { "blank": "Blank canvas", "flowchart": "Flowchart", "mindmap": "Mind map" },
+    "untitled": "Untitled canvas",
+    "more": "More actions",
+    "open": "Open canvas",
+    "duplicate": "Duplicate",
+    "duplicateTitle": "{title} copy",
+    "delete": "Delete canvas",
+    "trash": "Recently deleted",
+    "restore": "Restore canvas",
+    "deleteDialog": { "title": "Delete this canvas?", "description": "“{title}” will move to Recently Deleted and can be restored later.", "cancel": "Cancel", "confirm": "Move to Recently Deleted" },
+    "rename": "Rename",
+    "loading": "Loading canvas...",
+    "undo": "Undo",
+    "redo": "Redo",
+    "layout": "Arrange",
+    "export": "Export",
+    "exportSuccess": "Canvas exported",
+    "exportWorkspaceSuccess": "Exported to file manager: {path}",
+    "exportError": "Failed to export canvas",
+    "aiPreview": "AI change preview",
+    "tools": { "select": "Select", "hand": "Hand", "pen": "Pen", "highlighter": "Highlighter", "eraser": "Eraser" },
+    "brush": { "title": "Brush settings", "description": "Adjust the color and width of the current drawing tool.", "color": "Color", "size": "Width" },
+    "nodes": { "process": "Process", "decision": "Decision", "terminator": "Start / End", "text": "Text", "note": "Note reference", "image": "Image", "link": "Web link", "todo": "Todo", "group": "Group" },
+    "linkNode": { "urlPrompt": "Enter a web address", "labelPrompt": "Enter a link title" },
+    "utilityNodes": { "title": "Utility nodes", "description": "Add an image, web link, or todo." },
+    "arrange": { "title": "Align and group", "description": "Arrange the selected nodes.", "alignHorizontal": "Align horizontal centers", "alignVertical": "Align vertical centers", "distributeHorizontal": "Distribute horizontally", "distributeVertical": "Distribute vertically", "group": "Create group" },
+    "group": { "defaultLabel": "Group" },
+    "selectionAi": { "title": "Selection AI", "description": "Modify only the currently selected nodes.", "expand": "Break down steps", "branches": "Create three branches", "review": "Review flow issues", "expandPrompt": "Break down the selected steps and add the necessary following nodes and connections.", "branchesPrompt": "Create three reasonable branches from the selected nodes and connect them.", "reviewPrompt": "Review flow issues around the selected nodes and improve only those nodes and connections." },
+    "edge": { "title": "Connection style", "description": "Adjust the selected connection path and label.", "orthogonal": "Orthogonal", "straight": "Straight", "curve": "Curve", "editLabel": "Edit label", "labelPrompt": "Enter connection label" },
+    "history": { "title": "Canvas version history", "description": "Keeps the latest 50 versions. The current version is saved before restoring.", "empty": "No previous versions", "summary": "{nodes} nodes · {edges} connections", "restored": "Previous version restored" },
+    "noteNode": { "title": "Add note reference", "description": "Choose a note from the file manager. Double-click the node to open its source file.", "search": "Search notes...", "empty": "No notes found", "group": "Workspace notes", "added": "Added note “{name}”" },
+    "footer": {
+      "nodes": "{count} nodes",
+      "edges": "{count} connections",
+      "selected": "{count} selected",
+      "localSave": "Saved locally",
+      "grid": "Show grid",
+      "snap": "Snap to grid",
+      "fit": "Fit view",
+      "layout": "Auto arrange",
+      "history": "Version history",
+      "export": "Export PNG",
+      "exportMenu": { "computer": "Save to computer", "workspace": "Export to file manager", "png2x": "PNG · 2× high resolution", "png4x": "PNG · 4× ultra resolution", "svg": "SVG · vector", "workspacePng": "PNG to Canvas Exports", "workspaceSvg": "SVG to Canvas Exports" },
+      "direction": { "title": "Layout direction", "vertical": "Top to bottom", "horizontal": "Left to right" }
+    },
+    "clipboard": { "copied": "Copied {count} nodes" },
+    "contextMenu": { "selectAll": "Select all", "copy": "Copy", "paste": "Paste", "duplicate": "Duplicate", "delete": "Delete selection" },
+    "empty": {
+      "title": "No canvases yet",
+      "description": "Create a canvas to organize ideas with diagrams and freehand drawing."
+    }
+  },
   "navigation": {
+    "canvases": "Canvas",
     "chat": "Chat",
     "record": "Record",
     "quickRecord": "Quick Record",
@@ -2629,7 +2691,7 @@
     "hideCenterPanel": "Hide Editor",
     "showRightSidebar": "Show Right Sidebar",
     "hideRightSidebar": "Hide Right Sidebar",
-    "searchPlaceholder": "Search notes or records...",
+    "searchPlaceholder": "Search notes, records, or canvases...",
     "navigate": "Navigate"
   },
   "activity": {

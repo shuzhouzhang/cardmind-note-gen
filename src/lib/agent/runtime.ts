@@ -679,6 +679,10 @@ function selectToolsForContext(
     selectedTools = selectedTools.filter((tool) => tool.category !== 'editor')
   }
 
+  if (!context.activeCanvasId) {
+    selectedTools = selectedTools.filter((tool) => tool.category !== 'canvas')
+  }
+
   if (!context.attachments?.length) {
     selectedTools = selectedTools.filter((tool) => tool.category !== 'attachment')
   }
@@ -775,6 +779,7 @@ export class AgentRuntime {
     const context: AgentContextSnapshot = {
       activeChatId: input.activeChatId,
       activeFilePath: input.activeFilePath,
+      activeCanvasId: input.activeCanvasId,
       currentEditorState: input.currentEditorState,
       userInput: input.userInput,
       currentQuote: input.currentQuote,
@@ -789,6 +794,7 @@ export class AgentRuntime {
       runId,
       activeChatId: input.activeChatId,
       activeFilePath: input.activeFilePath || null,
+      activeCanvasId: input.activeCanvasId || null,
       userInput: input.userInput,
       imageCount: input.imageUrls?.length || 0,
       hasQuote: Boolean(input.currentQuote),
