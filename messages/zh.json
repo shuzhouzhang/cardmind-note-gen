@@ -2608,7 +2608,7 @@
   "canvas": {
     "new": "新建画布",
     "chooseTemplate": "选择模板",
-    "manager": { "title": "绘图管理器", "view": "视图", "grid": "缩略图视图", "list": "列表视图", "switchToGrid": "切换到缩略图视图", "switchToList": "切换到列表视图", "sort": { "title": "排序", "updated": "最近修改", "created": "创建时间", "name": "名称" }, "pin": "置顶画布", "unpin": "取消置顶", "refreshThumbnails": "重新生成缩略图", "closeTrash": "关闭最近删除", "trashEmpty": "最近删除为空", "trashEmptyDescription": "删除的画布会显示在这里。", "trashCount": "共 {count} 个已删除画布", "count": "共 {count} 个画布" },
+    "manager": { "title": "绘图管理器", "view": "视图", "grid": "缩略图视图", "list": "列表视图", "switchToGrid": "切换到缩略图视图", "switchToList": "切换到列表视图", "sort": { "title": "排序", "updated": "最近修改", "created": "创建时间", "name": "名称" }, "pin": "置顶画布", "unpin": "取消置顶", "refreshThumbnails": "重新生成缩略图", "closeTrash": "返回绘图管理器", "trashEmpty": "最近删除为空", "trashEmptyDescription": "删除的画布会显示在这里。", "trashCount": "共 {count} 个已删除画布", "sync": { "upload": "上传", "pending": "等待上传", "clickToUpload": "等待上传，点击立即上传", "uploading": "正在上传", "synced": "已上传", "failed": "上传失败", "downloadingAll": "正在拉取远程画布", "deleting": "正在删除并同步", "permanentlyDeleting": "正在永久删除" }, "count": "共 {count} 个画布" },
     "templates": { "blank": "空白画布", "flowchart": "流程图", "mindmap": "思维导图", "timeline": "时间线", "quadrant": "四象限", "kanban": "看板", "swot": "SWOT 分析" },
     "import": { "action": "导入画布或 Mermaid", "fileType": "画布文件", "defaultTitle": "导入的画布", "success": "画布导入成功", "error": "无法导入这个文件" },
     "untitled": "未命名画布",
@@ -2619,6 +2619,8 @@
     "trash": "最近删除",
     "restore": "恢复画布",
     "deleteDialog": { "title": "删除这张画布？", "description": "“{title}”会移到最近删除，你可以稍后恢复。", "cancel": "取消", "confirm": "移到最近删除" },
+    "permanentDelete": "永久删除",
+    "permanentDeleteDialog": { "title": "永久删除这张画布？", "description": "“{title}”的本地内容会被删除；如已配置同步，远程同步文件也会一并删除。此操作无法撤销。", "cancel": "取消", "confirm": "永久删除", "deleting": "正在删除", "error": "永久删除失败，请检查同步配置和网络后重试。" },
     "rename": "重命名",
     "loading": "正在加载画布...",
     "undo": "撤销",

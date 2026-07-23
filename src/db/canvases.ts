@@ -184,14 +184,18 @@ export async function setCanvasPinnedAt(id: string, pinnedAt: number | null) {
   return updatedAt
 }
 
-export async function softDeleteCanvasProject(id: string) {
+export async function softDeleteCanvasProject(
+  id: string,
+  options: { enqueueSync?: boolean } = {}
+) {
   const db = await getDb()
   const deletedAt = Date.now()
   await db.execute(
     'update canvases set deletedAt = $1, updatedAt = $1 where id = $2',
     [deletedAt, id]
   )
-  enqueueCanvasSync('canvas-deleted')
+  if (options.enqueueSync !== false) enqueueCanvasSync('canvas-deleted')
+  return deletedAt
 }
 
 export async function restoreCanvasProject(id: string) {
@@ -203,6 +207,11 @@ export async function restoreCanvasProject(id: string) {
   )
   enqueueCanvasSync('canvas-restored')
   return getCanvasProject(id)
+}
+
+export async function permanentlyDeleteCanvasProject(id: string) {
+  const db = await getDb()
+  await db.execute('delete from canvases where id = $1', [id])
 }
 
 export async function replaceAllCanvasProjects(projects: CanvasProject[]) {

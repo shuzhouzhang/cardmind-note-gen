@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useRef, useState, useEffect, memo } from 'react'
-import { X, FileText, Folder, Plus, Undo2, Redo2, PanelsTopLeft } from 'lucide-react'
+import { X, FileText, Folder, Plus, Undo2, Redo2, PencilRuler } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import emitter from '@/lib/emitter'
@@ -157,7 +157,7 @@ function SortableTabWithMenu({
               {recordTypeLabel}
             </span>
           ) : isCanvasTab ? (
-            <PanelsTopLeft className={cn('size-4 shrink-0', isActive && 'text-primary')} />
+            <PencilRuler className={cn('size-4 shrink-0', isActive && 'text-primary')} />
           ) : tab.isFolder ? (
             <Folder className="w-4 h-4 shrink-0 text-amber-500" />
           ) : (

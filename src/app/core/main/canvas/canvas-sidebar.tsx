@@ -5,7 +5,8 @@ import Image from 'next/image'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readTextFile } from '@tauri-apps/plugin-fs'
-import { ArrowDownAZ, BrainCircuit, CalendarDays, Columns3, CopyPlus, EllipsisVertical, FileInput, FilePlus2, Grid2X2, LayoutGrid, List, MoreHorizontal, PanelsTopLeft, Pencil, Pin, PinOff, RefreshCw, RotateCcw, ShieldQuestion, Timer, Trash2, Workflow, XCircle } from 'lucide-react'
+import { Store } from '@tauri-apps/plugin-store'
+import { ArrowDownAZ, ArrowLeft, BrainCircuit, CalendarDays, CloudAlert, CloudCheck, CloudUpload, Columns3, CopyPlus, DownloadCloud, EllipsisVertical, FileInput, FilePlus2, Grid2X2, LayoutGrid, List, Loader2, MoreHorizontal, PanelsTopLeft, Pencil, Pin, PinOff, RefreshCw, RotateCcw, ShieldQuestion, Timer, Trash2, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
@@ -54,11 +55,69 @@ import useCanvasStore from '@/stores/canvas'
 import type { CanvasSortMode } from '@/stores/canvas'
 import type { CanvasProject, CanvasProjectType } from '@/types/canvas'
 import useArticleStore from '@/stores/article'
+import {
+  getAutoDataSyncState,
+  isAutoDataSyncProviderConfigured,
+  subscribeAutoDataSyncState,
+  type AutoDataSyncState,
+} from '@/lib/sync/auto-data-sync-queue'
+import { uploadCanvas } from '@/lib/sync/canvas-sync'
 import { createCanvasTab, getCanvasTabPath } from './canvas-tab'
 import { setCanvasDragData } from '@/lib/canvas/canvas-dnd'
 import { canvasDocumentToSvg } from '@/lib/canvas/static-export'
 import { parseCanvasProjectFile } from '@/lib/canvas/file-format'
 import { mermaidToCanvasDocument } from '@/lib/canvas/mermaid'
+
+type CanvasSyncDisplayStatus = 'pending' | 'uploading' | 'synced' | 'failed'
+
+function CanvasSyncIndicator({
+  status,
+  label,
+  className,
+  onClick,
+}: {
+  status: CanvasSyncDisplayStatus
+  label: string
+  className?: string
+  onClick?: () => void
+}) {
+  const Icon = status === 'uploading'
+    ? Loader2
+    : status === 'synced'
+      ? CloudCheck
+      : status === 'failed'
+        ? CloudAlert
+        : CloudUpload
+
+  const indicatorClassName = cn(
+    'flex size-6 items-center justify-center rounded-md border shadow-sm backdrop-blur',
+    status === 'uploading' && 'border-primary/40 bg-primary/10 text-primary',
+    status === 'synced' && 'border-border bg-background/90 text-muted-foreground',
+    status === 'failed' && 'border-destructive/60 bg-destructive/15 text-destructive',
+    status === 'pending' && 'border-amber-500/60 bg-amber-500/15 text-amber-600 dark:text-amber-400',
+    onClick && 'cursor-pointer hover:bg-amber-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50',
+    className
+  )
+  const icon = (<>
+    <Icon className={cn('size-3.5', status === 'uploading' && 'animate-spin')} aria-hidden="true" />
+    <span className="sr-only">{label}</span>
+  </>)
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {onClick ? (
+          <button type="button" className={indicatorClassName} onClick={onClick}>
+            {icon}
+          </button>
+        ) : (
+          <span className={indicatorClassName}>{icon}</span>
+        )}
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
 
 function CanvasThumbnail({ project, compact = false }: { project: CanvasProject; compact?: boolean }) {
   const fallback = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(canvasDocumentToSvg(project.document))}`
@@ -96,6 +155,15 @@ export function CanvasActions() {
   const setTrashMode = useCanvasStore(state => state.setTrashMode)
   const addTab = useArticleStore(state => state.addTab)
   const [refreshing, setRefreshing] = useState(false)
+
+  useEffect(() => {
+    if (!trashMode) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) setTrashMode(false)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [setTrashMode, trashMode])
 
   const handleCreate = async (canvasType: CanvasProjectType) => {
     const project = await createProject(canvasType, t(`templates.${canvasType}`))
@@ -149,31 +217,33 @@ export function CanvasActions() {
 
   return (
     <div className="flex items-center justify-end gap-1">
-      <DropdownMenu>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label={t('new')}>
-                <FilePlus2 />
-              </Button>
-            </DropdownMenuTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{t('new')}</TooltipContent>
-        </Tooltip>
-        <DropdownMenuContent align="end">
-          <DropdownMenuLabel>{t('chooseTemplate')}</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem onClick={() => void handleCreate('blank')}><FilePlus2 />{t('templates.blank')}</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void handleCreate('flowchart')}><Workflow />{t('templates.flowchart')}</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void handleCreate('mindmap')}><BrainCircuit />{t('templates.mindmap')}</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void handleCreate('timeline')}><Timer />{t('templates.timeline')}</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void handleCreate('quadrant')}><Grid2X2 />{t('templates.quadrant')}</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void handleCreate('kanban')}><Columns3 />{t('templates.kanban')}</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void handleCreate('swot')}><ShieldQuestion />{t('templates.swot')}</DropdownMenuItem>
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {!trashMode && (
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label={t('new')}>
+                  <FilePlus2 />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('new')}</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>{t('chooseTemplate')}</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem onClick={() => void handleCreate('blank')}><FilePlus2 />{t('templates.blank')}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void handleCreate('flowchart')}><Workflow />{t('templates.flowchart')}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void handleCreate('mindmap')}><BrainCircuit />{t('templates.mindmap')}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void handleCreate('timeline')}><Timer />{t('templates.timeline')}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void handleCreate('quadrant')}><Grid2X2 />{t('templates.quadrant')}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void handleCreate('kanban')}><Columns3 />{t('templates.kanban')}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void handleCreate('swot')}><ShieldQuestion />{t('templates.swot')}</DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -213,13 +283,15 @@ export function CanvasActions() {
               {t('manager.refreshThumbnails')}
             </DropdownMenuItem>
           </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem onSelect={() => setTrashMode(!trashMode)}>
-              {trashMode ? <XCircle /> : <Trash2 />}
-              {trashMode ? t('manager.closeTrash') : t('trash')}
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
+          {!trashMode && (<>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem onSelect={() => setTrashMode(true)}>
+                <Trash2 />
+                {t('trash')}
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </>)}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -235,6 +307,7 @@ export function CanvasSidebar() {
   const createProject = useCanvasStore(state => state.createProject)
   const duplicateProject = useCanvasStore(state => state.duplicateProject)
   const deleteProject = useCanvasStore(state => state.deleteProject)
+  const permanentlyDeleteProject = useCanvasStore(state => state.permanentlyDeleteProject)
   const renameProject = useCanvasStore(state => state.renameProject)
   const restoreProject = useCanvasStore(state => state.restoreProject)
   const togglePin = useCanvasStore(state => state.togglePin)
@@ -242,6 +315,7 @@ export function CanvasSidebar() {
   const sortMode = useCanvasStore(state => state.sortMode)
   const setSortMode = useCanvasStore(state => state.setSortMode)
   const trashMode = useCanvasStore(state => state.trashMode)
+  const setTrashMode = useCanvasStore(state => state.setTrashMode)
   const addTab = useArticleStore(state => state.addTab)
   const removeTab = useArticleStore(state => state.removeTab)
   const openTabs = useArticleStore(state => state.openTabs)
@@ -249,8 +323,42 @@ export function CanvasSidebar() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [pendingDelete, setPendingDelete] = useState<CanvasProject | null>(null)
+  const [pendingPermanentDelete, setPendingPermanentDelete] = useState<CanvasProject | null>(null)
+  const [processingCanvas, setProcessingCanvas] = useState<{
+    id: string
+    action: 'delete' | 'permanent-delete'
+  } | null>(null)
+  const [syncState, setSyncState] = useState<AutoDataSyncState>(() => getAutoDataSyncState())
+  const [syncConfigured, setSyncConfigured] = useState(false)
+  const [syncedVersions, setSyncedVersions] = useState<Record<string, number>>({})
+  const [uploadingCanvasId, setUploadingCanvasId] = useState<string | null>(null)
+  const [failedCanvasIds, setFailedCanvasIds] = useState<Set<string>>(() => new Set())
   const viewMode = useCanvasStore(state => state.viewMode)
   const setViewMode = useCanvasStore(state => state.setViewMode)
+
+  useEffect(() => {
+    let active = true
+    const refreshSyncedVersions = async () => {
+      const store = await Store.load('store.json')
+      const versions = await store.get<Record<string, number>>('canvasSyncVersions') || {}
+      if (active) setSyncedVersions(versions)
+    }
+    const refreshSyncConfigured = async () => {
+      const configured = await isAutoDataSyncProviderConfigured()
+      if (active) setSyncConfigured(configured)
+    }
+    const unsubscribe = subscribeAutoDataSyncState(nextState => {
+      setSyncState(nextState)
+      void refreshSyncConfigured()
+      if (!nextState.isSyncing) void refreshSyncedVersions()
+    })
+    void refreshSyncedVersions()
+    void refreshSyncConfigured()
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [])
 
   useEffect(() => {
     void loadProjects()
@@ -270,6 +378,44 @@ export function CanvasSidebar() {
       return right.updatedAt - left.updatedAt
     })
   }, [deletedProjects, projects, sortMode, trashMode])
+
+  const getSyncStatus = (project: CanvasProject): CanvasSyncDisplayStatus => {
+    if (uploadingCanvasId === project.id) return 'uploading'
+    if (syncedVersions[project.id] === project.updatedAt) return 'synced'
+    if (failedCanvasIds.has(project.id)) return 'failed'
+    if (syncState.isSyncing
+      && syncState.currentDomain === 'records'
+      && syncState.phase === 'uploading') return 'uploading'
+    if (syncState.status === 'failed') return 'failed'
+    return 'pending'
+  }
+
+  const refreshSyncedVersions = async () => {
+    const store = await Store.load('store.json')
+    setSyncedVersions(await store.get<Record<string, number>>('canvasSyncVersions') || {})
+  }
+
+  const handleUpload = async (project: CanvasProject) => {
+    if (uploadingCanvasId) return
+    setUploadingCanvasId(project.id)
+    setFailedCanvasIds(current => {
+      const next = new Set(current)
+      next.delete(project.id)
+      return next
+    })
+    try {
+      const uploaded = await uploadCanvas(project.id)
+      if (uploaded) {
+        await refreshSyncedVersions()
+      } else {
+        setFailedCanvasIds(current => new Set(current).add(project.id))
+      }
+    } catch {
+      setFailedCanvasIds(current => new Set(current).add(project.id))
+    } finally {
+      setUploadingCanvasId(null)
+    }
+  }
 
   const handleOpen = async (id: string) => {
     const project = await openProject(id)
@@ -295,13 +441,39 @@ export function CanvasSidebar() {
   }
 
   const handleDelete = async (id: string) => {
+    if (processingCanvas) return
+    const syncConfigured = await isAutoDataSyncProviderConfigured()
+    if (syncConfigured) setProcessingCanvas({ id, action: 'delete' })
     const tabId = getCanvasTabPath(id)
     const wasActive = useArticleStore.getState().activeTabId === tabId
-    await deleteProject(id)
-    await removeTab(tabId)
-    if (wasActive) {
-      await useArticleStore.getState().setActiveTabId('')
-      await useArticleStore.getState().setActiveFilePath('')
+    try {
+      const result = await deleteProject(id, syncConfigured)
+      if (result === 'synced') {
+        await refreshSyncedVersions()
+      } else if (result === 'pending') {
+        toast.error(t('manager.sync.failed'))
+      }
+      await removeTab(tabId)
+      if (wasActive) {
+        await useArticleStore.getState().setActiveTabId('')
+        await useArticleStore.getState().setActiveFilePath('')
+      }
+    } finally {
+      setProcessingCanvas(null)
+    }
+  }
+
+  const handlePermanentDelete = async (project: CanvasProject) => {
+    if (processingCanvas) return
+    const syncConfigured = await isAutoDataSyncProviderConfigured()
+    if (syncConfigured) setProcessingCanvas({ id: project.id, action: 'permanent-delete' })
+    try {
+      const deleted = await permanentlyDeleteProject(project.id, syncConfigured)
+      if (!deleted) toast.error(t('permanentDeleteDialog.error'))
+    } catch {
+      toast.error(t('permanentDeleteDialog.error'))
+    } finally {
+      setProcessingCanvas(null)
     }
   }
 
@@ -320,6 +492,33 @@ export function CanvasSidebar() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
+        {syncState.phase === 'downloading' && (
+          <div
+            role="status"
+            className="border-y border-border bg-muted/35 px-3 py-2 text-foreground"
+          >
+            <div className="flex min-w-0 items-center gap-2 text-xs">
+              <DownloadCloud className="size-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate font-medium">
+                {t('manager.sync.downloadingAll')}
+              </span>
+              <Loader2 className="size-3.5 shrink-0 animate-spin opacity-80" />
+            </div>
+          </div>
+        )}
+        {trashMode && (
+          <div className="sticky top-0 z-20 border-b bg-background p-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full justify-start"
+              onClick={() => setTrashMode(false)}
+            >
+              <ArrowLeft />
+              {t('manager.closeTrash')}
+            </Button>
+          </div>
+        )}
         {visibleProjects.length === 0 ? (
           <Empty className="min-h-72 border-0">
             <EmptyHeader>
@@ -350,6 +549,16 @@ export function CanvasSidebar() {
             draggable={!trashMode && editingId !== project.id}
             onDragStart={event => !trashMode && setCanvasDragData(event.dataTransfer, project.id)}
           >
+            {processingCanvas?.id === project.id && (
+              <div className="absolute inset-0 z-30 flex items-center justify-center gap-2 bg-background/80 px-2 text-sm font-medium backdrop-blur-sm">
+                <Loader2 className="size-4 animate-spin text-primary" />
+                <span className="truncate">
+                  {processingCanvas.action === 'delete'
+                    ? t('manager.sync.deleting')
+                    : t('manager.sync.permanentlyDeleting')}
+                </span>
+              </div>
+            )}
             {!trashMode && editingId === project.id ? (
               <div className={cn('flex min-w-0 flex-1 items-center gap-2', viewMode === 'grid' ? 'p-2' : 'px-1')}>
                 {viewMode === 'list' && <CanvasThumbnail project={project} compact />}
@@ -391,6 +600,21 @@ export function CanvasSidebar() {
                 <Pin className="size-3" />
               </span>
             )}
+            {syncConfigured && (
+              <CanvasSyncIndicator
+                status={getSyncStatus(project)}
+                label={getSyncStatus(project) === 'pending'
+                  ? t('manager.sync.clickToUpload')
+                  : t(`manager.sync.${getSyncStatus(project)}`)}
+                onClick={getSyncStatus(project) === 'pending'
+                  ? () => void handleUpload(project)
+                  : undefined}
+                className={cn(
+                  'absolute z-10',
+                  viewMode === 'grid' ? 'right-1 top-1' : 'right-8 top-1/2 -translate-y-1/2'
+                )}
+              />
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -411,6 +635,14 @@ export function CanvasSidebar() {
                     <DropdownMenuItem onClick={() => void handleRestore(project.id)}>
                       <RotateCcw />
                       {t('restore')}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onSelect={() => setPendingPermanentDelete(project)}
+                    >
+                      <Trash2 />
+                      {t('permanentDelete')}
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                 ) : (<>
@@ -450,9 +682,28 @@ export function CanvasSidebar() {
                     <RotateCcw />
                     {t('restore')}
                   </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    variant="destructive"
+                    onSelect={() => setPendingPermanentDelete(project)}
+                  >
+                    <Trash2 />
+                    {t('permanentDelete')}
+                  </ContextMenuItem>
                 </ContextMenuGroup>
               ) : (<>
               <ContextMenuGroup>
+                {syncConfigured && (
+                  <ContextMenuItem
+                    disabled={getSyncStatus(project) === 'uploading' || getSyncStatus(project) === 'synced'}
+                    onSelect={() => void handleUpload(project)}
+                  >
+                    {getSyncStatus(project) === 'uploading'
+                      ? <Loader2 className="animate-spin" />
+                      : <CloudUpload />}
+                    {t('manager.sync.upload')}
+                  </ContextMenuItem>
+                )}
                 <ContextMenuItem onSelect={() => void togglePin(project.id)}>
                   {project.pinnedAt ? <PinOff /> : <Pin />}
                   {project.pinnedAt ? t('manager.unpin') : t('manager.pin')}
@@ -507,6 +758,35 @@ export function CanvasSidebar() {
               }}
             >
               {t('deleteDialog.confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={Boolean(pendingPermanentDelete)}
+        onOpenChange={open => !open && setPendingPermanentDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('permanentDeleteDialog.title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('permanentDeleteDialog.description', { title: pendingPermanentDelete?.title || '' })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              {t('permanentDeleteDialog.cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                const project = pendingPermanentDelete
+                setPendingPermanentDelete(null)
+                if (project) void handlePermanentDelete(project)
+              }}
+            >
+              {t('permanentDeleteDialog.confirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

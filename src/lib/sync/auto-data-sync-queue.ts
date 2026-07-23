@@ -9,7 +9,14 @@ import type { Tag } from '@/db/tags'
 import { downloadRecordAssets, uploadRecordAssets } from '@/lib/sync/record-assets'
 import { filterSyncData } from '@/config/sync-exclusions'
 import type { CanvasProject } from '@/types/canvas'
-import { CANVAS_SYNC_PATH, downloadCanvases, uploadCanvases } from '@/lib/sync/canvas-sync'
+import {
+  CANVAS_SYNC_ITEMS_DIRECTORY,
+  CANVAS_SYNC_PATH,
+  LEGACY_CANVAS_SYNC_PATH,
+  downloadCanvases,
+  parseCanvasSyncIndex,
+  uploadCanvases,
+} from '@/lib/sync/canvas-sync'
 
 export type AutoDataSyncDomain = 'records' | 'settings'
 type AutoDataSyncProvider = 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav'
@@ -1370,7 +1377,7 @@ async function uploadAutoDataSyncMeta(uploadedDomains: AutoDataSyncDomain[]) {
     domains: AUTO_DATA_SYNC_DOMAINS,
     lastUploadedDomains: AUTO_DATA_SYNC_DOMAINS.filter(domain => uploadedDomains.includes(domain)),
     files: {
-      records: [AUTO_DATA_SYNC_TAGS_PATH, AUTO_DATA_SYNC_MARKS_PATH, CANVAS_SYNC_PATH],
+      records: [AUTO_DATA_SYNC_TAGS_PATH, AUTO_DATA_SYNC_MARKS_PATH, CANVAS_SYNC_PATH, CANVAS_SYNC_ITEMS_DIRECTORY],
       settings: [AUTO_DATA_SYNC_SETTINGS_PATH],
       meta: AUTO_DATA_SYNC_META_PATH,
     },
@@ -2014,14 +2021,19 @@ async function getAutoDataSyncContentFingerprints(
   const local = await getLocalAutoDataSyncDomainFingerprint(store, domain)
 
   if (domain === 'records') {
-    const [remoteTagsContent, remoteMarksContent, remoteCanvasesContent] = await Promise.all([
+    const [remoteTagsContent, remoteMarksContent, remoteCanvasIndexContent] = await Promise.all([
       downloadAutoDataSyncRemoteFileContent(store, provider, AUTO_DATA_SYNC_TAGS_PATH),
       downloadAutoDataSyncRemoteFileContent(store, provider, AUTO_DATA_SYNC_MARKS_PATH),
       downloadAutoDataSyncRemoteFileContent(store, provider, CANVAS_SYNC_PATH),
     ])
     const remoteTags = parseRemoteJsonArray<Tag>(remoteTagsContent)
     const remoteMarks = parseRemoteJsonArray<Mark>(remoteMarksContent)
-    const remoteCanvases = parseRemoteJsonArray<CanvasProject>(remoteCanvasesContent) || []
+    const remoteCanvasIndex = parseCanvasSyncIndex(remoteCanvasIndexContent)
+    const remoteCanvases = remoteCanvasIndex?.canvases || (
+      parseRemoteJsonArray<CanvasProject>(
+        await downloadAutoDataSyncRemoteFileContent(store, provider, LEGACY_CANVAS_SYNC_PATH)
+      ) || []
+    )
     if (!remoteTags || !remoteMarks) {
       return null
     }

@@ -3,6 +3,7 @@ import {
   getCanvasProject,
   getCanvasProjects,
   insertCanvasProject,
+  permanentlyDeleteCanvasProject,
   renameCanvasProject,
   restoreCanvasProject,
   setCanvasPinnedAt,
@@ -12,7 +13,9 @@ import {
   updateCanvasThumbnailPath,
 } from '@/db/canvases'
 import { createCanvasDocument } from '@/lib/canvas/templates'
-import { CANVAS_THUMBNAIL_VERSION, generateCanvasThumbnail } from '@/lib/canvas/thumbnail'
+import { CANVAS_THUMBNAIL_VERSION, generateCanvasThumbnail, removeCanvasThumbnail } from '@/lib/canvas/thumbnail'
+import { purgeCanvas } from '@/lib/sync/canvas-sync'
+import { enqueueAutoDataSync, isAutoDataSyncProviderConfigured } from '@/lib/sync/auto-data-sync-queue'
 import type { CanvasDocument, CanvasHistoryState, CanvasProject, CanvasProjectType } from '@/types/canvas'
 
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -37,6 +40,7 @@ function hasCurrentThumbnail(project: Pick<CanvasProject, 'thumbnailPath'>) {
 }
 
 export type CanvasSortMode = 'updated' | 'created' | 'name'
+export type CanvasDeleteResult = 'local' | 'synced' | 'pending'
 
 interface CanvasState {
   projects: CanvasProject[]
@@ -63,7 +67,8 @@ interface CanvasState {
   setTrashMode: (open: boolean) => void
   togglePin: (id: string) => Promise<void>
   renameProject: (id: string, title: string) => Promise<void>
-  deleteProject: (id: string) => Promise<void>
+  deleteProject: (id: string, syncConfigured?: boolean) => Promise<CanvasDeleteResult>
+  permanentlyDeleteProject: (id: string, syncConfigured?: boolean) => Promise<boolean>
   restoreProject: (id: string) => Promise<CanvasProject | null>
 }
 
@@ -260,14 +265,24 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
     }))
   },
 
-  deleteProject: async (id) => {
+  deleteProject: async (id, configured) => {
     const timer = saveTimers.get(id)
     if (timer) clearTimeout(timer)
     saveTimers.delete(id)
     const thumbnailTimer = thumbnailTimers.get(id)
     if (thumbnailTimer) clearTimeout(thumbnailTimer)
     thumbnailTimers.delete(id)
-    await softDeleteCanvasProject(id)
+    const deletedAt = await softDeleteCanvasProject(id, { enqueueSync: false })
+    const syncConfigured = configured ?? await isAutoDataSyncProviderConfigured()
+    let synced = false
+    if (syncConfigured) {
+      try {
+        synced = await uploadCanvas(id)
+      } catch {
+        synced = false
+      }
+      if (!synced) enqueueAutoDataSync('records', 'canvas-deleted')
+    }
     set(state => {
       const deletedProject = state.projects.find(project => project.id === id)
       const documents = { ...state.documents }
@@ -275,12 +290,31 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
       return {
         projects: state.projects.filter(project => project.id !== id),
         deletedProjects: deletedProject
-          ? [{ ...deletedProject, deletedAt: Date.now() }, ...state.deletedProjects]
+          ? [{ ...deletedProject, deletedAt, updatedAt: deletedAt }, ...state.deletedProjects]
           : state.deletedProjects,
         documents,
         activeCanvasId: state.activeCanvasId === id ? null : state.activeCanvasId,
       }
     })
+    if (!syncConfigured) return 'local'
+    return synced ? 'synced' : 'pending'
+  },
+
+  permanentlyDeleteProject: async (id, configured) => {
+    const project = get().deletedProjects.find(item => item.id === id)
+    if (!project) return false
+    const syncConfigured = configured ?? await isAutoDataSyncProviderConfigured()
+    if (syncConfigured && !await purgeCanvas(id)) return false
+    await permanentlyDeleteCanvasProject(id)
+    try {
+      await removeCanvasThumbnail(project.thumbnailPath)
+    } catch (error) {
+      console.error('Failed to remove canvas thumbnail:', error)
+    }
+    set(state => ({
+      deletedProjects: state.deletedProjects.filter(item => item.id !== id),
+    }))
+    return true
   },
 
   restoreProject: async (id) => {

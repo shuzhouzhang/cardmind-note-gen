@@ -2511,7 +2511,7 @@
   "canvas": {
     "new": "新增畫布",
     "chooseTemplate": "選擇範本",
-    "manager": { "title": "繪圖管理器", "view": "檢視", "grid": "縮圖檢視", "list": "清單檢視", "switchToGrid": "切換到縮圖檢視", "switchToList": "切換到清單檢視", "sort": { "title": "排序", "updated": "最近修改", "created": "建立時間", "name": "名稱" }, "pin": "置頂畫布", "unpin": "取消置頂", "refreshThumbnails": "重新產生縮圖", "closeTrash": "關閉最近刪除", "trashEmpty": "最近刪除是空的", "trashEmptyDescription": "刪除的畫布會顯示在這裡。", "trashCount": "共 {count} 個已刪除畫布", "count": "共 {count} 個畫布" },
+    "manager": { "title": "繪圖管理器", "view": "檢視", "grid": "縮圖檢視", "list": "清單檢視", "switchToGrid": "切換到縮圖檢視", "switchToList": "切換到清單檢視", "sort": { "title": "排序", "updated": "最近修改", "created": "建立時間", "name": "名稱" }, "pin": "置頂畫布", "unpin": "取消置頂", "refreshThumbnails": "重新產生縮圖", "closeTrash": "返回繪圖管理器", "trashEmpty": "最近刪除是空的", "trashEmptyDescription": "刪除的畫布會顯示在這裡。", "trashCount": "共 {count} 個已刪除畫布", "sync": { "upload": "上傳", "pending": "等待上傳", "clickToUpload": "等待上傳，點擊立即上傳", "uploading": "正在上傳", "synced": "已上傳", "failed": "上傳失敗", "downloadingAll": "正在拉取遠端畫布", "deleting": "正在刪除並同步", "permanentlyDeleting": "正在永久刪除" }, "count": "共 {count} 個畫布" },
     "templates": { "blank": "空白畫布", "flowchart": "流程圖", "mindmap": "心智圖", "timeline": "時間線", "quadrant": "四象限", "kanban": "看板", "swot": "SWOT 分析" },
     "import": { "action": "匯入畫布或 Mermaid", "fileType": "畫布檔案", "defaultTitle": "匯入的畫布", "success": "畫布匯入成功", "error": "無法匯入這個檔案" },
     "untitled": "未命名畫布",
@@ -2522,6 +2522,8 @@
     "trash": "最近刪除",
     "restore": "復原畫布",
     "deleteDialog": { "title": "刪除這張畫布？", "description": "「{title}」會移到最近刪除，你可以稍後復原。", "cancel": "取消", "confirm": "移到最近刪除" },
+    "permanentDelete": "永久刪除",
+    "permanentDeleteDialog": { "title": "永久刪除這張畫布？", "description": "「{title}」的本機內容會被刪除；如已設定同步，遠端同步檔案也會一併刪除。此操作無法復原。", "cancel": "取消", "confirm": "永久刪除", "deleting": "正在刪除", "error": "永久刪除失敗，請檢查同步設定和網路後重試。" },
     "rename": "重新命名",
     "loading": "正在載入畫布...",
     "undo": "復原",

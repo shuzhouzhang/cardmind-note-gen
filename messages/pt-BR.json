@@ -2504,7 +2504,7 @@
   "canvas": {
     "new": "Nova tela",
     "chooseTemplate": "Escolher um modelo",
-    "manager": { "title": "Gerenciador de telas", "view": "Visualização", "grid": "Visualização em miniaturas", "list": "Visualização em lista", "switchToGrid": "Mudar para miniaturas", "switchToList": "Mudar para lista", "sort": { "title": "Ordenar", "updated": "Última modificação", "created": "Data de criação", "name": "Nome" }, "pin": "Fixar tela", "unpin": "Desafixar tela", "refreshThumbnails": "Gerar miniaturas novamente", "closeTrash": "Fechar excluídos recentemente", "trashEmpty": "Nenhuma exclusão recente", "trashEmptyDescription": "As telas excluídas aparecerão aqui.", "trashCount": "{count} telas excluídas", "count": "{count} telas" },
+    "manager": { "title": "Gerenciador de telas", "view": "Visualização", "grid": "Visualização em miniaturas", "list": "Visualização em lista", "switchToGrid": "Mudar para miniaturas", "switchToList": "Mudar para lista", "sort": { "title": "Ordenar", "updated": "Última modificação", "created": "Data de criação", "name": "Nome" }, "pin": "Fixar tela", "unpin": "Desafixar tela", "refreshThumbnails": "Gerar miniaturas novamente", "closeTrash": "Voltar ao gerenciador de telas", "trashEmpty": "Nenhuma exclusão recente", "trashEmptyDescription": "As telas excluídas aparecerão aqui.", "trashCount": "{count} telas excluídas", "sync": { "upload": "Enviar", "pending": "Aguardando envio", "clickToUpload": "Aguardando envio. Clique para enviar agora.", "uploading": "Enviando", "synced": "Enviada", "failed": "Falha no envio", "downloadingAll": "Buscando telas remotas", "deleting": "Excluindo e sincronizando", "permanentlyDeleting": "Excluindo permanentemente" }, "count": "{count} telas" },
     "templates": { "blank": "Tela em branco", "flowchart": "Fluxograma", "mindmap": "Mapa mental", "timeline": "Linha do tempo", "quadrant": "Quatro quadrantes", "kanban": "Kanban", "swot": "Análise SWOT" },
     "import": { "action": "Importar tela ou Mermaid", "fileType": "Arquivo de tela", "defaultTitle": "Tela importada", "success": "Tela importada", "error": "Não foi possível importar este arquivo" },
     "untitled": "Tela sem título",
@@ -2515,6 +2515,8 @@
     "trash": "Excluídas recentemente",
     "restore": "Restaurar tela",
     "deleteDialog": { "title": "Excluir esta tela?", "description": "“{title}” será movida para Excluídas recentemente e poderá ser restaurada depois.", "cancel": "Cancelar", "confirm": "Mover para Excluídas recentemente" },
+    "permanentDelete": "Excluir permanentemente",
+    "permanentDeleteDialog": { "title": "Excluir esta tela permanentemente?", "description": "O conteúdo local de “{title}” será excluído. Se a sincronização estiver configurada, o arquivo remoto também será removido. Esta ação não pode ser desfeita.", "cancel": "Cancelar", "confirm": "Excluir permanentemente", "deleting": "Excluindo", "error": "Falha na exclusão permanente. Verifique as configurações de sincronização e a rede e tente novamente." },
     "rename": "Renomear",
     "loading": "Carregando tela...",
     "undo": "Desfazer",

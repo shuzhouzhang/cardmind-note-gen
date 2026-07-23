@@ -2498,7 +2498,7 @@
   "canvas": {
     "new": "キャンバスを作成",
     "chooseTemplate": "テンプレートを選択",
-    "manager": { "title": "キャンバスマネージャー", "view": "表示", "grid": "サムネイル表示", "list": "リスト表示", "switchToGrid": "サムネイル表示に切り替え", "switchToList": "リスト表示に切り替え", "sort": { "title": "並び替え", "updated": "更新日時", "created": "作成日時", "name": "名前" }, "pin": "キャンバスを固定", "unpin": "固定を解除", "refreshThumbnails": "サムネイルを再生成", "closeTrash": "最近削除した項目を閉じる", "trashEmpty": "最近削除した項目はありません", "trashEmptyDescription": "削除したキャンバスがここに表示されます。", "trashCount": "削除済みキャンバス {count} 件", "count": "キャンバス {count} 件" },
+    "manager": { "title": "キャンバスマネージャー", "view": "表示", "grid": "サムネイル表示", "list": "リスト表示", "switchToGrid": "サムネイル表示に切り替え", "switchToList": "リスト表示に切り替え", "sort": { "title": "並び替え", "updated": "更新日時", "created": "作成日時", "name": "名前" }, "pin": "キャンバスを固定", "unpin": "固定を解除", "refreshThumbnails": "サムネイルを再生成", "closeTrash": "キャンバスマネージャーに戻る", "trashEmpty": "最近削除した項目はありません", "trashEmptyDescription": "削除したキャンバスがここに表示されます。", "trashCount": "削除済みキャンバス {count} 件", "sync": { "upload": "アップロード", "pending": "アップロード待ち", "clickToUpload": "アップロード待ち。クリックして今すぐアップロード", "uploading": "アップロード中", "synced": "アップロード済み", "failed": "アップロード失敗", "downloadingAll": "リモートキャンバスを取得中", "deleting": "削除して同期中", "permanentlyDeleting": "完全に削除中" }, "count": "キャンバス {count} 件" },
     "templates": { "blank": "空白のキャンバス", "flowchart": "フローチャート", "mindmap": "マインドマップ", "timeline": "タイムライン", "quadrant": "4象限", "kanban": "カンバン", "swot": "SWOT 分析" },
     "import": { "action": "キャンバスまたは Mermaid を読み込む", "fileType": "キャンバスファイル", "defaultTitle": "読み込んだキャンバス", "success": "キャンバスを読み込みました", "error": "このファイルを読み込めません" },
     "untitled": "無題のキャンバス",
@@ -2509,6 +2509,8 @@
     "trash": "最近削除した項目",
     "restore": "キャンバスを復元",
     "deleteDialog": { "title": "このキャンバスを削除しますか？", "description": "「{title}」は最近削除した項目に移動し、後で復元できます。", "cancel": "キャンセル", "confirm": "最近削除した項目に移動" },
+    "permanentDelete": "完全に削除",
+    "permanentDeleteDialog": { "title": "このキャンバスを完全に削除しますか？", "description": "「{title}」のローカル内容が削除されます。同期が設定されている場合、リモート同期ファイルも削除されます。この操作は元に戻せません。", "cancel": "キャンセル", "confirm": "完全に削除", "deleting": "削除中", "error": "完全削除に失敗しました。同期設定とネットワークを確認して再試行してください。" },
     "rename": "名前を変更",
     "loading": "キャンバスを読み込み中...",
     "undo": "元に戻す",

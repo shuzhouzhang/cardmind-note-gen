@@ -2608,7 +2608,7 @@
   "canvas": {
     "new": "New canvas",
     "chooseTemplate": "Choose a template",
-    "manager": { "title": "Canvas manager", "view": "View", "grid": "Thumbnail view", "list": "List view", "switchToGrid": "Switch to thumbnail view", "switchToList": "Switch to list view", "sort": { "title": "Sort", "updated": "Last modified", "created": "Date created", "name": "Name" }, "pin": "Pin canvas", "unpin": "Unpin canvas", "refreshThumbnails": "Regenerate thumbnails", "closeTrash": "Close recently deleted", "trashEmpty": "Recently deleted is empty", "trashEmptyDescription": "Deleted canvases will appear here.", "trashCount": "{count} deleted canvases", "count": "{count} canvases" },
+    "manager": { "title": "Canvas manager", "view": "View", "grid": "Thumbnail view", "list": "List view", "switchToGrid": "Switch to thumbnail view", "switchToList": "Switch to list view", "sort": { "title": "Sort", "updated": "Last modified", "created": "Date created", "name": "Name" }, "pin": "Pin canvas", "unpin": "Unpin canvas", "refreshThumbnails": "Regenerate thumbnails", "closeTrash": "Back to canvas manager", "trashEmpty": "Recently deleted is empty", "trashEmptyDescription": "Deleted canvases will appear here.", "trashCount": "{count} deleted canvases", "sync": { "upload": "Upload", "pending": "Waiting to upload", "clickToUpload": "Waiting to upload. Click to upload now.", "uploading": "Uploading", "synced": "Uploaded", "failed": "Upload failed", "downloadingAll": "Pulling remote canvases", "deleting": "Deleting and syncing", "permanentlyDeleting": "Deleting permanently" }, "count": "{count} canvases" },
     "templates": { "blank": "Blank canvas", "flowchart": "Flowchart", "mindmap": "Mind map", "timeline": "Timeline", "quadrant": "Four quadrants", "kanban": "Kanban", "swot": "SWOT analysis" },
     "import": { "action": "Import canvas or Mermaid", "fileType": "Canvas file", "defaultTitle": "Imported canvas", "success": "Canvas imported", "error": "This file could not be imported" },
     "untitled": "Untitled canvas",
@@ -2619,6 +2619,8 @@
     "trash": "Recently deleted",
     "restore": "Restore canvas",
     "deleteDialog": { "title": "Delete this canvas?", "description": "“{title}” will move to Recently Deleted and can be restored later.", "cancel": "Cancel", "confirm": "Move to Recently Deleted" },
+    "permanentDelete": "Delete permanently",
+    "permanentDeleteDialog": { "title": "Permanently delete this canvas?", "description": "The local content for “{title}” will be deleted. If sync is configured, its remote sync file will also be removed. This action cannot be undone.", "cancel": "Cancel", "confirm": "Delete permanently", "deleting": "Deleting", "error": "Permanent deletion failed. Check your sync settings and network, then try again." },
     "rename": "Rename",
     "loading": "Loading canvas...",
     "undo": "Undo",
