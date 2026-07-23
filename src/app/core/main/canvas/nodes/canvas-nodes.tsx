@@ -33,8 +33,22 @@ function previewClassName(state?: CanvasNodeData['previewState']) {
   )
 }
 
-function colorStyle(color?: string): CSSProperties | undefined {
-  return color ? { borderColor: color, boxShadow: `0 0 0 1px ${color}20` } : undefined
+function nodeStyle(data: CanvasNodeData): CSSProperties | undefined {
+  const { color, borderStyle, borderWidth, fillColor, fillStyle } = data
+  if (!color && !borderStyle && !borderWidth && !fillColor && !fillStyle) return undefined
+  return {
+    ...(color ? {
+      borderColor: color,
+      boxShadow: `0 0 0 1px ${color}20`,
+    } : {}),
+    ...(borderStyle ? { borderStyle } : {}),
+    ...(borderWidth ? { borderWidth } : {}),
+    ...(fillColor
+      ? { backgroundColor: fillColor }
+      : fillStyle === 'tint' && color
+        ? { backgroundColor: `color-mix(in srgb, ${color} 12%, var(--card))` }
+        : {}),
+  }
 }
 
 const EditableLabel = memo(function EditableLabel({ id, value, className }: { id: string; value: string; className?: string }) {
@@ -53,7 +67,7 @@ const EditableLabel = memo(function EditableLabel({ id, value, className }: { id
 
 export const ProcessNode = memo(function ProcessNode({ id, data }: NodeProps<FlowCanvasNode>) {
   return (
-    <BaseNode style={colorStyle(data.color)} className={cn('min-w-40 max-w-72 shadow-sm', previewClassName(data.previewState))}>
+    <BaseNode style={nodeStyle(data)} className={cn('min-w-40 max-w-72 shadow-sm', previewClassName(data.previewState))}>
       <ConnectionHandles />
       <BaseNodeContent className="items-center text-center text-sm">
         <EditableLabel id={id} value={data.label || '处理步骤'} />
@@ -64,7 +78,7 @@ export const ProcessNode = memo(function ProcessNode({ id, data }: NodeProps<Flo
 
 export const DecisionNode = memo(function DecisionNode({ id, data }: NodeProps<FlowCanvasNode>) {
   return (
-    <div style={colorStyle(data.color)} className={cn('relative flex size-36 rotate-45 items-center justify-center border bg-card text-card-foreground shadow-sm in-[.selected]:shadow-lg', previewClassName(data.previewState))}>
+    <div style={nodeStyle(data)} className={cn('relative flex size-36 rotate-45 items-center justify-center border bg-card text-card-foreground shadow-sm in-[.selected]:shadow-lg', previewClassName(data.previewState))}>
       <ConnectionHandles />
       <EditableLabel id={id} value={data.label || '判断条件'} className="max-w-24 -rotate-45 text-sm" />
     </div>
@@ -73,7 +87,7 @@ export const DecisionNode = memo(function DecisionNode({ id, data }: NodeProps<F
 
 export const TerminatorNode = memo(function TerminatorNode({ id, data }: NodeProps<FlowCanvasNode>) {
   return (
-    <div style={colorStyle(data.color)} className={cn('relative flex min-h-14 min-w-40 items-center justify-center rounded-full border bg-card px-6 text-card-foreground shadow-sm in-[.selected]:shadow-lg', previewClassName(data.previewState))}>
+    <div style={nodeStyle(data)} className={cn('relative flex min-h-14 min-w-40 items-center justify-center rounded-full border bg-card px-6 text-card-foreground shadow-sm in-[.selected]:shadow-lg', previewClassName(data.previewState))}>
       <ConnectionHandles />
       <EditableLabel id={id} value={data.label || '开始 / 结束'} className="text-sm" />
     </div>
@@ -98,7 +112,7 @@ export const NoteCanvasNode = memo(function NoteCanvasNode({ data }: NodeProps<F
 
   return (
     <BaseNode
-      style={colorStyle(data.color)}
+      style={nodeStyle(data)}
       className={cn('min-w-52 max-w-72 shadow-sm', previewClassName(data.previewState))}
       onDoubleClick={() => void openNote()}
     >
@@ -117,7 +131,7 @@ export const NoteCanvasNode = memo(function NoteCanvasNode({ data }: NodeProps<F
 export const LinkCanvasNode = memo(function LinkCanvasNode({ id, data }: NodeProps<FlowCanvasNode>) {
   return (
     <BaseNode
-      style={colorStyle(data.color)}
+      style={nodeStyle(data)}
       className={cn('min-w-52 max-w-80 shadow-sm', previewClassName(data.previewState))}
       onDoubleClick={() => data.url && void openUrl(data.url)}
     >
@@ -136,7 +150,7 @@ export const LinkCanvasNode = memo(function LinkCanvasNode({ id, data }: NodePro
 export const TodoCanvasNode = memo(function TodoCanvasNode({ id, data }: NodeProps<FlowCanvasNode>) {
   const { updateNodeData } = useReactFlow<FlowCanvasNode>()
   return (
-    <BaseNode style={colorStyle(data.color)} className={cn('min-w-52 max-w-80 shadow-sm', previewClassName(data.previewState))}>
+    <BaseNode style={nodeStyle(data)} className={cn('min-w-52 max-w-80 shadow-sm', previewClassName(data.previewState))}>
       <ConnectionHandles />
       <BaseNodeContent className="flex-row items-center gap-2">
         <button
@@ -173,7 +187,7 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ id, data }: NodeP
   }, [data.imagePath])
 
   return (
-    <BaseNode style={colorStyle(data.color)} className={cn('w-64 overflow-hidden shadow-sm', previewClassName(data.previewState))}>
+    <BaseNode style={nodeStyle(data)} className={cn('w-64 overflow-hidden shadow-sm', previewClassName(data.previewState))}>
       <ConnectionHandles />
       {imageUrl ? (
         <Image
@@ -196,7 +210,7 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ id, data }: NodeP
 
 export const GroupCanvasNode = memo(function GroupCanvasNode({ id, data, selected }: NodeProps<FlowCanvasNode>) {
   return (
-    <div style={colorStyle(data.color)} className={cn('relative size-full rounded-2xl border border-dashed bg-muted/30', previewClassName(data.previewState))}>
+    <div style={nodeStyle(data)} className={cn('relative size-full rounded-2xl border border-dashed bg-muted/30', previewClassName(data.previewState))}>
       <NodeResizer
         isVisible={selected}
         minWidth={240}
@@ -210,9 +224,17 @@ export const GroupCanvasNode = memo(function GroupCanvasNode({ id, data, selecte
   )
 })
 
-export const FreehandNode = memo(function FreehandNode({ data, selected }: NodeProps<FlowCanvasNode>) {
+export const FreehandNode = memo(function FreehandNode({ id, data, selected }: NodeProps<FlowCanvasNode>) {
   const width = data.width || 4
   const height = data.height || 4
+  const pathStrokeWidth = data.pathStrokeWidth ?? data.strokeWidth
+  const widthAdjustment = typeof pathStrokeWidth === 'number' && typeof data.strokeWidth === 'number'
+    ? (data.strokeWidth - pathStrokeWidth) / 2
+    : 0
+  const filterRadius = Math.abs(widthAdjustment)
+  const filterId = `freehand-width-${id}`
+  const color = data.color || 'currentColor'
+  const opacity = data.opacity ?? 1
 
   return (
     <div className="relative size-full">
@@ -223,10 +245,33 @@ export const FreehandNode = memo(function FreehandNode({ data, selected }: NodeP
         onResizeStart={() => emitter.emit('canvas-history-checkpoint')}
       />
       <svg className="size-full overflow-visible" viewBox={`0 0 ${width} ${height}`}>
+        {filterRadius > 0 && (
+          <defs>
+            <filter
+              id={filterId}
+              x={-filterRadius * 2}
+              y={-filterRadius * 2}
+              width={width + filterRadius * 4}
+              height={height + filterRadius * 4}
+              filterUnits="userSpaceOnUse"
+              colorInterpolationFilters="sRGB"
+            >
+              <feMorphology
+                in="SourceAlpha"
+                operator={widthAdjustment > 0 ? 'dilate' : 'erode'}
+                radius={filterRadius}
+                result="adjusted"
+              />
+              <feFlood floodColor={color} floodOpacity={opacity} result="paint" />
+              <feComposite in="paint" in2="adjusted" operator="in" />
+            </filter>
+          </defs>
+        )}
         <path
           d={data.path || ''}
-          fill={data.color || 'currentColor'}
-          fillOpacity={data.opacity ?? 1}
+          fill={color}
+          fillOpacity={filterRadius > 0 ? 1 : opacity}
+          filter={filterRadius > 0 ? `url(#${filterId})` : undefined}
         />
       </svg>
     </div>

@@ -1,7 +1,7 @@
 'use client'
 
 import { Tabs, TabsContent } from "@/components/ui/tabs"
-import { Files, Highlighter, Shapes } from "lucide-react"
+import { Files, Highlighter, PanelsTopLeft } from "lucide-react"
 import { FileSidebar } from "./file"
 import { NoteSidebar } from "./mark"
 import { FileActions } from "./file/file-actions"
@@ -16,7 +16,7 @@ import { CanvasActions, CanvasSidebar } from './canvas/canvas-sidebar'
 const SIDEBAR_TABS = [
   { title: "files", icon: Files },
   { title: "notes", icon: Highlighter },
-  { title: "canvases", icon: Shapes },
+  { title: "canvases", icon: PanelsTopLeft },
 ] as const
 
 export function LeftSidebar() {

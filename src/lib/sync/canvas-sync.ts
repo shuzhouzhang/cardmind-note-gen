@@ -92,8 +92,16 @@ export async function uploadCanvases() {
   const { getCanvasProjects } = await import('@/db/canvases')
   const projects = await getCanvasProjects({ includeDeleted: true })
   const content = JSON.stringify(projects.map(project => ({
-    ...project,
+    id: project.id,
+    title: project.title,
+    canvasType: project.canvasType,
+    schemaVersion: project.schemaVersion,
+    document: project.document,
     thumbnailPath: null,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+    pinnedAt: project.pinnedAt,
+    deletedAt: project.deletedAt,
   })))
   const store = await Store.load('store.json')
   const provider = await store.get<string>('primaryBackupMethod') || 'github'

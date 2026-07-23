@@ -5,7 +5,7 @@ import Image from 'next/image'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readTextFile } from '@tauri-apps/plugin-fs'
-import { ArrowDownAZ, BrainCircuit, CalendarDays, Columns3, CopyPlus, EllipsisVertical, FileInput, FilePlus2, Grid2X2, LayoutGrid, List, MoreHorizontal, Pencil, Pin, PinOff, RefreshCw, RotateCcw, Shapes, ShieldQuestion, Timer, Trash2, Workflow, XCircle } from 'lucide-react'
+import { ArrowDownAZ, BrainCircuit, CalendarDays, Columns3, CopyPlus, EllipsisVertical, FileInput, FilePlus2, Grid2X2, LayoutGrid, List, MoreHorizontal, PanelsTopLeft, Pencil, Pin, PinOff, RefreshCw, RotateCcw, ShieldQuestion, Timer, Trash2, Workflow, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
@@ -48,6 +48,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import useCanvasStore from '@/stores/canvas'
 import type { CanvasSortMode } from '@/stores/canvas'
@@ -62,12 +63,12 @@ import { mermaidToCanvasDocument } from '@/lib/canvas/mermaid'
 function CanvasThumbnail({ project, compact = false }: { project: CanvasProject; compact?: boolean }) {
   const fallback = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(canvasDocumentToSvg(project.document))}`
   const source = project.thumbnailPath
-    ? `${convertFileSrc(project.thumbnailPath)}?v=${project.updatedAt}`
+    ? `${convertFileSrc(project.thumbnailPath)}?v=${project.thumbnailRevision || project.updatedAt}`
     : fallback
 
   return (
     <span className={cn(
-      'relative block shrink-0 overflow-hidden border bg-muted/30',
+      'relative block shrink-0 overflow-hidden border bg-muted/20',
       compact ? 'h-10 w-14 rounded-md' : 'aspect-[4/3] w-full rounded-t-lg border-x-0 border-t-0'
     )}>
       <Image
@@ -76,7 +77,7 @@ function CanvasThumbnail({ project, compact = false }: { project: CanvasProject;
         fill
         unoptimized
         sizes={compact ? '56px' : '140px'}
-        className="object-cover"
+        className={cn('object-contain', compact ? 'p-1' : 'p-2')}
       />
     </span>
   )
@@ -149,11 +150,16 @@ export function CanvasActions() {
   return (
     <div className="flex items-center justify-end gap-1">
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" title={t('new')} aria-label={t('new')}>
-            <FilePlus2 />
-          </Button>
-        </DropdownMenuTrigger>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label={t('new')}>
+                <FilePlus2 />
+              </Button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{t('new')}</TooltipContent>
+        </Tooltip>
         <DropdownMenuContent align="end">
           <DropdownMenuLabel>{t('chooseTemplate')}</DropdownMenuLabel>
           <DropdownMenuSeparator />
@@ -168,22 +174,17 @@ export function CanvasActions() {
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        title={viewMode === 'grid' ? t('manager.switchToList') : t('manager.switchToGrid')}
-        aria-label={viewMode === 'grid' ? t('manager.switchToList') : t('manager.switchToGrid')}
-        onClick={() => changeViewMode(viewMode === 'grid' ? 'list' : 'grid')}
-      >
-        {viewMode === 'grid' ? <LayoutGrid /> : <List />}
-      </Button>
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button type="button" variant="ghost" size="icon" title={t('more')} aria-label={t('more')}>
-            <EllipsisVertical />
-          </Button>
-        </DropdownMenuTrigger>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="icon" aria-label={t('more')}>
+                <EllipsisVertical />
+              </Button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{t('more')}</TooltipContent>
+        </Tooltip>
         <DropdownMenuContent align="end" className="w-52">
           <DropdownMenuGroup>
             <DropdownMenuLabel>{t('manager.view')}</DropdownMenuLabel>
@@ -322,14 +323,14 @@ export function CanvasSidebar() {
         {visibleProjects.length === 0 ? (
           <Empty className="min-h-72 border-0">
             <EmptyHeader>
-              <EmptyMedia variant="icon">{trashMode ? <Trash2 /> : <Shapes />}</EmptyMedia>
+              <EmptyMedia variant="icon">{trashMode ? <Trash2 /> : <PanelsTopLeft />}</EmptyMedia>
               <EmptyTitle>{trashMode ? t('manager.trashEmpty') : t('empty.title')}</EmptyTitle>
               <EmptyDescription>{trashMode ? t('manager.trashEmptyDescription') : t('empty.description')}</EmptyDescription>
             </EmptyHeader>
             {!trashMode && (
               <EmptyContent>
                 <Button onClick={() => void handleCreate('blank')}>
-                  <Shapes data-icon="inline-start" />
+                  <PanelsTopLeft data-icon="inline-start" />
                   {t('new')}
                 </Button>
               </EmptyContent>
@@ -371,9 +372,12 @@ export function CanvasSidebar() {
                 onDragStart={event => !trashMode && setCanvasDragData(event.dataTransfer, project.id)}
                 className={cn(
                   'min-w-0 text-left',
-                  viewMode === 'grid' ? 'block w-full' : 'flex flex-1 items-center gap-2'
+                  viewMode === 'grid' ? 'block w-full' : 'flex flex-1 items-center gap-2',
+                  trashMode && 'cursor-default'
                 )}
-                onClick={() => void (trashMode ? handleRestore(project.id) : handleOpen(project.id))}
+                onClick={() => {
+                  if (!trashMode) void handleOpen(project.id)
+                }}
               >
                 <CanvasThumbnail project={project} compact={viewMode === 'list'} />
                 <span className={cn(
@@ -449,10 +453,6 @@ export function CanvasSidebar() {
                 </ContextMenuGroup>
               ) : (<>
               <ContextMenuGroup>
-                <ContextMenuItem onSelect={() => void handleOpen(project.id)}>
-                  <Shapes />
-                  {t('open')}
-                </ContextMenuItem>
                 <ContextMenuItem onSelect={() => void togglePin(project.id)}>
                   {project.pinnedAt ? <PinOff /> : <Pin />}
                   {project.pinnedAt ? t('manager.unpin') : t('manager.pin')}

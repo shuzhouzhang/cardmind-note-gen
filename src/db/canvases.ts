@@ -4,10 +4,30 @@ import {
   DEFAULT_CANVAS_DOCUMENT,
   normalizeCanvasDocument,
   type CanvasDocument,
+  type CanvasHistorySnapshot,
+  type CanvasHistoryState,
   type CanvasProject,
   type CanvasProjectRow,
   type CanvasProjectType,
 } from '@/types/canvas'
+
+function parseHistoryStack(value?: string | null): CanvasHistorySnapshot[] {
+  if (!value) return []
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((snapshot): snapshot is CanvasHistorySnapshot => (
+        Boolean(snapshot)
+        && typeof snapshot === 'object'
+        && Array.isArray((snapshot as CanvasHistorySnapshot).nodes)
+        && Array.isArray((snapshot as CanvasHistorySnapshot).edges)
+      ))
+      .slice(-50)
+  } catch {
+    return []
+  }
+}
 
 function rowToProject(row: CanvasProjectRow): CanvasProject {
   let parsed: unknown = DEFAULT_CANVAS_DOCUMENT
@@ -23,6 +43,10 @@ function rowToProject(row: CanvasProjectRow): CanvasProject {
     canvasType: row.canvasType,
     schemaVersion: row.schemaVersion,
     document: normalizeCanvasDocument(parsed),
+    history: {
+      undo: parseHistoryStack(row.undoStack),
+      redo: parseHistoryStack(row.redoStack),
+    },
     thumbnailPath: row.thumbnailPath,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -44,6 +68,8 @@ export async function initCanvasesDb() {
       canvasType text not null,
       schemaVersion integer not null default 1,
       content text not null,
+      undoStack text not null default '[]',
+      redoStack text not null default '[]',
       thumbnailPath text default null,
       createdAt integer not null,
       updatedAt integer not null,
@@ -55,15 +81,12 @@ export async function initCanvasesDb() {
   if (!canvasColumns.some(column => column.name === 'pinnedAt')) {
     await db.execute('alter table canvases add column pinnedAt integer default null')
   }
-  await db.execute(`
-    create table if not exists canvas_versions (
-      id integer primary key autoincrement,
-      canvasId text not null,
-      content text not null,
-      createdAt integer not null
-    )
-  `)
-  await db.execute('create index if not exists idx_canvas_versions_canvas on canvas_versions(canvasId, createdAt desc)')
+  if (!canvasColumns.some(column => column.name === 'undoStack')) {
+    await db.execute("alter table canvases add column undoStack text not null default '[]'")
+  }
+  if (!canvasColumns.some(column => column.name === 'redoStack')) {
+    await db.execute("alter table canvases add column redoStack text not null default '[]'")
+  }
 }
 
 export async function getCanvasProjects(options: { includeDeleted?: boolean } = {}) {
@@ -118,22 +141,6 @@ export async function updateCanvasDocument(id: string, document: CanvasDocument)
   const db = await getDb()
   const updatedAt = Date.now()
   const content = JSON.stringify(document)
-  const existing = await db.select<Array<{ content: string }>>(
-    'select content from canvases where id = $1 limit 1',
-    [id]
-  )
-  if (existing[0]?.content && existing[0].content !== content) {
-    const versionLimit = content.length >= 5_000_000 ? 10 : content.length >= 1_000_000 ? 20 : 50
-    await db.execute(
-      'insert into canvas_versions (canvasId, content, createdAt) values ($1, $2, $3)',
-      [id, existing[0].content, updatedAt]
-    )
-    await db.execute(`
-      delete from canvas_versions where canvasId = $1 and id not in (
-        select id from canvas_versions where canvasId = $1 order by createdAt desc limit $2
-      )
-    `, [id, versionLimit])
-  }
   await db.execute(
     'update canvases set content = $1, schemaVersion = $2, updatedAt = $3 where id = $4',
     [content, document.schemaVersion, updatedAt, id]
@@ -142,25 +149,12 @@ export async function updateCanvasDocument(id: string, document: CanvasDocument)
   return updatedAt
 }
 
-export interface CanvasVersion {
-  id: number
-  canvasId: string
-  document: CanvasDocument
-  createdAt: number
-}
-
-export async function getCanvasVersions(canvasId: string): Promise<CanvasVersion[]> {
+export async function updateCanvasHistory(id: string, history: CanvasHistoryState) {
   const db = await getDb()
-  const rows = await db.select<Array<{ id: number; canvasId: string; content: string; createdAt: number }>>(
-    'select id, canvasId, content, createdAt from canvas_versions where canvasId = $1 order by createdAt desc limit 50',
-    [canvasId]
+  await db.execute(
+    'update canvases set undoStack = $1, redoStack = $2 where id = $3',
+    [JSON.stringify(history.undo), JSON.stringify(history.redo), id]
   )
-  return rows.map(row => ({
-    id: row.id,
-    canvasId: row.canvasId,
-    document: normalizeCanvasDocument(JSON.parse(row.content) as unknown),
-    createdAt: row.createdAt,
-  }))
 }
 
 export async function renameCanvasProject(id: string, title: string) {
@@ -216,8 +210,8 @@ export async function replaceAllCanvasProjects(projects: CanvasProject[]) {
   for (const project of projects) {
     await db.execute(
       `insert into canvases
-        (id, title, canvasType, schemaVersion, content, thumbnailPath, createdAt, updatedAt, pinnedAt, deletedAt)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        (id, title, canvasType, schemaVersion, content, undoStack, redoStack, thumbnailPath, createdAt, updatedAt, pinnedAt, deletedAt)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        on conflict(id) do update set
          title = excluded.title,
          canvasType = excluded.canvasType,
@@ -234,6 +228,8 @@ export async function replaceAllCanvasProjects(projects: CanvasProject[]) {
         project.canvasType,
         project.schemaVersion,
         JSON.stringify(project.document),
+        JSON.stringify(project.history?.undo || []),
+        JSON.stringify(project.history?.redo || []),
         project.thumbnailPath || null,
         project.createdAt,
         project.updatedAt,
@@ -244,16 +240,11 @@ export async function replaceAllCanvasProjects(projects: CanvasProject[]) {
   }
   if (projects.length === 0) {
     await db.execute('delete from canvases')
-    await db.execute('delete from canvas_versions')
   } else {
     const placeholders = projects.map((_, index) => `$${index + 1}`).join(', ')
     const projectIds = projects.map(project => project.id)
     await db.execute(
       `delete from canvases where id not in (${placeholders})`,
-      projectIds
-    )
-    await db.execute(
-      `delete from canvas_versions where canvasId not in (${placeholders})`,
       projectIds
     )
   }

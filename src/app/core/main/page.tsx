@@ -63,9 +63,11 @@ function ResizableWrapper() {
   const centerPanelRef = useRef<PanelImperativeHandle>(null)
   const rightPanelRef = useRef<PanelImperativeHandle>(null)
   
-  const MIN_SIDEBAR_WIDTH_PX = 280
+  const MIN_LEFT_SIDEBAR_WIDTH_PX = 320
+  const MIN_RIGHT_SIDEBAR_WIDTH_PX = 280
   const MIN_EDITOR_WIDTH_PX = 400
-  const [minSidebarSize, setMinSidebarSize] = useState(20)
+  const [minLeftSidebarSize, setMinLeftSidebarSize] = useState(24)
+  const [minRightSidebarSize, setMinRightSidebarSize] = useState(20)
   const [minEditorSize, setMinEditorSize] = useState(30)
   
   // 使用稳定的 layoutKey 用于存储，但不作为 React key
@@ -78,9 +80,11 @@ function ResizableWrapper() {
   
   const calculateMinSizes = () => {
     const windowWidth = window.innerWidth
-    const minSidebarPercent = Math.max(15, (MIN_SIDEBAR_WIDTH_PX / windowWidth) * 100)
+    const minLeftSidebarPercent = Math.max(18, (MIN_LEFT_SIDEBAR_WIDTH_PX / windowWidth) * 100)
+    const minRightSidebarPercent = Math.max(15, (MIN_RIGHT_SIDEBAR_WIDTH_PX / windowWidth) * 100)
     const minEditorPercent = Math.max(25, (MIN_EDITOR_WIDTH_PX / windowWidth) * 100)
-    setMinSidebarSize(Math.min(minSidebarPercent, 40))
+    setMinLeftSidebarSize(Math.min(minLeftSidebarPercent, 40))
+    setMinRightSidebarSize(Math.min(minRightSidebarPercent, 40))
     setMinEditorSize(Math.min(minEditorPercent, 50))
   }
 
@@ -106,7 +110,7 @@ function ResizableWrapper() {
       // 左侧面板
       if (leftPanelRef.current) {
         if (leftSidebarVisible) {
-          expandPanel(leftPanelRef.current, minSidebarSize)
+          expandPanel(leftPanelRef.current, minLeftSidebarSize)
         } else {
           leftPanelRef.current.collapse()
         }
@@ -124,14 +128,14 @@ function ResizableWrapper() {
       // 右侧面板
       if (rightPanelRef.current) {
         if (rightSidebarVisible) {
-          expandPanel(rightPanelRef.current, minSidebarSize)
+          expandPanel(rightPanelRef.current, minRightSidebarSize)
         } else {
           rightPanelRef.current.collapse()
         }
       }
     }, 100)
     return () => clearTimeout(timer)
-  }, [leftSidebarVisible, centerPanelVisible, rightSidebarVisible, minEditorSize, minSidebarSize])
+  }, [leftSidebarVisible, centerPanelVisible, rightSidebarVisible, minEditorSize, minLeftSidebarSize, minRightSidebarSize])
 
   // 根据面板可见性渲染布局
   // 注意：左侧面板始终渲染，所以 layoutKey 用于存储，但实际布局计算需要考虑左侧始终存在
@@ -170,7 +174,7 @@ function ResizableWrapper() {
         id="left"
         panelRef={leftPanelRef}
         defaultSize={`${actualLayout[index++]}%`}
-        minSize={`${minSidebarSize}%`}
+        minSize={`${minLeftSidebarSize}%`}
         collapsible={true}
         collapsedSize="0%"
       >
@@ -219,7 +223,7 @@ function ResizableWrapper() {
         id="right"
         panelRef={rightPanelRef}
         defaultSize={`${actualLayout[index++]}%`}
-        minSize={`${minSidebarSize}%`}
+        minSize={`${minRightSidebarSize}%`}
         collapsible={true}
         collapsedSize="0%"
       >

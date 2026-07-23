@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { cn } from '@/lib/utils'
-import { File, FolderTree, NotebookPen, SearchX, Shapes, Tags } from 'lucide-react'
+import { File, FolderTree, NotebookPen, PanelsTopLeft, SearchX, Tags } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { Store } from '@tauri-apps/plugin-store'
 import useArticleStore from '@/stores/article'
@@ -127,7 +127,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
 
     if (item.searchType === 'canvas') {
       return {
-        icon: Shapes,
+        icon: PanelsTopLeft,
         primary: t('search.item.canvas'),
         secondary: item.type || null,
       }
@@ -490,7 +490,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                           {item.searchType === 'record' ? (
                             <NotebookPen className="size-3.5" />
                           ) : item.searchType === 'canvas' ? (
-                            <Shapes className="size-3.5" />
+                            <PanelsTopLeft className="size-3.5" />
                           ) : (
                             <File className="size-3.5" />
                           )}
@@ -532,7 +532,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                           {item.searchType === 'record' ? (
                             <NotebookPen className="size-3.5" />
                           ) : item.searchType === 'canvas' ? (
-                            <Shapes className="size-3.5" />
+                            <PanelsTopLeft className="size-3.5" />
                           ) : (
                             <File className="size-3.5" />
                           )}

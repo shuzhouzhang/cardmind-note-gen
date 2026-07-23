@@ -27,16 +27,55 @@ function renderNode(node: CanvasNode, offsetX: number, offsetY: number) {
   const x = node.position.x + offsetX
   const y = node.position.y + offsetY
   const label = escapeXml(node.data.label || '')
+  const accentColor = escapeXml(node.data.color || '#a1a1aa')
+  const borderWidth = node.data.borderWidth || 1
+  const dashArray = node.data.borderStyle === 'dashed'
+    ? ' stroke-dasharray="8 6"'
+    : node.data.borderStyle === 'dotted'
+      ? ' stroke-dasharray="2 5"'
+      : ''
+  const explicitFillColor = node.data.fillColor
+  const nodeFill = explicitFillColor && explicitFillColor !== 'transparent'
+    ? escapeXml(explicitFillColor)
+    : node.data.fillStyle === 'tint' && node.data.color
+      ? accentColor
+      : '#ffffff'
+  const nodeFillOpacity = explicitFillColor
+    ? explicitFillColor === 'transparent' ? 0 : 1
+    : node.data.fillStyle === 'tint' ? 0.14 : 0.94
   if (node.type === 'freehand') {
-    return `<g transform="translate(${x} ${y})"><path d="${escapeXml(node.data.path || '')}" fill="${escapeXml(node.data.color || '#18181b')}" fill-opacity="${node.data.opacity ?? 1}"/></g>`
+    const pathStrokeWidth = node.data.pathStrokeWidth ?? node.data.strokeWidth
+    const widthAdjustment = typeof pathStrokeWidth === 'number' && typeof node.data.strokeWidth === 'number'
+      ? (node.data.strokeWidth - pathStrokeWidth) / 2
+      : 0
+    const filterRadius = Math.abs(widthAdjustment)
+    const filterId = `freehand-width-${escapeXml(node.id)}`
+    const color = escapeXml(node.data.color || '#18181b')
+    const opacity = node.data.opacity ?? 1
+    const filter = filterRadius > 0
+      ? `<defs><filter id="${filterId}" x="${-filterRadius * 2}" y="${-filterRadius * 2}" width="${width + filterRadius * 4}" height="${height + filterRadius * 4}" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feMorphology in="SourceAlpha" operator="${widthAdjustment > 0 ? 'dilate' : 'erode'}" radius="${filterRadius}" result="adjusted"/><feFlood flood-color="${color}" flood-opacity="${opacity}" result="paint"/><feComposite in="paint" in2="adjusted" operator="in"/></filter></defs>`
+      : ''
+    return `<g transform="translate(${x} ${y})">${filter}<path d="${escapeXml(node.data.path || '')}" fill="${color}" fill-opacity="${filterRadius > 0 ? 1 : opacity}"${filterRadius > 0 ? ` filter="url(#${filterId})"` : ''}/></g>`
   }
   if (node.type === 'group') {
-    return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="16" fill="#f4f4f5" fill-opacity="0.55" stroke="#a1a1aa" stroke-dasharray="8 6"/><text x="${x + 16}" y="${y + 26}" font-family="sans-serif" font-size="14" font-weight="600" fill="#3f3f46">${label}</text></g>`
+    const groupDashArray = node.data.borderStyle ? dashArray : ' stroke-dasharray="8 6"'
+    const groupFill = explicitFillColor && explicitFillColor !== 'transparent'
+      ? escapeXml(explicitFillColor)
+      : node.data.fillStyle === 'tint'
+        ? accentColor
+        : '#71717a'
+    const groupFillOpacity = explicitFillColor
+      ? explicitFillColor === 'transparent' ? 0 : 1
+      : 0.1
+    return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="16" fill="${groupFill}" fill-opacity="${groupFillOpacity}" stroke="${accentColor}" stroke-width="${borderWidth}"${groupDashArray}/><text x="${x + 16}" y="${y + 26}" font-family="sans-serif" font-size="14" font-weight="600" fill="#52525b">${label}</text></g>`
   }
   if (node.type === 'decision') {
     const cx = x + width / 2
     const cy = y + height / 2
-    return `<g><polygon points="${cx},${y} ${x + width},${cy} ${cx},${y + height} ${x},${cy}" fill="#ffffff" stroke="#a1a1aa"/><text x="${cx}" y="${cy + 5}" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#18181b">${label}</text></g>`
+    return `<g><polygon points="${cx},${y} ${x + width},${cy} ${cx},${y + height} ${x},${cy}" fill="${nodeFill}" fill-opacity="${nodeFillOpacity}" stroke="${accentColor}" stroke-width="${borderWidth}"${dashArray}/><text x="${cx}" y="${cy + 5}" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#18181b">${label}</text></g>`
+  }
+  if (node.type === 'text') {
+    return `<text x="${x + width / 2}" y="${y + height / 2 + 5}" text-anchor="middle" font-family="sans-serif" font-size="14" fill="${escapeXml(node.data.color || '#52525b')}">${label}</text>`
   }
   const radius = node.type === 'terminator' ? height / 2 : 10
   const subtitle = node.type === 'note'
@@ -46,13 +85,13 @@ function renderNode(node: CanvasNode, offsetX: number, offsetY: number) {
       : node.type === 'todo'
         ? (node.data.checked ? '✓' : '○')
         : ''
-  return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="#ffffff" stroke="#a1a1aa"/><text x="${x + width / 2}" y="${y + height / 2 - (subtitle ? 5 : -5)}" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#18181b">${label}</text>${subtitle ? `<text x="${x + width / 2}" y="${y + height / 2 + 15}" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#71717a">${escapeXml(String(subtitle))}</text>` : ''}</g>`
+  return `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="${nodeFill}" fill-opacity="${nodeFillOpacity}" stroke="${accentColor}" stroke-width="${borderWidth}"${dashArray}/><text x="${x + width / 2}" y="${y + height / 2 - (subtitle ? 5 : -5)}" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#18181b">${label}</text>${subtitle ? `<text x="${x + width / 2}" y="${y + height / 2 + 15}" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#71717a">${escapeXml(String(subtitle))}</text>` : ''}</g>`
 }
 
 export function canvasDocumentToSvg(document: CanvasDocument) {
   const allNodes = document.nodes
   if (allNodes.length === 0) {
-    return '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><rect width="100%" height="100%" fill="#fff"/></svg>'
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"></svg>'
   }
   const boxes = allNodes.map(node => ({ node, ...getNodeSize(node) }))
   const minX = Math.min(...boxes.map(item => item.node.position.x))
@@ -74,9 +113,15 @@ export function canvasDocumentToSvg(document: CanvasDocument) {
     const y2 = target.node.position.y + target.height / 2 + offsetY
     return `<g><path d="M ${x1} ${y1} L ${x2} ${y2}" fill="none" stroke="#71717a" stroke-width="1.5" marker-end="url(#arrow)"/>${edge.label ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 6}" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#52525b">${escapeXml(edge.label)}</text>` : ''}</g>`
   }).join('')
-  const groups = allNodes.filter(node => node.type === 'group').map(node => renderNode(node, offsetX, offsetY)).join('')
-  const nodes = allNodes.filter(node => node.type !== 'group').map(node => renderNode(node, offsetX, offsetY)).join('')
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#ffffff"/><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#71717a"/></marker></defs>${groups}${edges}${nodes}</svg>`
+  const originalIndex = new Map(allNodes.map((node, index) => [node.id, index]))
+  const nodes = [...allNodes]
+    .sort((left, right) => (
+      (left.zIndex ?? 0) - (right.zIndex ?? 0)
+      || (originalIndex.get(left.id) ?? 0) - (originalIndex.get(right.id) ?? 0)
+    ))
+    .map(node => renderNode(node, offsetX, offsetY))
+    .join('')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#71717a"/></marker></defs>${edges}${nodes}</svg>`
 }
 
 export async function canvasDocumentToPngFile(

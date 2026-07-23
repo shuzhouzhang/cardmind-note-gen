@@ -39,7 +39,12 @@ export interface CanvasNodeData extends Record<string, unknown> {
   label?: string
   description?: string
   color?: string
+  borderStyle?: 'solid' | 'dashed' | 'dotted'
+  borderWidth?: number
+  fillColor?: string
+  fillStyle?: 'default' | 'tint'
   strokeWidth?: number
+  pathStrokeWidth?: number
   opacity?: number
   points?: CanvasPoint[]
   path?: string
@@ -93,13 +98,25 @@ export interface CanvasDocument {
   }
 }
 
+export interface CanvasHistorySnapshot {
+  nodes: CanvasNode[]
+  edges: CanvasEdge[]
+}
+
+export interface CanvasHistoryState {
+  undo: CanvasHistorySnapshot[]
+  redo: CanvasHistorySnapshot[]
+}
+
 export interface CanvasProject {
   id: string
   title: string
   canvasType: CanvasProjectType
   schemaVersion: number
   document: CanvasDocument
+  history?: CanvasHistoryState
   thumbnailPath?: string | null
+  thumbnailRevision?: number
   createdAt: number
   updatedAt: number
   pinnedAt?: number | null
@@ -112,6 +129,8 @@ export interface CanvasProjectRow {
   canvasType: CanvasProjectType
   schemaVersion: number
   content: string
+  undoStack?: string | null
+  redoStack?: string | null
   thumbnailPath?: string | null
   createdAt: number
   updatedAt: number

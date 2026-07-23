@@ -8,14 +8,33 @@ import {
   setCanvasPinnedAt,
   softDeleteCanvasProject,
   updateCanvasDocument,
+  updateCanvasHistory,
   updateCanvasThumbnailPath,
 } from '@/db/canvases'
 import { createCanvasDocument } from '@/lib/canvas/templates'
-import { generateCanvasThumbnail } from '@/lib/canvas/thumbnail'
-import type { CanvasDocument, CanvasProject, CanvasProjectType } from '@/types/canvas'
+import { CANVAS_THUMBNAIL_VERSION, generateCanvasThumbnail } from '@/lib/canvas/thumbnail'
+import type { CanvasDocument, CanvasHistoryState, CanvasProject, CanvasProjectType } from '@/types/canvas'
 
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const thumbnailTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const historySaveChains = new Map<string, Promise<void>>()
+
+function persistCanvasHistory(id: string, history: CanvasHistoryState) {
+  const previousSave = historySaveChains.get(id) || Promise.resolve()
+  const nextSave = previousSave
+    .catch(() => undefined)
+    .then(() => updateCanvasHistory(id, history))
+  historySaveChains.set(id, nextSave)
+  void nextSave.then(() => {
+    if (historySaveChains.get(id) === nextSave) historySaveChains.delete(id)
+  }, () => {
+    if (historySaveChains.get(id) === nextSave) historySaveChains.delete(id)
+  })
+}
+
+function hasCurrentThumbnail(project: Pick<CanvasProject, 'thumbnailPath'>) {
+  return Boolean(project.thumbnailPath?.endsWith(`-v${CANVAS_THUMBNAIL_VERSION}.png`))
+}
 
 export type CanvasSortMode = 'updated' | 'created' | 'name'
 
@@ -35,6 +54,7 @@ interface CanvasState {
   openProject: (id: string) => Promise<CanvasProject | null>
   setActiveCanvasId: (id: string | null) => void
   updateDocument: (id: string, document: CanvasDocument) => void
+  updateHistory: (id: string, history: CanvasHistoryState) => void
   saveProject: (id: string) => Promise<void>
   refreshThumbnail: (id: string) => Promise<void>
   refreshAllThumbnails: () => Promise<void>
@@ -68,7 +88,7 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
       loading: false,
     })
     void (async () => {
-      for (const project of projects.filter(project => !project.thumbnailPath)) {
+      for (const project of projects.filter(project => !hasCurrentThumbnail(project))) {
         await get().refreshThumbnail(project.id)
       }
     })()
@@ -151,6 +171,19 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
     }, 1000))
   },
 
+  updateHistory: (id, history) => {
+    const nextHistory = structuredClone(history)
+    set(state => ({
+      projects: state.projects.map(project => (
+        project.id === id ? { ...project, history: nextHistory } : project
+      )),
+      deletedProjects: state.deletedProjects.map(project => (
+        project.id === id ? { ...project, history: nextHistory } : project
+      )),
+    }))
+    persistCanvasHistory(id, nextHistory)
+  },
+
   saveProject: async (id) => {
     const document = get().documents[id]
     if (!document) return
@@ -182,8 +215,12 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
       const thumbnailPath = await generateCanvasThumbnail(id, document)
       await updateCanvasThumbnailPath(id, thumbnailPath)
       set(state => ({
-        projects: state.projects.map(project => project.id === id ? { ...project, thumbnailPath } : project),
-        deletedProjects: state.deletedProjects.map(project => project.id === id ? { ...project, thumbnailPath } : project),
+        projects: state.projects.map(project => project.id === id
+          ? { ...project, thumbnailPath, thumbnailRevision: Date.now() }
+          : project),
+        deletedProjects: state.deletedProjects.map(project => project.id === id
+          ? { ...project, thumbnailPath, thumbnailRevision: Date.now() }
+          : project),
       }))
     } catch (error) {
       console.error('Failed to generate canvas thumbnail:', error)
@@ -254,6 +291,7 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
       deletedProjects: state.deletedProjects.filter(item => item.id !== id),
       documents: { ...state.documents, [id]: project.document },
     }))
+    if (!hasCurrentThumbnail(project)) void get().refreshThumbnail(id)
     return project
   },
 }))

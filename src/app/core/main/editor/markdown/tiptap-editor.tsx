@@ -1077,6 +1077,8 @@ export function TipTapEditor({
   const [imageSrcDraft, setImageSrcDraft] = useState('')
   const [imageAltDraft, setImageAltDraft] = useState('')
   const [customAiInstruction, setCustomAiInstruction] = useState('')
+  const [isCanvasDragOver, setIsCanvasDragOver] = useState(false)
+  const [isCanvasDropPending, setIsCanvasDropPending] = useState(false)
   const aiActionHandlersRef = useRef({
     polish: async () => {},
     concise: async () => {},
@@ -2712,6 +2714,11 @@ export function TipTapEditor({
       const pos = editor.view.posAtCoords({ left: event.clientX, top: event.clientY })
       const insertPos = pos?.pos || editor.state.selection.from
 
+      if (hasCanvas) {
+        setIsCanvasDragOver(false)
+        setIsCanvasDropPending(true)
+      }
+
       void (async () => {
         if (hasCanvas) {
           const canvasId = getCanvasDragId(dataTransfer)
@@ -2732,7 +2739,10 @@ export function TipTapEditor({
               },
             })
             .run()
-          toast({ title: '画布已插入', description: `已生成静态图片：${result.relativePath}` })
+          toast({
+            title: t('canvasDrop.success'),
+            description: t('canvasDrop.successDescription', { path: result.relativePath }),
+          })
           return
         }
 
@@ -2795,10 +2805,16 @@ export function TipTapEditor({
           .run()
       })().catch(error => {
         toast({
-          title: droppedImageFiles.length > 0 ? tImage('failed') : '插入文件链接失败',
+          title: hasCanvas
+            ? t('canvasDrop.failed')
+            : droppedImageFiles.length > 0
+              ? tImage('failed')
+              : '插入文件链接失败',
           description: error instanceof Error ? error.message : undefined,
           variant: 'destructive',
         })
+      }).finally(() => {
+        if (hasCanvas) setIsCanvasDropPending(false)
       })
     }
 
@@ -4065,6 +4081,9 @@ export function TipTapEditor({
 
   // Handle drag and drop from marks
   const handleEditorDrop = useCallback((e: React.DragEvent) => {
+    if (hasCanvasDragData(e.dataTransfer)) {
+      setIsCanvasDragOver(false)
+    }
     const markData = e.dataTransfer.getData('application/json')
     if (markData) {
       e.preventDefault()
@@ -4175,6 +4194,19 @@ export function TipTapEditor({
       document.removeEventListener('tiptap-insert-block-math', handleInsertBlockMath)
     }
   }, [editor])
+
+  const handleEditorDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    if (!hasCanvasDragData(event.dataTransfer)) return
+    event.dataTransfer.dropEffect = 'copy'
+    setIsCanvasDragOver(true)
+  }, [])
+
+  const handleEditorDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    const nextTarget = event.relatedTarget
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return
+    setIsCanvasDragOver(false)
+  }, [])
 
   // Handle math dialog insert
   const handleMathInsert = useCallback((latex: string, type: 'inline' | 'block') => {
@@ -4780,9 +4812,22 @@ export function TipTapEditor({
         )}
         onMouseDownCapture={handleEditorMouseDownCapture}
         onScroll={handleEditorScroll}
-        onDragOver={(e) => e.preventDefault()}
+        onDragEnter={handleEditorDragOver}
+        onDragOver={handleEditorDragOver}
+        onDragLeave={handleEditorDragLeave}
         onDropCapture={handleEditorDrop}
       >
+        {(isCanvasDragOver || isCanvasDropPending) && (
+          <div className={cn(
+            'pointer-events-none absolute inset-0 z-40 flex items-center justify-center border-2 border-primary/60 bg-primary/5 transition-colors duration-150',
+            isCanvasDropPending && 'border-transparent bg-transparent'
+          )}>
+            <div className="flex items-center gap-2 rounded-md border bg-background/95 px-3 py-2 text-sm text-foreground shadow-md backdrop-blur">
+              {isCanvasDropPending && <Loader2 className="size-4 animate-spin text-primary" aria-hidden="true" />}
+              <span>{t(isCanvasDropPending ? 'canvasDrop.generating' : 'canvasDrop.hint')}</span>
+            </div>
+          </div>
+        )}
         <div
           className={getEditorContentContainerClass({
             centeredContent,

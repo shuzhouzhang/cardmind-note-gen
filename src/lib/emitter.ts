@@ -132,6 +132,10 @@ interface Events {
   'editor-undo-redo-changed': { undo: boolean; redo: boolean };
   'canvas-document-replace': { canvasId: string; document: CanvasDocument };
   'canvas-history-checkpoint': void;
+  'canvas-undo': { canvasId: string };
+  'canvas-redo': { canvasId: string };
+  'canvas-can-undo-redo': { canvasId: string; resolve: (can: { undo: boolean; redo: boolean }) => void };
+  'canvas-undo-redo-changed': { canvasId: string; undo: boolean; redo: boolean };
   'canvas-agent-preview': { operations: unknown[] };
   'canvas-agent-preview-clear': void;
   'canvas-auto-layout': { recordHistory?: boolean };

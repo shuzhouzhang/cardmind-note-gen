@@ -1,50 +1,45 @@
 'use client'
 
 import {
-  AlignHorizontalSpaceAround,
-  AlignVerticalSpaceAround,
-  Check,
+  ClipboardPaste,
   Download,
   FileCode2,
-  FolderDown,
+  FileInput,
   Grid3X3,
-  History,
   ImageDown,
   Magnet,
   Maximize2,
   WandSparkles,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
+import { Slider } from '@/components/ui/slider'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface CanvasFooterProps {
-  nodeCount: number
-  edgeCount: number
-  selectedCount: number
   showGrid: boolean
   snapToGrid: boolean
-  layoutDirection: 'TB' | 'LR'
+  zoom: number
   onToggleGrid: () => void
   onToggleSnap: () => void
-  onDirectionChange: (direction: 'TB' | 'LR') => void
+  onZoomChange: (zoom: number) => void
   onFitView: () => void
   onLayout: () => void
-  onHistory: () => void
-  onExport: (format: 'png' | 'svg', pixelRatio: number, destination: 'computer' | 'workspace') => void
+  onExport: (format: 'png' | 'svg', pixelRatio: number) => void
   onExportSource: (format: 'canvas' | 'mermaid') => void
-  onImportMermaid: () => void
+  onImportFile: () => void
+  onImportContent: () => void
 }
 
 function FooterButton({
@@ -77,43 +72,23 @@ function FooterButton({
 }
 
 export function CanvasFooter({
-  nodeCount,
-  edgeCount,
-  selectedCount,
   showGrid,
   snapToGrid,
-  layoutDirection,
+  zoom,
   onToggleGrid,
   onToggleSnap,
-  onDirectionChange,
+  onZoomChange,
   onFitView,
   onLayout,
-  onHistory,
   onExport,
   onExportSource,
-  onImportMermaid,
+  onImportFile,
+  onImportContent,
 }: CanvasFooterProps) {
   const t = useTranslations('canvas.footer')
-  const DirectionIcon = layoutDirection === 'TB' ? AlignVerticalSpaceAround : AlignHorizontalSpaceAround
 
   return (
     <div className="flex h-6 shrink-0 items-center justify-between gap-3 border-t border-border bg-background px-3 text-xs text-muted-foreground">
-      <div className="flex min-w-0 items-center gap-2">
-        <span>{t('nodes', { count: nodeCount })}</span>
-        <span aria-hidden="true">•</span>
-        <span>{t('edges', { count: edgeCount })}</span>
-        {selectedCount > 0 && (
-          <>
-            <span aria-hidden="true">•</span>
-            <span>{t('selected', { count: selectedCount })}</span>
-          </>
-        )}
-        <span className="hidden items-center gap-1 sm:flex">
-          <Check className="size-3" />
-          {t('localSave')}
-        </span>
-      </div>
-
       <div className="flex shrink-0 items-center gap-0.5">
         <FooterButton label={t('grid')} active={showGrid} onClick={onToggleGrid}>
           <Grid3X3 />
@@ -121,42 +96,31 @@ export function CanvasFooter({
         <FooterButton label={t('snap')} active={snapToGrid} onClick={onToggleSnap}>
           <Magnet />
         </FooterButton>
+        <FooterButton label={t('layout')} onClick={onLayout}>
+          <WandSparkles />
+        </FooterButton>
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger asChild>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-xs" aria-label={t('direction.title')}>
-                  <DirectionIcon />
+                <Button variant="ghost" size="icon-xs" aria-label={t('import.title')}>
+                  <FileInput />
                 </Button>
               </DropdownMenuTrigger>
             </TooltipTrigger>
-            <TooltipContent side="top">{t('direction.title')}</TooltipContent>
+            <TooltipContent side="top">{t('import.title')}</TooltipContent>
           </Tooltip>
-          <DropdownMenuContent align="end" side="top">
-            <DropdownMenuLabel>{t('direction.title')}</DropdownMenuLabel>
-            <DropdownMenuGroup>
-              <DropdownMenuRadioGroup value={layoutDirection} onValueChange={value => onDirectionChange(value as 'TB' | 'LR')}>
-                <DropdownMenuRadioItem value="TB">
-                  <AlignVerticalSpaceAround />
-                  {t('direction.vertical')}
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="LR">
-                  <AlignHorizontalSpaceAround />
-                  {t('direction.horizontal')}
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-            </DropdownMenuGroup>
+          <DropdownMenuContent align="start" side="top">
+            <DropdownMenuItem onSelect={onImportFile}>
+              <FileInput />
+              {t('import.file')}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onImportContent}>
+              <ClipboardPaste />
+              {t('import.content')}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <FooterButton label={t('fit')} onClick={onFitView}>
-          <Maximize2 />
-        </FooterButton>
-        <FooterButton label={t('layout')} onClick={onLayout}>
-          <WandSparkles />
-        </FooterButton>
-        <FooterButton label={t('history')} onClick={onHistory}>
-          <History />
-        </FooterButton>
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -168,18 +132,18 @@ export function CanvasFooter({
             </TooltipTrigger>
             <TooltipContent side="top">{t('export')}</TooltipContent>
           </Tooltip>
-          <DropdownMenuContent align="end" side="top" className="w-56">
+          <DropdownMenuContent align="start" side="top" className="w-56">
             <DropdownMenuLabel>{t('exportMenu.computer')}</DropdownMenuLabel>
             <DropdownMenuGroup>
-              <DropdownMenuItem onSelect={() => onExport('png', 2, 'computer')}>
+              <DropdownMenuItem onSelect={() => onExport('png', 2)}>
                 <ImageDown />
                 {t('exportMenu.png2x')}
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onExport('png', 4, 'computer')}>
+              <DropdownMenuItem onSelect={() => onExport('png', 4)}>
                 <ImageDown />
                 {t('exportMenu.png4x')}
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onExport('svg', 1, 'computer')}>
+              <DropdownMenuItem onSelect={() => onExport('svg', 1)}>
                 <FileCode2 />
                 {t('exportMenu.svg')}
               </DropdownMenuItem>
@@ -195,25 +159,29 @@ export function CanvasFooter({
                 <FileCode2 />
                 {t('exportMenu.mermaid')}
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={onImportMermaid}>
-                <FileCode2 />
-                {t('exportMenu.importMermaid')}
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>{t('exportMenu.workspace')}</DropdownMenuLabel>
-            <DropdownMenuGroup>
-              <DropdownMenuItem onSelect={() => onExport('png', 2, 'workspace')}>
-                <FolderDown />
-                {t('exportMenu.workspacePng')}
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onExport('svg', 1, 'workspace')}>
-                <FolderDown />
-                {t('exportMenu.workspaceSvg')}
-              </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-0.5">
+        <div className="flex items-center gap-1.5 px-1">
+          <ZoomOut className="size-3" aria-hidden="true" />
+          <Slider
+            min={0.25}
+            max={2}
+            step={0.05}
+            value={[zoom]}
+            onValueChange={value => onZoomChange(value[0] ?? zoom)}
+            aria-label={`${t('zoomOut')} / ${t('zoomIn')}`}
+            className="w-20"
+          />
+          <ZoomIn className="size-3" aria-hidden="true" />
+          <span className="w-9 text-right tabular-nums">{Math.round(zoom * 100)}%</span>
+        </div>
+        <FooterButton label={t('fit')} onClick={onFitView}>
+          <Maximize2 />
+        </FooterButton>
       </div>
     </div>
   )
