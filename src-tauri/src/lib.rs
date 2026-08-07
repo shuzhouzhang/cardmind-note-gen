@@ -83,6 +83,9 @@ pub fn run() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.manage(SkillProcessManager::default());
 
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_cloud_folder::init());
     #[cfg(target_os = "android")]

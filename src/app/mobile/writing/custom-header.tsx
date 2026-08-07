@@ -1055,7 +1055,8 @@ export function WritingHeader() {
     if (!ok) return
 
     const store = await Store.load('store.json')
-    const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'>('primaryBackupMethod') || 'github'
+    const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder' | 'noteGenServer'>('primaryBackupMethod') || 'github'
+    if (backupMethod === 'noteGenServer') return
 
     if (entry.type === 'folder') {
       const node = getNodeByPath(fileTree, entry.relativePath)

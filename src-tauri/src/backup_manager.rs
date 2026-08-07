@@ -554,6 +554,8 @@ fn preserve_device_local_settings(
         "managedBackupLastSuccessAt",
         "managedBackupLastError",
         "deviceId",
+        "noteGenServerDeviceId",
+        "noteGenServerMachineId",
         "assetsPath",
         "workspaceHistory",
         "workspaceSyncRepos",

@@ -2,7 +2,7 @@ import { getDb } from "./index"
 import { insertActivityEvent } from './activity'
 import { truncateActivityText } from '@/lib/activity/events'
 import { v4 as uuid, v5 as uuidv5 } from 'uuid'
-import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-queue'
+import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-bridge'
 import {
   nextConversationSyncTimestamp,
   upsertConversationSyncTombstone,
@@ -373,10 +373,31 @@ export async function insertChats(chats: Chat[]) {
 // 删除所有 chats（用于同步）
 export async function deleteAllChats() {
   const db = await getDb()
-  return await db.execute(
-    "delete from chats",
+  const chats = await db.select<Array<{
+    syncId: string
+    conversationId: number | null
+    conversationSyncId: string | null
+  }>>(
+    `select chats.syncId, chats.conversationId, conversations.syncId as conversationSyncId
+     from chats left join conversations on conversations.id = chats.conversationId
+     where chats.syncId is not null`,
     []
   )
+  const deletedAt = await nextConversationSyncTimestamp()
+  for (const chat of chats) {
+    await upsertConversationSyncTombstone({
+      entityType: 'message',
+      syncId: chat.syncId,
+      conversationSyncId: chat.conversationSyncId,
+      deletedAt,
+    })
+  }
+  const result = await db.execute('delete from chats', [])
+  for (const conversationId of new Set(chats.map(chat => chat.conversationId))) {
+    await touchConversationSyncVersion(conversationId, deletedAt)
+  }
+  enqueueConversationAutoSync('messages-cleared-all')
+  return result
 }
 
 // 更新一条 chat
@@ -528,10 +549,17 @@ export async function deleteChats(ids: number[]) {
 export async function updateChatCondensedContent(chatId: number, condensedContent: string) {
   const db = await getDb()
   try {
-    await db.execute(
-      "update chats set condensedContent = $1, condensedAt = $2 where id = $3",
-      [condensedContent, Date.now(), chatId]
+    const chats = await db.select<Array<{ conversationId: number | null }>>(
+      'select conversationId from chats where id = $1',
+      [chatId]
     )
+    const syncUpdatedAt = await nextConversationSyncTimestamp()
+    await db.execute(
+      "update chats set condensedContent = $1, condensedAt = $2, syncUpdatedAt = $2 where id = $3",
+      [condensedContent, syncUpdatedAt, chatId]
+    )
+    await touchConversationSyncVersion(chats[0]?.conversationId, syncUpdatedAt)
+    enqueueConversationAutoSync('chat-condensed-content-updated')
   } catch (error) {
     console.error('Error updating chat condensed content:', error);
     throw error;

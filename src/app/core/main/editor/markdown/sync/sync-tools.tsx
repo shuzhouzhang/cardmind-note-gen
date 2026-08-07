@@ -39,6 +39,8 @@ export function SyncTools({ editor, markdown, getMarkdown, prepareExternalAction
     openSettings('sync')
   }
 
+  if (syncContext.primaryBackupMethod === 'noteGenServer') return null
+
   if (configured) {
     return (
       <div className="flex items-center gap-1">

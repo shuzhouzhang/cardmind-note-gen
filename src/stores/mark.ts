@@ -13,7 +13,7 @@ import { Store } from '@tauri-apps/plugin-store';
 import { create } from 'zustand'
 import { S3Config } from '@/types/sync'
 import { normalizeRecordFilters } from '@/app/core/main/mark/mark-filters'
-import { setAutoDataSyncApplyingRemote } from '@/lib/sync/auto-data-sync-queue'
+import { setAutoDataSyncApplyingRemote } from '@/lib/sync/auto-data-sync-bridge'
 import useArticleStore from './article'
 
 interface RecordDataDownloadOptions {

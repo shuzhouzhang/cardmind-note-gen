@@ -170,6 +170,7 @@ class SyncPushQueue {
    */
   addTask(path: string) {
     if (this.workspaceSwitchPauseDepth > 0) return
+    if (useSettingStore.getState().primaryBackupMethod === 'noteGenServer') return
 
     const now = Date.now()
     const task: PushTask = {

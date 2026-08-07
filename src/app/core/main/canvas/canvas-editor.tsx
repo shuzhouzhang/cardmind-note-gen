@@ -114,6 +114,11 @@ import { getMarkListItemContent } from '@/app/core/main/mark/mark-list-item-cont
 import { applyCanvasOperations } from '@/lib/canvas/operations'
 import { getFilePathOptions } from '@/lib/workspace'
 import {
+  getNoteGenServerStructuredSession,
+  type NoteGenServerTextSession,
+} from '@/lib/sync/note-gen-server-collab'
+import { getNoteGenServerBackgroundConnection } from '@/lib/sync/note-gen-server-background'
+import {
   createFreehandGeometry,
   getFreehandOutline,
   getSvgPathFromStroke,
@@ -316,6 +321,45 @@ function CanvasEditorInner({ canvasId, mobile = false }: CanvasEditorProps) {
   const canvasInsertBehavior = useSettingStore(state => state.canvasInsertBehavior)
   const setCanvasGridVisible = useSettingStore(state => state.setCanvasGridVisible)
   const setCanvasSnapToGrid = useSettingStore(state => state.setCanvasSnapToGrid)
+  const collaborationSessionRef = useRef<NoteGenServerTextSession | null>(null)
+
+  useEffect(() => {
+    let disposed = false
+    const previous = collaborationSessionRef.current
+    collaborationSessionRef.current = null
+    previous?.destroy()
+    const connection = getNoteGenServerBackgroundConnection()
+    if (!connection?.profile.workspaceId || !document) return
+    void getNoteGenServerStructuredSession({
+      workspaceId: connection.profile.workspaceId,
+      documentId: `canvas:${canvasId}`,
+      initialFields: { document },
+    }).then(session => {
+      if (disposed || !session) return
+      collaborationSessionRef.current = session
+      session.subscribeFields(fields => {
+        if (disposed) return
+        const nextDocument = fields.document as CanvasDocument | undefined
+        const currentDocument = useCanvasStore.getState().documents[canvasId]
+        if (nextDocument && JSON.stringify(nextDocument) !== JSON.stringify(currentDocument)) {
+          updateDocument(canvasId, nextDocument)
+        }
+      })
+    })
+    return () => {
+      disposed = true
+      collaborationSessionRef.current?.destroy()
+      collaborationSessionRef.current = null
+    }
+  }, [canvasId, document !== undefined])
+
+  useEffect(() => {
+    if (!document) return
+    const session = collaborationSessionRef.current
+    if (!session) return
+    session.setFields({ document })
+  }, [document])
+
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<FlowCanvasNode>(
     ((document?.nodes || []) as FlowCanvasNode[]).map(node => (
       node.draggable === false && !node.data.locked ? { ...node, draggable: true } : node
@@ -700,8 +744,12 @@ function CanvasEditorInner({ canvasId, mobile = false }: CanvasEditorProps) {
     if (!document) return
     if (!havePersistentNodesChanged(persistedNodesRef.current, nodes)
       && !havePersistentEdgesChanged(persistedEdgesRef.current, edges)) return
-    persistedNodesRef.current = nodes
-    persistedEdgesRef.current = edges
+    // React Flow may reuse/mutate node objects while a freehand stroke is
+    // being produced. Keep an immutable baseline; otherwise the comparison
+    // below can observe the same mutated object on both sides and skip a
+    // stroke update.
+    persistedNodesRef.current = structuredClone(nodes)
+    persistedEdgesRef.current = structuredClone(edges)
     const nextDocument: CanvasDocument = {
       ...document,
       nodes: serializeNodes(nodes),

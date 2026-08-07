@@ -6,6 +6,8 @@ import { locales } from '@/lib/locales';
 import { AgentState, ToolCall } from '@/lib/agent/types'
 import { LinkedResource } from '@/lib/files'
 import type { Conversation } from '@/db/conversations'
+import { getNoteGenServerBackgroundConnection } from '@/lib/sync/note-gen-server-background'
+import { getNoteGenServerConversationSession, type NoteGenServerTextSession } from '@/lib/sync/note-gen-server-collab'
 
 export interface PendingQuote {
   quote: string
@@ -134,6 +136,43 @@ interface ChatState {
 }
 
 let nextTemporaryChatId = -1
+let conversationCollaborationSession: NoteGenServerTextSession | null = null
+let conversationCollaborationGeneration = 0
+
+async function openConversationCollaboration(
+  conversationId: number,
+  messages: Chat[],
+  applyMessages: (messages: Chat[]) => void,
+): Promise<void> {
+  const generation = ++conversationCollaborationGeneration
+  conversationCollaborationSession?.destroy()
+  conversationCollaborationSession = null
+  const connection = getNoteGenServerBackgroundConnection()
+  if (!connection?.profile.workspaceId) return
+  const conversation = await import('@/db/conversations').then(module => module.getConversation(conversationId))
+  if (!conversation?.syncId || generation !== conversationCollaborationGeneration) return
+  const session = await getNoteGenServerConversationSession({
+    workspaceId: connection.profile.workspaceId,
+    conversationSyncId: conversation.syncId,
+    initialMessages: messages,
+  })
+  if (!session || generation !== conversationCollaborationGeneration) {
+    session?.destroy()
+    return
+  }
+  conversationCollaborationSession = session
+  session.subscribeMessages(value => {
+    if (generation !== conversationCollaborationGeneration) return
+    const nextMessages = value.filter((item): item is Chat => (
+      Boolean(item) && typeof item === 'object' && typeof (item as Chat).syncId === 'string'
+    ))
+    applyMessages(nextMessages)
+  })
+}
+
+function publishConversationMessages(messages: Chat[]): void {
+  conversationCollaborationSession?.setMessages(messages)
+}
 
 const useChatStore = create<ChatState>((set, get) => ({
   loading: false,
@@ -300,6 +339,7 @@ const useChatStore = create<ChatState>((set, get) => ({
       // 加载当前会话的聊天记录
       const data = await getChatsByConversation(currentConversationId)
       set({ chats: data })
+      void openConversationCollaboration(currentConversationId, data, nextMessages => set({ chats: nextMessages }))
     }
   },
   insert: async (chat) => {
@@ -339,6 +379,7 @@ const useChatStore = create<ChatState>((set, get) => ({
       const chats = get().chats
       const newChats = [...chats, data]
       set({ chats: newChats })
+      publishConversationMessages(newChats)
 
       // 更新会话的消息数量和更新时间
       if (conversationId) {
@@ -385,6 +426,7 @@ const useChatStore = create<ChatState>((set, get) => ({
       return item
     })
     set({ chats: newChats })
+    publishConversationMessages(newChats)
   },
   saveChat: async (chat, isSave = false) => {
     get().updateChat(chat)
@@ -396,6 +438,7 @@ const useChatStore = create<ChatState>((set, get) => ({
     const chats = get().chats
     const newChats = chats.filter(item => item.id !== id)
     set({ chats: newChats })
+    publishConversationMessages(newChats)
 
     if (get().isTemporaryConversation) {
       return
@@ -431,6 +474,7 @@ const useChatStore = create<ChatState>((set, get) => ({
   clearChats: async (tagId) => {
     const isTemporaryConversation = get().isTemporaryConversation
     set({ chats: [] })
+    publishConversationMessages([])
     // 清空聊天记录时同步清理 Agent 状态
     get().resetAgentState()
     get().clearMcpToolCalls()
@@ -474,6 +518,7 @@ const useChatStore = create<ChatState>((set, get) => ({
       return item
     })
     set({ chats: newChats })
+    publishConversationMessages(newChats)
   },
 
   // 同步
@@ -567,6 +612,7 @@ const useChatStore = create<ChatState>((set, get) => ({
       pendingQuote: null,
       editorSelectionQuote: null,
     })
+    void openConversationCollaboration(id, data, nextMessages => set({ chats: nextMessages }))
     // 刷新会话列表以确保 UI 显示最新的会话状态
     await get().initConversations()
   },

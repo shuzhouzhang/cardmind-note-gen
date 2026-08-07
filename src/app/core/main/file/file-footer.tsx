@@ -76,7 +76,13 @@ export function FileFooter() {
     : sync.status === 'checking'
       ? tContext('syncChecking', { platform: sync.platform })
       : sync.status === 'unavailable'
-        ? tContext('syncUnavailable', { platform: sync.platform })
+        ? sync.platform === 'noteGenServer' && sync.noteGenIssue === 'locked'
+          ? tContext('noteGenServerLocked')
+          : sync.platform === 'noteGenServer' && sync.noteGenIssue === 'disconnected'
+            ? tContext('noteGenServerDisconnected')
+            : sync.platform === 'noteGenServer' && sync.noteGenIssue === 'inactive'
+              ? tContext('noteGenServerInactive')
+              : tContext('syncUnavailable', { platform: sync.platform })
         : tContext('syncNotConfigured')
 
   useEffect(() => {

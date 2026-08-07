@@ -19,6 +19,8 @@ import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
 import Image from '@tiptap/extension-image'
 import { Markdown } from '@tiptap/markdown'
+import Collaboration from '@tiptap/extension-collaboration'
+import * as Y from 'yjs'
 import { SearchAndReplace } from '@sereneinserenade/tiptap-search-and-replace'
 import { Extension, nodeInputRule, type Editor as CoreEditor } from '@tiptap/core'
 import { AllSelection, EditorState, Plugin, PluginKey, TextSelection, type Selection } from '@tiptap/pm/state'
@@ -122,6 +124,11 @@ import {
 } from './sectioned-markdown-editor'
 import dynamic from 'next/dynamic'
 import './style.css'
+import {
+  getNoteGenServerTextSession,
+  type NoteGenServerTextSession,
+} from '@/lib/sync/note-gen-server-collab'
+import { getNoteGenServerBackgroundConnection } from '@/lib/sync/note-gen-server-background'
 
 const MathEditorDialog = dynamic(
   () => import('./math-editor-dialog').then((module) => module.MathEditorDialog),
@@ -1413,6 +1420,9 @@ export function TipTapEditor({
     scrollTop: number
     sectionId?: string
   } | null>(null)
+  const collaborationSessionRef = useRef<NoteGenServerTextSession | null>(null)
+  const initialContentRef = useRef(initialContent)
+  initialContentRef.current = initialContent
 
   // Bug fix: Track when editor is ready (has caught up with content)
   const isReadyRef = useRef(false)
@@ -1521,6 +1531,14 @@ export function TipTapEditor({
     }
   }, [activeFilePath, enableLargeDocumentMode, getEditorViewState, initialContent, isMobile, isSectionScope])
 
+  // Keep one Y.Doc for the lifetime of the active file. Tiptap writes its
+  // ProseMirror document into this CRDT directly; the WebSocket session below
+  // is only responsible for transporting and persisting Yjs updates.
+  const collaborationDoc = useMemo(
+    () => editable && activeFilePath ? new Y.Doc() : null,
+    [activeFilePath, editable],
+  )
+
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -1537,7 +1555,11 @@ export function TipTapEditor({
         paragraph: false,
         underline: false,
         dropcursor: false,
+        undoRedo: collaborationDoc ? false : undefined,
       }),
+      ...(collaborationDoc
+        ? [Collaboration.configure({ document: collaborationDoc })]
+        : []),
       MarkdownParagraph,
       Placeholder.configure({
         placeholder: placeholderText,
@@ -1831,6 +1853,42 @@ export function TipTapEditor({
     if (!editor || editor.isDestroyed || blockingActivityTokensRef.current.size > 0) return
     flushMarkdownChange(editor)
   }
+
+  useEffect(() => {
+    let disposed = false
+    let announceFocus: (() => void) | undefined
+    let clearFocus: (() => void) | undefined
+    const previous = collaborationSessionRef.current
+    collaborationSessionRef.current = null
+    if (previous) previous.destroy()
+    if (!editable || !activeFilePath) return
+
+    const connection = getNoteGenServerBackgroundConnection()
+    if (!connection?.profile.workspaceId) return
+    void getNoteGenServerTextSession({
+      workspaceId: connection.profile.workspaceId,
+      relativePath: activeFilePath,
+      initialContent: initialContentRef.current,
+      ...(collaborationDoc ? { doc: collaborationDoc } : {}),
+    }).then(session => {
+      if (disposed || !session) return
+      collaborationSessionRef.current = session
+      announceFocus = () => session.setAwareness({ kind: 'editing', path: activeFilePath })
+      clearFocus = () => session.setAwareness(null)
+      editor?.on('focus', announceFocus)
+      editor?.on('blur', clearFocus)
+      // Tiptap's Collaboration extension observes the Y.Doc directly, so no
+      // markdown round-trip is needed here (and concurrent edits remain CRDT
+      // operations instead of whole-document replacements).
+    })
+    return () => {
+      disposed = true
+      if (announceFocus) editor?.off('focus', announceFocus)
+      if (clearFocus) editor?.off('blur', clearFocus)
+      collaborationSessionRef.current?.setAwareness(null)
+      collaborationSessionRef.current = null
+    }
+  }, [activeFilePath, editable, editor, collaborationDoc])
 
   const trySetMarkdownContent = useCallback((
     targetEditor: CoreEditor,

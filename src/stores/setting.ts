@@ -13,7 +13,7 @@ import { normalizeSpeechMode } from '@/lib/speech/preferences'
 import type { SpeechMode } from '@/lib/speech/types'
 import { applyNoteGenDefaultConfig, loadNoteGenDefaultConfig } from '@/lib/ai/notegen-default-models-runtime'
 import { excludeBuiltInOpenAIProviders, isMainlandChinaAppStore } from '@/lib/ai/storefront-policy'
-import { enqueueAutoDataSync, isAutoDataSyncApplyingRemote } from '@/lib/sync/auto-data-sync-queue'
+import { enqueueAutoDataSync, isAutoDataSyncApplyingRemote } from '@/lib/sync/auto-data-sync-bridge'
 import { shouldExcludeFromSync } from '@/config/sync-exclusions'
 import {
   AGENT_CORE_PROMPT_VERSION,
@@ -22,6 +22,7 @@ import {
 import { APP_FONT_SYSTEM_VALUE, applyAppFontFamily } from '@/lib/font-settings'
 import { prepareActiveEditorDeactivation } from '@/lib/editor-deactivation'
 import type { AgentPermissionMode } from '@/lib/agent/types'
+import type { PrimarySyncPlatform } from '@/types/sync'
 import { getWorkspaceSyncRepos, setWorkspaceSyncRepo } from '@/lib/sync/workspace-repos'
 import {
   DEFAULT_EDITOR_CONTENT_WIDTH,
@@ -254,8 +255,8 @@ interface SettingState {
   setGiteaUsername: (giteaUsername: string) => Promise<void>
 
   // 主要备份方式设置
-  primaryBackupMethod: 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'
-  setPrimaryBackupMethod: (method: 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder') => Promise<void>
+  primaryBackupMethod: PrimarySyncPlatform
+  setPrimaryBackupMethod: (method: PrimarySyncPlatform) => Promise<void>
 
   lastSettingPage: string
   setLastSettingPage: (page: string) => Promise<void>
@@ -1437,7 +1438,7 @@ const useSettingStore = create<SettingState>((set, get) => ({
 
   // 默认使用 GitHub 作为主要备份方式
   primaryBackupMethod: 'github',
-  setPrimaryBackupMethod: async (method: 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder') => {
+  setPrimaryBackupMethod: async (method: PrimarySyncPlatform) => {
     if (method === get().primaryBackupMethod) return
 
     const [{ getSyncPushQueue }, autoDataSyncQueue] = await Promise.all([
@@ -1455,6 +1456,8 @@ const useSettingStore = create<SettingState>((set, get) => ({
       await store.set('primaryBackupMethod', method)
       await store.save()
       set({ primaryBackupMethod: method })
+      const { setNoteGenServerPrimaryEnabled } = await import('@/lib/sync/note-gen-server-background')
+      await setNoteGenServerPrimaryEnabled(method === 'noteGenServer')
     } finally {
       syncPushQueue.finishWorkspaceSwitch()
       autoDataSyncQueue.finishAutoDataSyncRepositoryChange()

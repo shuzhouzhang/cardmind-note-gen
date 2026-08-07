@@ -9,12 +9,14 @@
     </dict>
     <key>NSMicrophoneUsageDescription</key>
     <string>NoteGen 需要访问麦克风以支持语音录音和语音转文字功能。</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>NoteGen 需要访问本地网络以连接你自托管的同步服务器。</string>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>NoteGen 需要访问相册以支持图片上传和图片记录功能。</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>NoteGen 需要保存图片到相册。</string>
     <key>NSCameraUsageDescription</key>
-    <string>NoteGen 需要访问相机以支持拍照和图片记录功能。</string>
+    <string>NoteGen 需要访问相机以支持拍照、图片记录和扫描设备配对二维码。</string>
     <key>UIFileSharingEnabled</key>
     <true/>
     <key>LSSupportsOpeningDocumentsInPlace</key>

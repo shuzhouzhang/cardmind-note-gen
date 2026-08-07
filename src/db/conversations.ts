@@ -1,6 +1,6 @@
 import { getDb } from "./index"
 import { v4 as uuid, v5 as uuidv5 } from 'uuid'
-import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-queue'
+import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-bridge'
 import {
   nextConversationSyncTimestamp,
   upsertConversationSyncTombstone,
@@ -317,9 +317,11 @@ export async function syncConversationMessageCount(conversationId: number): Prom
     [conversationId]
   )
   const actualCount = result[0]?.count || 0
+  const syncUpdatedAt = await nextConversationSyncTimestamp()
 
   await db.execute(
-    "update conversations set messageCount = $1 where id = $2",
-    [actualCount, conversationId]
+    "update conversations set messageCount = $1, syncUpdatedAt = $2 where id = $3",
+    [actualCount, syncUpdatedAt, conversationId]
   )
+  enqueueConversationAutoSync('conversation-message-count-synced')
 }

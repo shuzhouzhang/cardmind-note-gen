@@ -28,8 +28,14 @@ import {
   hasRemoteConversationSyncData,
   uploadConversations,
 } from '@/lib/sync/conversation-sync'
+import { isNoteGenServerPrimaryEnabled } from './note-gen-server-background'
+import {
+  isAutoDataSyncApplyingRemote,
+  setAutoDataSyncApplyingRemote,
+  type AutoDataSyncDomain,
+} from './auto-data-sync-bridge'
 
-export type AutoDataSyncDomain = 'records' | 'settings' | 'conversations'
+export type { AutoDataSyncDomain } from './auto-data-sync-bridge'
 type AutoDataSyncProvider = 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'
 export type AutoDataSyncPhase =
   | 'idle'
@@ -138,6 +144,7 @@ const AUTO_DATA_SYNC_LAST_LOCAL_UPLOAD_META_KEY = 'autoDataSyncLastLocalUploadMe
 const AUTO_DATA_SYNC_LAST_APPLIED_REMOTE_META_KEY = 'autoDataSyncLastAppliedRemoteMeta'
 const AUTO_DATA_SYNC_RECORD_SNAPSHOTS_KEY = 'autoDataSyncRecordSnapshots'
 const AUTO_DATA_SYNC_BASELINE_FINGERPRINTS_KEY = 'autoDataSyncBaselineFingerprints'
+const AUTO_DATA_SYNC_SNAPSHOT_STORE = 'auto-data-sync-snapshots.json'
 const AUTO_DATA_SYNC_REMOTE_RECORD_ERASE_MESSAGE = 'Remote records are empty while local records exist. Automatic pull was blocked to avoid data loss.'
 const MAX_AUTO_DATA_SYNC_RECORD_SNAPSHOTS = 5
 const AUTO_DATA_SYNC_RUNTIME_INSTANCE_ID = `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -154,8 +161,6 @@ const remoteMetaCache = new Map<string, {
   cachedAt: number
 }>()
 const remoteMetaRequests = new Map<string, Promise<AutoDataSyncRemoteMeta | null>>()
-let applyingRemote = false
-let applyingRemoteDepth = 0
 let repositoryChangePauseDepth = 0
 const failedTasks: Partial<Record<AutoDataSyncDomain, AutoDataSyncTask>> = {}
 const failedTaskErrors: Partial<Record<AutoDataSyncDomain, string>> = {}
@@ -180,6 +185,9 @@ const listeners = new Set<AutoDataSyncListener>()
 
 async function getAutoDataSyncStateKey(baseKey: string) {
   const store = await Store.load('store.json')
+  if (await store.get<string>('primaryBackupMethod') === 'noteGenServer') {
+    return `${baseKey}:${JSON.stringify(['noteGenServer', ''])}`
+  }
   const provider = await getAutoDataSyncProvider(store)
   const repo = provider === 'cloudFolder'
     ? (await store.get<CloudFolderConfig>('cloudFolderSyncConfig'))?.path || ''
@@ -338,6 +346,19 @@ function stableSerialize(value: unknown): string {
   return JSON.stringify(value) ?? 'undefined'
 }
 
+async function hashSerializedFingerprint(serialized: string): Promise<string> {
+  if (serialized.startsWith('sha256:')) return serialized
+  const digest = new Uint8Array(await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(serialized),
+  ))
+  return `sha256:${Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('')}`
+}
+
+async function fingerprintValue(value: unknown): Promise<string> {
+  return hashSerializedFingerprint(stableSerialize(value))
+}
+
 function mergeMarksById(
   localMarks: Mark[],
   remoteMarks: Mark[],
@@ -456,20 +477,20 @@ export function subscribeAutoDataSyncState(listener: AutoDataSyncListener): () =
   }
 }
 
-export function setAutoDataSyncApplyingRemote(value: boolean) {
-  applyingRemoteDepth = value
-    ? applyingRemoteDepth + 1
-    : Math.max(0, applyingRemoteDepth - 1)
-  applyingRemote = applyingRemoteDepth > 0
-}
-
-export function isAutoDataSyncApplyingRemote(): boolean {
-  return applyingRemote
-}
+export { isAutoDataSyncApplyingRemote, setAutoDataSyncApplyingRemote }
 
 export function enqueueAutoDataSync(domain: AutoDataSyncDomain, reason = 'change', mode: 'auto' | 'manual' = 'auto') {
-  if (applyingRemote || repositoryChangePauseDepth > 0) {
+  if (isAutoDataSyncApplyingRemote() || repositoryChangePauseDepth > 0) {
     debugAutoDataSync('skip enqueue while applying remote data', { domain, reason, mode })
+    return
+  }
+  if (isNoteGenServerPrimaryEnabled()) {
+    void import('./note-gen-server-domains')
+      .then(module => module.queueNoteGenServerDomainChange(domain))
+      .then(queued => queued
+        ? import('./note-gen-server-background').then(module => module.triggerNoteGenServerBackgroundSync())
+        : undefined)
+      .catch(error => console.error('Failed to queue NoteGen Server app data:', error))
     return
   }
 
@@ -1078,6 +1099,7 @@ export async function initAutoDataSyncRuntime(): Promise<void> {
 
   try {
     const store = await Store.load('store.json')
+    await migrateLargeAutoDataSyncState(store)
     const lastCompletedAt = await getAutoDataSyncLastCompletedAt(store)
     if (lastCompletedAt > 0) {
       updateState({ lastCompletedAt })
@@ -1279,7 +1301,7 @@ function schedulePeriodicAutoDataSyncMetaCheck(delayMs: number): void {
       const latestGlobalRuntimeState = getGlobalAutoDataSyncRuntimeState()
       if (latestGlobalRuntimeState.ownerId !== AUTO_DATA_SYNC_RUNTIME_INSTANCE_ID) return
 
-      const wasBusy = processing || applyingRemote || queue.length > 0
+      const wasBusy = processing || isAutoDataSyncApplyingRemote() || queue.length > 0
       const lastCompletedAt = state.lastCompletedAt
       await checkRemoteAutoDataSync('periodic', { uploadDirtyDomains: true })
       const completedWork = state.lastCompletedAt !== lastCompletedAt
@@ -1828,11 +1850,11 @@ async function checkRemoteAutoDataSync(
       return
     }
 
-    if (processing || applyingRemote || queue.length > 0) {
+    if (processing || isAutoDataSyncApplyingRemote() || queue.length > 0) {
       debugAutoDataSync('remote meta check skipped because sync is busy', {
         reason,
         processing,
-        applyingRemote,
+        applyingRemote: isAutoDataSyncApplyingRemote(),
         pendingCount: queue.length,
       })
       return
@@ -2097,11 +2119,10 @@ async function assertRemoteRecordsSafeForDownload(
 
 async function createAutoDataSyncLocalRecordSnapshot(reason: string): Promise<AutoDataSyncRecordSnapshot | null> {
   try {
-    const [tagsDb, marksDb, canvasesDb, store] = await Promise.all([
+    const [tagsDb, marksDb, canvasesDb] = await Promise.all([
       import('@/db/tags'),
       import('@/db/marks'),
       import('@/db/canvases'),
-      Store.load('store.json'),
     ])
     const [tags, marks, canvases] = await Promise.all([
       tagsDb.getTags(),
@@ -2124,13 +2145,15 @@ async function createAutoDataSyncLocalRecordSnapshot(reason: string): Promise<Au
       marks,
       canvases,
     }
-    const previousSnapshots = await getAutoDataSyncStateValue<AutoDataSyncRecordSnapshot[]>(store, AUTO_DATA_SYNC_RECORD_SNAPSHOTS_KEY)
+    const snapshotStore = await Store.load(AUTO_DATA_SYNC_SNAPSHOT_STORE)
+    const snapshotKey = await getAutoDataSyncStateKey(AUTO_DATA_SYNC_RECORD_SNAPSHOTS_KEY)
+    const previousSnapshots = await snapshotStore.get<AutoDataSyncRecordSnapshot[]>(snapshotKey)
     const snapshots = Array.isArray(previousSnapshots) ? previousSnapshots : []
-    await store.set(await getAutoDataSyncStateKey(AUTO_DATA_SYNC_RECORD_SNAPSHOTS_KEY), [
+    await snapshotStore.set(snapshotKey, [
       snapshot,
       ...snapshots,
     ].slice(0, MAX_AUTO_DATA_SYNC_RECORD_SNAPSHOTS))
-    await store.save()
+    await snapshotStore.save()
     debugAutoDataSync('local record snapshot stored', {
       reason,
       createdAtMs: snapshot.createdAtMs,
@@ -2146,6 +2169,52 @@ async function createAutoDataSyncLocalRecordSnapshot(reason: string): Promise<Au
     })
     return null
   }
+}
+
+async function migrateLargeAutoDataSyncState(store: Store): Promise<void> {
+  const entries = await store.entries()
+  const snapshotEntries = entries.filter(([key]) => (
+    key === AUTO_DATA_SYNC_RECORD_SNAPSHOTS_KEY
+    || key.startsWith(`${AUTO_DATA_SYNC_RECORD_SNAPSHOTS_KEY}:`)
+  ))
+  const baselineEntries = entries.filter(([key]) => (
+    key === AUTO_DATA_SYNC_BASELINE_FINGERPRINTS_KEY
+    || key.startsWith(`${AUTO_DATA_SYNC_BASELINE_FINGERPRINTS_KEY}:`)
+  ))
+  let mainStoreChanged = false
+
+  if (snapshotEntries.length > 0) {
+    const snapshotStore = await Store.load(AUTO_DATA_SYNC_SNAPSHOT_STORE)
+    for (const [key, value] of snapshotEntries) {
+      if (await snapshotStore.get(key) === undefined) {
+        await snapshotStore.set(key, value)
+      }
+      await store.delete(key)
+      mainStoreChanged = true
+    }
+    await snapshotStore.save()
+  }
+
+  for (const [key, value] of baselineEntries) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+    const fingerprints = value as AutoDataSyncDomainFingerprints
+    const compacted: AutoDataSyncDomainFingerprints = {}
+    let changed = false
+
+    for (const domain of AUTO_DATA_SYNC_DOMAINS) {
+      const fingerprint = fingerprints[domain]
+      if (typeof fingerprint !== 'string') continue
+      compacted[domain] = await hashSerializedFingerprint(fingerprint)
+      changed ||= compacted[domain] !== fingerprint
+    }
+
+    if (changed) {
+      await store.set(key, compacted)
+      mainStoreChanged = true
+    }
+  }
+
+  if (mainStoreChanged) await store.save()
 }
 
 async function restoreAutoDataSyncLocalRecordSnapshot(
@@ -2352,7 +2421,7 @@ async function getAutoDataSyncContentFingerprints(
 
     return {
       local,
-      remote: stableSerialize({
+      remote: await fingerprintValue({
         tags: remoteTags.map(getTagSyncKey).sort(),
         marks: remoteMarks.map(getMarkSyncKey).sort(),
         canvases: remoteCanvases.map(project => [project.id, project.updatedAt, project.deletedAt, project.pinnedAt, project.title]),
@@ -2367,7 +2436,7 @@ async function getAutoDataSyncContentFingerprints(
       CONVERSATION_SYNC_INDEX_PATH,
     )
     const remote = getRemoteConversationSyncFingerprint(remoteIndexContent)
-    return remote ? { local, remote } : null
+    return remote ? { local, remote: await hashSerializedFingerprint(remote) } : null
   }
 
   const remoteSettingsContent = await downloadAutoDataSyncRemoteFileContent(
@@ -2383,7 +2452,7 @@ async function getAutoDataSyncContentFingerprints(
   const excludeSensitiveConfig = await store.get<boolean>('excludeSensitiveConfig') !== false
   return {
     local,
-    remote: stableSerialize(filterSyncData(remoteSettings, { excludeSensitiveConfig })),
+    remote: await fingerprintValue(filterSyncData(remoteSettings, { excludeSensitiveConfig })),
   }
 }
 
@@ -2402,7 +2471,7 @@ async function getLocalAutoDataSyncDomainFingerprint(
       marksDb.getAllMarks(),
       canvasesDb.getCanvasProjects({ includeDeleted: true }),
     ])
-    return stableSerialize({
+    return fingerprintValue({
       tags: tags.map(getTagSyncKey).sort(),
       marks: marks.map(getMarkSyncKey).sort(),
       canvases: canvases.map(project => [project.id, project.updatedAt, project.deletedAt, project.pinnedAt, project.title]),
@@ -2410,12 +2479,12 @@ async function getLocalAutoDataSyncDomainFingerprint(
   }
 
   if (domain === 'conversations') {
-    return getLocalConversationSyncFingerprint()
+    return hashSerializedFingerprint(await getLocalConversationSyncFingerprint())
   }
 
   const localSettings = Object.fromEntries(await store.entries()) as Record<string, unknown>
   const excludeSensitiveConfig = await store.get<boolean>('excludeSensitiveConfig') !== false
-  return stableSerialize(filterSyncData(localSettings, { excludeSensitiveConfig }))
+  return fingerprintValue(filterSyncData(localSettings, { excludeSensitiveConfig }))
 }
 
 async function getAutoDataSyncBaselineFingerprints(store: Store) {

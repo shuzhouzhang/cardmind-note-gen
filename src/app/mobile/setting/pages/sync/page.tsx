@@ -15,6 +15,7 @@ import { WebDAVSync } from '@/app/core/setting/sync/webdav-sync'
 import { UsePlatformButton } from '@/app/core/setting/sync/components/use-platform-button'
 import { WorkspaceRepoMapping } from '@/app/core/setting/sync/components/workspace-repo-mapping'
 import { DataSyncOverview } from '@/app/core/setting/sync/components/data-sync-overview'
+import { NoteGenServerSync, type NoteGenServerConnectionState } from '@/app/core/setting/sync/note-gen-server-sync'
 import { MobileSelectDrawer } from '@/app/mobile/components/mobile-select-drawer'
 import { OneDriveCloudFolderSync } from '@/app/mobile/setting/pages/sync/android-cloud-folder-sync'
 import { ICloudFolderSync } from '@/app/mobile/setting/pages/sync/ios-cloud-folder-sync'
@@ -24,11 +25,12 @@ import { RepoNames, SyncStateEnum } from '@/lib/sync/github.types'
 import type { SyncRepoPlatform, WorkspaceSyncRepos } from '@/lib/sync/workspace-repos'
 import useSettingStore from '@/stores/setting'
 import useSyncStore from '@/stores/sync'
-import { SYNC_PLATFORMS, SYNC_PLATFORM_INFO, SyncPlatform, type CloudFolderConfig } from '@/types/sync'
+import { SYNC_PLATFORMS, SYNC_PLATFORM_INFO, SyncPlatform, type CloudFolderConfig, type PrimarySyncPlatform } from '@/types/sync'
 
-type MobileSyncPlatform = SyncPlatform | 'iCloud' | 'oneDrive'
+type MobileSyncPlatform = SyncPlatform | 'iCloud' | 'oneDrive' | 'noteGenServer'
 
-function toSyncPlatform(platformName: MobileSyncPlatform): SyncPlatform {
+function toSyncPlatform(platformName: MobileSyncPlatform): SyncPlatform | null {
+  if (platformName === 'noteGenServer') return null
   return platformName === 'iCloud' || platformName === 'oneDrive' ? 'cloudFolder' : platformName
 }
 
@@ -46,10 +48,10 @@ export default function SyncPage() {
   const isAndroid = currentPlatform === 'android'
   const standardPlatforms = SYNC_PLATFORMS.filter(platformName => platformName !== 'cloudFolder')
   const availablePlatforms: MobileSyncPlatform[] = isIOS
-    ? [...standardPlatforms, 'iCloud', 'oneDrive']
+    ? ['noteGenServer', ...standardPlatforms, 'iCloud', 'oneDrive']
     : isAndroid
-      ? [...standardPlatforms, 'oneDrive']
-      : standardPlatforms
+      ? ['noteGenServer', ...standardPlatforms, 'oneDrive']
+      : ['noteGenServer', ...standardPlatforms]
   const {
     primaryBackupMethod,
     setPrimaryBackupMethod,
@@ -84,6 +86,7 @@ export default function SyncPage() {
 
   const [tab, setTab] = useState<MobileSyncPlatform>(primaryBackupMethod)
   const [isLoading, setIsLoading] = useState(true)
+  const [noteGenConnectionState, setNoteGenConnectionState] = useState<NoteGenServerConnectionState>('checking')
   const [activeCloudFolderProvider, setActiveCloudFolderProvider] = useState<'folder' | 'oneDrive' | null>(null)
   const [workspaceRepos, setWorkspaceRepos] = useState<Record<string, WorkspaceSyncRepos>>({})
 
@@ -131,7 +134,7 @@ export default function SyncPage() {
     async function loadPrimaryBackupMethod() {
       try {
         const store = await Store.load('store.json')
-        const savedMethod = await store.get<SyncPlatform>('primaryBackupMethod')
+        const savedMethod = await store.get<PrimarySyncPlatform>('primaryBackupMethod')
         const cloudFolderConfig = await store.get<CloudFolderConfig>('cloudFolderSyncConfig')
         setActiveCloudFolderProvider(
           cloudFolderConfig?.path
@@ -146,7 +149,8 @@ export default function SyncPage() {
               : isAndroid
                 ? 'oneDrive'
                 : 'github'
-          await setPrimaryBackupMethod(toSyncPlatform(nextTab))
+          const nextPlatform = nextTab === 'noteGenServer' ? 'noteGenServer' : toSyncPlatform(nextTab)
+          if (nextPlatform) await setPrimaryBackupMethod(nextPlatform)
           setTab(nextTab)
         }
       } catch (error) {
@@ -160,7 +164,9 @@ export default function SyncPage() {
   }, [isAndroid, isIOS, setPrimaryBackupMethod])
 
   const selectedSyncPlatform = toSyncPlatform(tab)
-  const currentSyncState = getCurrentSyncState(selectedSyncPlatform)
+  const currentSyncState = selectedSyncPlatform
+    ? getCurrentSyncState(selectedSyncPlatform)
+    : SyncStateEnum.fail
   const isFileAutoSyncDisabled = currentSyncState !== SyncStateEnum.success
   const isCloudFolderTab = selectedSyncPlatform === 'cloudFolder'
   const supportsCloudFolderFileSync = tab === 'oneDrive'
@@ -191,6 +197,7 @@ export default function SyncPage() {
   }
 
   function getProviderLabel(platform: MobileSyncPlatform) {
+    if (platform === 'noteGenServer') return t('settings.sync.noteGenServer.title')
     if (platform === 'iCloud') return t('settings.sync.iCloud.title')
     if (platform === 'oneDrive' || platform === 'cloudFolder') return t('settings.sync.oneDrive.title')
     return SYNC_PLATFORM_INFO[platform].name
@@ -198,6 +205,7 @@ export default function SyncPage() {
 
   function handleTabChange(value: string) {
     const nextTab = value as MobileSyncPlatform
+    if (nextTab === 'noteGenServer') setNoteGenConnectionState('checking')
     setTab(nextTab)
   }
 
@@ -215,6 +223,8 @@ export default function SyncPage() {
 
   function renderSyncContent() {
     switch (tab) {
+      case 'noteGenServer':
+        return <NoteGenServerSync />
       case 'github':
         return <GithubSync />
       case 'gitee':
@@ -271,14 +281,20 @@ export default function SyncPage() {
               }))}
             />
           </div>
-          <div className="shrink-0 [&>button]:h-11">
-            <UsePlatformButton
-              platform={selectedSyncPlatform}
-              disabled={currentSyncState !== SyncStateEnum.success}
-            />
-          </div>
+          {selectedSyncPlatform || tab === 'noteGenServer' ? (
+            <div className="shrink-0 [&>button]:h-11">
+              <UsePlatformButton
+                platform={tab === 'noteGenServer' ? 'noteGenServer' : selectedSyncPlatform!}
+                disabled={tab === 'noteGenServer'
+                  ? noteGenConnectionState !== 'connected'
+                  : currentSyncState !== SyncStateEnum.success}
+              />
+            </div>
+          ) : null}
         </div>
-        {renderSyncContent()}
+        {tab === 'noteGenServer'
+          ? <NoteGenServerSync onConnectionStateChange={setNoteGenConnectionState} />
+          : renderSyncContent()}
         {isRepoSyncPlatform(tab) ? (
           <WorkspaceRepoMapping
             platform={tab}
@@ -291,66 +307,69 @@ export default function SyncPage() {
         ) : null}
       </section>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold">{t('settings.sync.noteSettings')}</h2>
+      {tab !== 'noteGenServer' ? (
+        <>
+          <section className="flex flex-col gap-3">
+            <h2 className="text-sm font-semibold">{t('settings.sync.noteSettings')}</h2>
 
-        <Item variant="outline">
-          <ItemMedia variant="icon"><RefreshCcw className="size-4" /></ItemMedia>
-          <ItemContent>
-            <ItemTitle>{t('settings.sync.autoSync')}</ItemTitle>
-            <ItemDescription>{t('settings.sync.autoSyncDesc')}</ItemDescription>
-          </ItemContent>
-          <ItemActions>
-            <MobileSelectDrawer
-              title={t('settings.sync.autoSync')}
-              value={autoSync}
-              onValueChange={(value) => setAutoSync(value)}
-              disabled={isFileAutoSyncDisabled || (isCloudFolderTab && !supportsCloudFolderFileSync)}
-              className="min-w-32"
-              placeholder={t('settings.sync.autoSyncOptions.placeholder')}
-              options={[
-                { value: 'disabled', label: t('settings.sync.autoSyncOptions.disabled') },
-                { value: '2', label: t('settings.sync.autoSyncOptions.2s') },
-                { value: '3', label: t('settings.sync.autoSyncOptions.3s') },
-                { value: '5', label: t('settings.sync.autoSyncOptions.5s') },
-                { value: '10', label: t('settings.sync.autoSyncOptions.10s') },
-                { value: '20', label: t('settings.sync.autoSyncOptions.20s') },
-                { value: '30', label: t('settings.sync.autoSyncOptions.30s') },
-                { value: '60', label: t('settings.sync.autoSyncOptions.1m') },
-                { value: '120', label: t('settings.sync.autoSyncOptions.2m') },
-              ]}
-            />
-          </ItemActions>
-        </Item>
+            <Item variant="outline">
+              <ItemMedia variant="icon"><RefreshCcw className="size-4" /></ItemMedia>
+              <ItemContent>
+                <ItemTitle>{t('settings.sync.autoSync')}</ItemTitle>
+                <ItemDescription>{t('settings.sync.autoSyncDesc')}</ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <MobileSelectDrawer
+                  title={t('settings.sync.autoSync')}
+                  value={autoSync}
+                  onValueChange={(value) => setAutoSync(value)}
+                  disabled={isFileAutoSyncDisabled || (isCloudFolderTab && !supportsCloudFolderFileSync)}
+                  className="min-w-32"
+                  placeholder={t('settings.sync.autoSyncOptions.placeholder')}
+                  options={[
+                    { value: 'disabled', label: t('settings.sync.autoSyncOptions.disabled') },
+                    { value: '2', label: t('settings.sync.autoSyncOptions.2s') },
+                    { value: '3', label: t('settings.sync.autoSyncOptions.3s') },
+                    { value: '5', label: t('settings.sync.autoSyncOptions.5s') },
+                    { value: '10', label: t('settings.sync.autoSyncOptions.10s') },
+                    { value: '20', label: t('settings.sync.autoSyncOptions.20s') },
+                    { value: '30', label: t('settings.sync.autoSyncOptions.30s') },
+                    { value: '60', label: t('settings.sync.autoSyncOptions.1m') },
+                    { value: '120', label: t('settings.sync.autoSyncOptions.2m') },
+                  ]}
+                />
+              </ItemActions>
+            </Item>
 
-        <Item variant="outline">
-          <ItemMedia variant="icon"><FileDown className="size-4" /></ItemMedia>
-          <ItemContent>
-            <ItemTitle>{t('settings.sync.autoPullOnOpen')}</ItemTitle>
-            <ItemDescription>{t('settings.sync.autoPullOnOpenDesc')}</ItemDescription>
-          </ItemContent>
-          <ItemActions className="mobile-setting-inline-action">
-            <Switch
-              checked={autoPullOnOpen}
-              onCheckedChange={setAutoPullOnOpen}
-              disabled={isFileAutoSyncDisabled || (isCloudFolderTab && !supportsCloudFolderFileSync)}
-            />
-          </ItemActions>
-        </Item>
+            <Item variant="outline">
+              <ItemMedia variant="icon"><FileDown className="size-4" /></ItemMedia>
+              <ItemContent>
+                <ItemTitle>{t('settings.sync.autoPullOnOpen')}</ItemTitle>
+                <ItemDescription>{t('settings.sync.autoPullOnOpenDesc')}</ItemDescription>
+              </ItemContent>
+              <ItemActions className="mobile-setting-inline-action">
+                <Switch
+                  checked={autoPullOnOpen}
+                  onCheckedChange={setAutoPullOnOpen}
+                  disabled={isFileAutoSyncDisabled || (isCloudFolderTab && !supportsCloudFolderFileSync)}
+                />
+              </ItemActions>
+            </Item>
+          </section>
 
-      </section>
-
-      <DataSyncOverview
-        mobile
-        autoRecordSyncEnabled={autoRecordSyncEnabled}
-        autoSettingsSyncEnabled={autoSettingsSyncEnabled}
-        autoConversationSyncEnabled={autoConversationSyncEnabled}
-        excludeSensitiveConfig={excludeSensitiveConfig}
-        onRecordSyncChange={setAutoRecordSyncEnabled}
-        onSettingsSyncChange={setAutoSettingsSyncEnabled}
-        onConversationSyncChange={setAutoConversationSyncEnabled}
-        onSensitiveConfigChange={handleExcludeSensitiveConfigChange}
-      />
+          <DataSyncOverview
+            mobile
+            autoRecordSyncEnabled={autoRecordSyncEnabled}
+            autoSettingsSyncEnabled={autoSettingsSyncEnabled}
+            autoConversationSyncEnabled={autoConversationSyncEnabled}
+            excludeSensitiveConfig={excludeSensitiveConfig}
+            onRecordSyncChange={setAutoRecordSyncEnabled}
+            onSettingsSyncChange={setAutoSettingsSyncEnabled}
+            onConversationSyncChange={setAutoConversationSyncEnabled}
+            onSensitiveConfigChange={handleExcludeSensitiveConfigChange}
+          />
+        </>
+      ) : null}
     </div>
   )
 }

@@ -350,8 +350,8 @@ export function FileItem({
       try {
         // 获取当前主要备份方式
         const store = await Store.load('store.json');
-        const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'>('primaryBackupMethod') || 'github';
-        if (backupMethod === 'cloudFolder') {
+        const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder' | 'noteGenServer'>('primaryBackupMethod') || 'github';
+        if (backupMethod === 'cloudFolder' || backupMethod === 'noteGenServer') {
           setEntryLoading(currentPath, false)
           return
         }
@@ -944,7 +944,7 @@ export function FileItem({
                     <MobileMenuItem disabled={!item.isLocale} onClick={handleStartRename}>
                       {t('context.rename')}
                     </MobileMenuItem>
-                    {primaryBackupMethod !== 'cloudFolder' ? (
+                    {primaryBackupMethod !== 'cloudFolder' && primaryBackupMethod !== 'noteGenServer' ? (
                       <MobileMenuItem disabled={!item.sha} className="text-red-600" onClick={handleDeleteSyncFile}>
                         {t('context.deleteSyncFile')}
                       </MobileMenuItem>
@@ -996,7 +996,7 @@ export function FileItem({
                     <MobileMenuItem disabled={!item.isLocale} onClick={handleStartRename}>
                       {t('context.rename')}
                     </MobileMenuItem>
-                    {primaryBackupMethod !== 'cloudFolder' ? (
+                    {primaryBackupMethod !== 'cloudFolder' && primaryBackupMethod !== 'noteGenServer' ? (
                       <MobileMenuItem disabled={!item.sha} className="text-red-600" onClick={handleDeleteSyncFile}>
                         {t('context.deleteSyncFile')}
                       </MobileMenuItem>
@@ -1111,7 +1111,7 @@ export function FileItem({
                   <Kbd>{renameKey}</Kbd>
                 </ContextMenuShortcut>
               </ContextMenuItem>
-              {primaryBackupMethod !== 'cloudFolder' ? (
+              {primaryBackupMethod !== 'cloudFolder' && primaryBackupMethod !== 'noteGenServer' ? (
                 <ContextMenuItem disabled={!item.sha} inset className="text-red-900" onClick={handleDeleteSyncFile} menuType="file">
                   <RefreshCwOff className="mr-2 h-4 w-4" />
                   {t('context.deleteSyncFile')}

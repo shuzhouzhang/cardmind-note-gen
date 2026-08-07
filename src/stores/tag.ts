@@ -11,7 +11,7 @@ import { getRemoteFileContent, hasEmptyRemoteFileContent, isMissingRemoteFileErr
 import { Store } from '@tauri-apps/plugin-store'
 import { create } from 'zustand'
 import { CloudFolderConfig, S3Config, WebDAVConfig } from '@/types/sync'
-import { setAutoDataSyncApplyingRemote } from '@/lib/sync/auto-data-sync-queue'
+import { setAutoDataSyncApplyingRemote } from '@/lib/sync/auto-data-sync-bridge'
 
 interface RecordDataDownloadOptions {
   allowMissingRemote?: boolean

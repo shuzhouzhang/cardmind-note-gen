@@ -5,6 +5,7 @@ import type { DirTree } from '@/stores/article'
 import {
   SYNC_PLATFORMS,
   type CloudFolderConfig,
+  type PrimarySyncPlatform,
   type S3Config,
   type SyncPlatform,
   type WebDAVConfig,
@@ -68,14 +69,21 @@ export function buildFileTreeSyncStatusMap(tree: DirTree[]) {
 
 export async function getSyncConfiguration(): Promise<{
   configured: boolean
-  platform: SyncPlatform
-  reason?: 'missing-credentials' | 'missing-repository' | 'unsupported-platform'
+  platform: PrimarySyncPlatform
+  reason?: 'missing-credentials' | 'missing-repository' | 'background-managed' | 'unsupported-platform'
 }> {
   const store = await Store.load('store.json')
   const storedPlatform = await store.get<string>('primaryBackupMethod') ?? 'github'
-  const platform = SYNC_PLATFORMS.find(candidate => candidate === storedPlatform)
+  const platform = storedPlatform === 'noteGenServer'
+    ? storedPlatform
+    : SYNC_PLATFORMS.find(candidate => candidate === storedPlatform)
+
   if (!platform) {
     return { platform: 'github', configured: false, reason: 'unsupported-platform' }
+  }
+
+  if (platform === 'noteGenServer') {
+    return { platform, configured: false, reason: 'background-managed' }
   }
 
   if (platform === 's3') {

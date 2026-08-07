@@ -136,6 +136,14 @@ export default function RootLayout({
         initMainHosting()
         await initAllDatabases()
         if (cancelled) return
+        try {
+          const { initNoteGenServerBackgroundRuntime } = await import('@/lib/sync/note-gen-server-background')
+          await initNoteGenServerBackgroundRuntime()
+        } catch (error) {
+          // 同步服务器暂时不可达不能中断应用本身及其他本地运行时的初始化。
+          console.error('Failed to initialize NoteGen Server background sync:', error)
+        }
+        if (cancelled) return
         const { runMemoryMaintenance } = await import('@/lib/memory/auto-memory')
         void runMemoryMaintenance()
         const {

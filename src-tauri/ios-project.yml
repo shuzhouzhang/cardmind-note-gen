@@ -59,7 +59,8 @@ targets:
         UIStatusBarStyle: UIStatusBarStyleDefault
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
-        NSCameraUsageDescription: NoteGen 需要访问相机以支持拍照和图片记录功能。
+        NSCameraUsageDescription: NoteGen 需要访问相机以支持拍照、图片记录和扫描设备配对二维码。
+        NSLocalNetworkUsageDescription: NoteGen 需要访问本地网络以连接你自托管的同步服务器。
         NSMicrophoneUsageDescription: NoteGen 需要访问麦克风以支持语音录音和语音转文字功能。
         NSPhotoLibraryAddUsageDescription: NoteGen 需要保存图片到相册。
         NSPhotoLibraryUsageDescription: NoteGen 需要访问相册以支持图片上传和图片记录功能。

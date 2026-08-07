@@ -706,6 +706,7 @@ interface NoteState {
   markFileLocal: (relativePath: string) => boolean
   markFileDirty: (relativePath: string) => boolean
   reconcileLocalFile: (relativePath: string, isPresent: boolean) => boolean
+  reconcileLocalFolder: (relativePath: string, isPresent: boolean) => boolean
   clearFileRemoteState: (relativePath: string) => boolean
   addFile: (file: DirTree) => void
   ensurePathExpanded: (path: string) => Promise<void>
@@ -1422,6 +1423,42 @@ const useArticleStore = create<NoteState>((set, get) => ({
       return true
     }
 
+    return get().removeLocalEntry(relativePath)
+  },
+  reconcileLocalFolder: (relativePath: string, isPresent: boolean) => {
+    const currentTree = get().fileTree
+    const current = getCurrentFolder(relativePath, currentTree)
+
+    if (isPresent) {
+      if (current) {
+        if (!current.isDirectory) return false
+        const nextTree = updateTreeEntryByPath(currentTree, relativePath, entry => ({
+          ...entry,
+          isLocale: true,
+          loading: undefined,
+        }), true)
+        if (!nextTree) return false
+        set({ fileTree: nextTree })
+        return true
+      }
+      return get().insertLocalEntry(relativePath, true)
+    }
+
+    if (!current) return true
+    if (!current.isDirectory) return false
+    const hasRemoteDescendant = (current.children ?? []).some(function hasRemote(entry: DirTree): boolean {
+      return !entry.isLocale || Boolean(entry.sha) || (entry.children ?? []).some(hasRemote)
+    })
+    if (hasRemoteDescendant) {
+      const nextTree = updateTreeEntryByPath(currentTree, relativePath, entry => ({
+        ...entry,
+        isLocale: false,
+        loading: undefined,
+      }))
+      if (!nextTree) return false
+      set({ fileTree: nextTree })
+      return true
+    }
     return get().removeLocalEntry(relativePath)
   },
   clearFileRemoteState: (relativePath: string) => {

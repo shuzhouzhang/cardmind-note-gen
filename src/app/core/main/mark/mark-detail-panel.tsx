@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useCallback, useEffect, useMemo, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import dayjs from "dayjs"
 import {
   CheckCircle2,
@@ -75,6 +75,11 @@ import { createRecordTab, getRecordTabPath } from "./mark-record-tab"
 import { getMarkTypeListBadgeClasses } from "./mark-type-meta"
 import { TipTapEditor } from "@/app/core/main/editor/markdown/tiptap-editor"
 import { isLargeMarkdownDocument } from "@/app/core/main/editor/markdown/large-markdown"
+import { getNoteGenServerBackgroundConnection } from "@/lib/sync/note-gen-server-background"
+import {
+  getNoteGenServerStructuredSession,
+  type NoteGenServerTextSession,
+} from "@/lib/sync/note-gen-server-collab"
 
 const getMarkTitle = (mark: Mark, fallback: string) => {
   const title = mark.desc?.trim() || mark.content?.trim() || mark.url?.trim()
@@ -365,6 +370,40 @@ function MarkDetailToolbar({
   const canMoveTag = !isTrashMark && filteredTags.length > 0
   const canCopyLink = Boolean(mark.url)
   const canRegenerateDesc = !isTrashMark && mark.type !== 'text' && mark.type !== 'todo' && Boolean(mark.content?.trim())
+  const collaborationSessionRef = useRef<NoteGenServerTextSession | null>(null)
+
+  useEffect(() => {
+    let disposed = false
+    const previous = collaborationSessionRef.current
+    collaborationSessionRef.current = null
+    previous?.destroy()
+    const connection = getNoteGenServerBackgroundConnection()
+    if (!connection?.profile.workspaceId) return
+    void getNoteGenServerStructuredSession({
+      workspaceId: connection.profile.workspaceId,
+      documentId: `record:${mark.id}`,
+      initialFields: mark as unknown as Record<string, unknown>,
+    }).then(session => {
+      if (disposed || !session) return
+      collaborationSessionRef.current = session
+      session.subscribeFields(fields => {
+        if (disposed || fields.id === undefined) return
+        const nextMark = fields as unknown as Mark
+        if (JSON.stringify(nextMark) === JSON.stringify(mark)) return
+        const state = useMarkStore.getState()
+        state.setMarks(state.marks.map(item => item.id === nextMark.id ? nextMark : item))
+      })
+    })
+    return () => {
+      disposed = true
+      collaborationSessionRef.current?.destroy()
+      collaborationSessionRef.current = null
+    }
+  }, [mark.id])
+
+  useEffect(() => {
+    collaborationSessionRef.current?.setFields(mark as unknown as Record<string, unknown>)
+  }, [mark])
 
   useEffect(() => {
     setTitleValue(getEditableTitle(mark, fallbackTitle))

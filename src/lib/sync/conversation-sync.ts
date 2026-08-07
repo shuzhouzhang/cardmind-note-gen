@@ -42,6 +42,7 @@ export interface ConversationSyncMessage {
   syncId: string
   syncUpdatedAt: number
   tagId?: number
+  tagSyncId?: string
   content?: string
   role: Role
   type: ChatType
@@ -452,6 +453,7 @@ function normalizeSyncMessage(value: unknown): ConversationSyncMessage | null {
     syncId: value.syncId,
     syncUpdatedAt: value.syncUpdatedAt,
     tagId: optionalNumber(value.tagId),
+    tagSyncId: optionalString(value.tagSyncId),
     content: optionalString(value.content),
     role: value.role as Role,
     type: value.type as ChatType,
@@ -595,7 +597,7 @@ function compactionToSyncValue(
   }
 }
 
-async function getLocalConversationSyncItems(): Promise<ConversationSyncItem[]> {
+export async function getLocalConversationSyncItems(): Promise<ConversationSyncItem[]> {
   const db = await import('@/db').then(module => module.getDb())
   const { getAllConversations } = await import('@/db/conversations')
   const { getLatestConversationCompaction } = await import('@/db/conversation-compactions')
@@ -737,11 +739,14 @@ async function normalizeAndUploadImageReference(source: string) {
   return localPath
 }
 
-async function normalizeMessageAssets(message: ConversationSyncMessage) {
+async function normalizeMessageAssetsWith(
+  message: ConversationSyncMessage,
+  normalizeReference: (source: string) => Promise<string>,
+) {
   const references = new Map<string, string>()
   const normalize = async (source: string) => {
     if (!references.has(source)) {
-      references.set(source, await normalizeAndUploadImageReference(source))
+      references.set(source, await normalizeReference(source))
     }
     return references.get(source) || source
   }
@@ -776,6 +781,27 @@ async function normalizeMessageAssets(message: ConversationSyncMessage) {
   }
 
   return { ...message, image, images, imageAnalyses }
+}
+
+async function normalizeMessageAssets(message: ConversationSyncMessage) {
+  return await normalizeMessageAssetsWith(message, normalizeAndUploadImageReference)
+}
+
+async function normalizeNoteGenServerImageReference(source: string): Promise<string> {
+  if (!source || HTTP_URL_PATTERN.test(source)) return source
+  if (source.startsWith(`${LOCAL_CONVERSATION_ASSETS_DIRECTORY}/`)) {
+    if (!await exists(source, { baseDir: BaseDirectory.AppData })) {
+      throw new Error(`对话引用的本地图片不存在：${source}`)
+    }
+    return source
+  }
+  const resolved = await readImageSource(source)
+  if (!resolved) throw new Error('无法读取对话中的本地图片，已停止同步以避免上传设备路径')
+  const hash = await hashBytes(resolved.bytes)
+  const extension = getExtension(source, resolved.mimeType)
+  const localPath = `${LOCAL_CONVERSATION_ASSETS_DIRECTORY}/${hash}.${extension}`
+  await ensureLocalConversationAsset(localPath, resolved.bytes)
+  return localPath
 }
 
 function getMessageImageReferences(message: ConversationSyncMessage) {
@@ -1136,6 +1162,84 @@ async function refreshConversationStoreAfterSync() {
   } else if (state.currentConversationId) {
     useChatStore.setState({ currentConversationId: null, chats: [] })
   }
+}
+
+export interface NoteGenServerConversationSnapshot {
+  schemaVersion: 1
+  type: 'conversation-snapshot'
+  items: ConversationSyncItem[]
+  tombstones: ConversationSyncTombstone[]
+}
+
+export async function createNoteGenServerConversationSnapshot(): Promise<NoteGenServerConversationSnapshot> {
+  const [items, tombstones] = await Promise.all([
+    getLocalConversationSyncItems(),
+    import('@/db/conversation-sync-state').then(module => module.getConversationSyncTombstones()),
+  ])
+  const tags = await import('@/db/tags').then(module => module.getTags())
+  const tagSyncIds = new Map(tags.map(tag => [tag.id, tag.syncId]))
+  const normalizedItems = await Promise.all(items.map(async item => ({
+    ...item,
+    messages: await Promise.all(item.messages.map(async message => {
+      const normalized = await normalizeMessageAssetsWith(message, normalizeNoteGenServerImageReference)
+      const tagSyncId = normalized.tagId === undefined ? undefined : tagSyncIds.get(normalized.tagId) ?? undefined
+      const withoutLocalTagId = { ...normalized }
+      Reflect.deleteProperty(withoutLocalTagId, 'tagId')
+      return { ...withoutLocalTagId, ...(tagSyncId ? { tagSyncId } : {}) }
+    })),
+  })))
+  await persistNormalizedMessageAssets(normalizedItems.flatMap(item => item.messages))
+  return { schemaVersion: 1, type: 'conversation-snapshot', items: normalizedItems, tombstones }
+}
+
+export function getNoteGenServerConversationAssetPaths(item: ConversationSyncItem): string[] {
+  return Array.from(new Set(item.messages.flatMap(getMessageImageReferences)))
+}
+
+export async function applyNoteGenServerConversationSnapshot(
+  snapshot: NoteGenServerConversationSnapshot,
+): Promise<void> {
+  if (snapshot.schemaVersion !== 1 || snapshot.type !== 'conversation-snapshot'
+    || !Array.isArray(snapshot.items) || !Array.isArray(snapshot.tombstones)) {
+    throw new Error('服务器返回了不兼容的对话对象')
+  }
+  const localizedItems = await Promise.all(snapshot.items.map(async item => ({
+    ...item,
+    messages: await Promise.all(item.messages.map(async message => {
+      if (!message.tagSyncId) return message
+      const tag = await import('@/db/tags').then(module => module.getTagBySyncId(message.tagSyncId as string))
+      if (!tag) {
+        // A conversation must not block the whole sync because its tag was
+        // deleted, excluded, or has not arrived on this device yet. Keep the
+        // message and drop only the unresolved local tag reference; a later
+        // conversation revision can restore the association once the tag is
+        // available.
+        const withoutMissingTag = { ...message }
+        Reflect.deleteProperty(withoutMissingTag, 'tagSyncId')
+        return withoutMissingTag
+      }
+      const withoutStableTagId = { ...message }
+      Reflect.deleteProperty(withoutStableTagId, 'tagSyncId')
+      return { ...withoutStableTagId, tagId: tag.id }
+    })),
+  })))
+  const [localItems, localTombstones] = await Promise.all([
+    getLocalConversationSyncItems(),
+    import('@/db/conversation-sync-state').then(module => module.getConversationSyncTombstones()),
+  ])
+  const tombstones = mergeTombstones(localTombstones, snapshot.tombstones)
+  const merged = mergeConversationItems(localItems, localizedItems, tombstones, {})
+  const observedTimestamp = Math.max(
+    0,
+    ...merged.map(item => item.syncUpdatedAt),
+    ...merged.flatMap(item => item.messages.map(message => message.syncUpdatedAt)),
+    ...tombstones.map(tombstone => tombstone.deletedAt),
+  )
+  await import('@/db/conversation-sync-state').then(module => (
+    module.observeConversationSyncTimestamp(observedTimestamp)
+  ))
+  await persistMergedConversationItems(merged, tombstones)
+  await refreshConversationStoreAfterSync()
 }
 
 function stableSerialize(value: unknown): string {

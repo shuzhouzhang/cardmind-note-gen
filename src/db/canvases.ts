@@ -1,5 +1,5 @@
 import { getDb } from './index'
-import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-queue'
+import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-bridge'
 import {
   DEFAULT_CANVAS_DOCUMENT,
   normalizeCanvasDocument,
@@ -248,6 +248,7 @@ export async function restoreCanvasProject(id: string) {
 export async function permanentlyDeleteCanvasProject(id: string) {
   const db = await getDb()
   await db.execute('delete from canvases where id = $1', [id])
+  enqueueCanvasSync('canvas-deleted-permanently')
   await removeCanvasKnowledgeIndex(id)
 }
 
@@ -255,6 +256,36 @@ export async function clearCanvasProjects() {
   const db = await getDb()
   await db.execute('delete from canvases')
   enqueueCanvasSync('canvases-cleared')
+  reconcileCanvasKnowledgeIndex()
+}
+
+export async function upsertCanvasProjectFromSync(project: CanvasProject) {
+  const db = await getDb()
+  await db.execute(
+    `insert into canvases
+      (id, title, canvasType, schemaVersion, content, undoStack, redoStack, thumbnailPath, createdAt, updatedAt, pinnedAt, deletedAt)
+     values ($1, $2, $3, $4, $5, '[]', '[]', null, $6, $7, $8, $9)
+     on conflict(id) do update set
+       title = excluded.title,
+       canvasType = excluded.canvasType,
+       schemaVersion = excluded.schemaVersion,
+       content = excluded.content,
+       createdAt = excluded.createdAt,
+       updatedAt = excluded.updatedAt,
+       pinnedAt = excluded.pinnedAt,
+       deletedAt = excluded.deletedAt`,
+    [
+      project.id,
+      project.title,
+      project.canvasType,
+      project.schemaVersion,
+      JSON.stringify(project.document),
+      project.createdAt,
+      project.updatedAt,
+      project.pinnedAt || null,
+      project.deletedAt || null,
+    ]
+  )
   reconcileCanvasKnowledgeIndex()
 }
 

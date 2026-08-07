@@ -1,6 +1,6 @@
 import { getDb } from "./index"
 import { Store } from '@tauri-apps/plugin-store';
-import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-queue'
+import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-bridge'
 
 export interface Tag {
   id: number
@@ -9,6 +9,7 @@ export interface Tag {
   isPin?: boolean
   sortOrder?: number
   total?: number
+  syncId?: string | null
 }
 
 function enqueueRecordsAutoSync(reason: string) {
@@ -27,6 +28,12 @@ export async function initTagsDb() {
       sortOrder integer DEFAULT 0
     )
   `)
+  try {
+    await db.execute('alter table tags add column syncId text default null')
+  } catch {
+    // Idempotent migration.
+  }
+  await db.execute('create unique index if not exists idx_tags_sync_id on tags(syncId) where syncId is not null')
   
   // 检查 sortOrder 列是否存在，如果不存在则添加
   try {
@@ -59,6 +66,12 @@ export async function getTags() {
   const db = await getDb();
   const tags = await db.select<Tag[]>("select * from tags order by sortOrder asc, id asc")
 
+  for (const tag of tags) {
+    if (tag.syncId) continue
+    tag.syncId = crypto.randomUUID()
+    await db.execute('update tags set syncId = $1 where id = $2 and syncId is null', [tag.syncId, tag.id])
+  }
+
   // 获取 tags 对应的 marks 数量
   for (const tag of tags) {
     // deleted = 0  
@@ -67,6 +80,48 @@ export async function getTags() {
   }
 
   return tags
+}
+
+export async function upsertTagFromNoteGenServerSync(
+  tag: Omit<Tag, 'id'> & { id?: number, syncId: string },
+): Promise<Tag> {
+  const db = await getDb()
+  let existing = (await db.select<Tag[]>('select * from tags where syncId = $1 limit 1', [tag.syncId]))[0]
+  if (!existing && tag.id !== undefined) {
+    existing = (await db.select<Tag[]>(
+      'select * from tags where id = $1 and name = $2 limit 1',
+      [tag.id, tag.name],
+    ))[0]
+  }
+  if (!existing && tag.isLocked) {
+    existing = (await db.select<Tag[]>(
+      'select * from tags where name = $1 and isLocked = true limit 1',
+      [tag.name],
+    ))[0]
+  }
+  if (existing) {
+    await db.execute(
+      'update tags set name = $1, isLocked = $2, isPin = $3, sortOrder = $4, syncId = $5 where id = $6',
+      [tag.name, tag.isLocked, tag.isPin, tag.sortOrder, tag.syncId, existing.id],
+    )
+    return { ...tag, id: existing.id }
+  }
+  const result = await db.execute(
+    'insert into tags (name, isLocked, isPin, sortOrder, syncId) values ($1, $2, $3, $4, $5)',
+    [tag.name, tag.isLocked, tag.isPin, tag.sortOrder, tag.syncId],
+  )
+  return { ...tag, id: Number(result.lastInsertId) }
+}
+
+export async function getTagBySyncId(syncId: string): Promise<Tag | null> {
+  const db = await getDb()
+  return (await db.select<Tag[]>('select * from tags where syncId = $1 limit 1', [syncId]))[0] ?? null
+}
+
+export async function deleteTagBySyncId(syncId: string): Promise<void> {
+  const db = await getDb()
+  await db.execute('delete from tags where syncId = $1 and isLocked = false', [syncId])
+  enqueueRecordsAutoSync('tag:sync-delete')
 }
 
 export async function insertTag(tag: Partial<Tag>) {
@@ -110,7 +165,9 @@ export async function delTag(id: number) {
 
 export async function deleteAllTags() {
   const db = await getDb();
-  return await db.execute("delete from tags where isLocked = false")
+  const result = await db.execute("delete from tags where isLocked = false")
+  enqueueRecordsAutoSync('tag:delete-all')
+  return result
 }
 
 export async function insertTags(tags: Tag[]) {

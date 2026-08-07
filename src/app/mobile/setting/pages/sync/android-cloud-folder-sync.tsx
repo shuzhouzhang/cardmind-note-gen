@@ -42,7 +42,7 @@ import useSettingStore from '@/stores/setting'
 import { useSkillsStore } from '@/stores/skills'
 import useSyncStore from '@/stores/sync'
 import { toast } from '@/hooks/use-toast'
-import type { CloudFolderConfig, SyncPlatform } from '@/types/sync'
+import type { CloudFolderConfig, PrimarySyncPlatform } from '@/types/sync'
 import { prepareActiveEditorDeactivationDurably } from '@/lib/editor-deactivation'
 
 type OneDrivePanelStatus =
@@ -270,7 +270,7 @@ export function OneDriveCloudFolderSync({ onActiveProviderChange }: OneDriveClou
     await autoDataSyncQueue.prepareAutoDataSyncForRepositoryChange()
     const store = await Store.load('store.json')
     const previousConfig = await store.get<CloudFolderConfig>('cloudFolderSyncConfig')
-    const previousMethod = await store.get<SyncPlatform>('primaryBackupMethod') || 'github'
+    const previousMethod = await store.get<PrimarySyncPlatform>('primaryBackupMethod') || 'github'
     try {
       await store.set('cloudFolderSyncConfig', configured)
       await store.save()

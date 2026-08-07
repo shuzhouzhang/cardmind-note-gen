@@ -620,6 +620,7 @@ export async function getRemoteCommitInfo(path: string): Promise<{
   try {
     const store = await Store.load('store.json')
     const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github'
+    if (primaryBackupMethod === 'noteGenServer') return null
     const repo = await getSyncRepoName(primaryBackupMethod as 'github' | 'gitee' | 'gitlab' | 'gitea')
     
     let commits: any[] = []

@@ -10,7 +10,7 @@ import { getDataSyncRepoName } from '@/lib/sync/repo-utils'
 import { s3Download, s3Upload } from '@/lib/sync/s3'
 import { webdavDownload, webdavUpload } from '@/lib/sync/webdav'
 import { cloudFolderDownload, cloudFolderUpload } from '@/lib/sync/cloud-folder'
-import { setAutoDataSyncApplyingRemote } from '@/lib/sync/auto-data-sync-queue'
+import { setAutoDataSyncApplyingRemote } from '@/lib/sync/auto-data-sync-bridge'
 import type { CloudFolderConfig, S3Config, WebDAVConfig } from '@/types/sync'
 
 type SettingsSyncProvider = 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'
@@ -74,7 +74,9 @@ const useSettingsSyncStore = create<SettingsSyncState>((set) => ({
   uploadSettings: async () => {
     try {
       const store = await Store.load('store.json')
-      const primaryBackupMethod = await store.get<SettingsSyncProvider>('primaryBackupMethod') || 'github'
+      const storedPrimaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github'
+      if (storedPrimaryBackupMethod === 'noteGenServer') return false
+      const primaryBackupMethod = storedPrimaryBackupMethod as SettingsSyncProvider
       const excludeSensitiveConfig = await store.get<boolean>('excludeSensitiveConfig') !== false
       debugSettingsSync('upload started', {
         provider: primaryBackupMethod,
@@ -216,7 +218,9 @@ const useSettingsSyncStore = create<SettingsSyncState>((set) => ({
   downloadSettings: async (options: SettingsDownloadOptions = {}) => {
     try {
       const store = await Store.load('store.json')
-      const primaryBackupMethod = await store.get<SettingsSyncProvider>('primaryBackupMethod') || 'github'
+      const storedPrimaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github'
+      if (storedPrimaryBackupMethod === 'noteGenServer') return false
+      const primaryBackupMethod = storedPrimaryBackupMethod as SettingsSyncProvider
       const excludeSensitiveConfig = await store.get<boolean>('excludeSensitiveConfig') !== false
       debugSettingsSync('download started', {
         provider: primaryBackupMethod,

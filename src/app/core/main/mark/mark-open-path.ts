@@ -68,7 +68,8 @@ export function canOpenMarkSource(mark: Pick<Mark, 'type' | 'url'>): boolean {
   }
 
   if (mark.type === 'file') {
-    return !isHttpUrl(mark.url) && isAbsoluteFilePath(mark.url)
+    return !isHttpUrl(mark.url)
+      && (isAbsoluteFilePath(mark.url) || normalizePath(mark.url).startsWith('record-files/'))
   }
 
   return false
@@ -112,6 +113,10 @@ export function getMarkOpenTargets(mark: Pick<Mark, 'type' | 'url'>, appDir: str
 
   if (mark.type === 'file') {
     const normalizedFilePath = normalizePath(mark.url)
+    if (normalizedFilePath.startsWith('record-files/')) {
+      const filePath = joinPath(appDir, normalizedFilePath)
+      return { filePath, folderPath: dirname(filePath) }
+    }
     const folderPath = dirname(normalizedFilePath)
 
     return {

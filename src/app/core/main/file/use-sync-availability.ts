@@ -7,7 +7,7 @@ import { checkSyncProviderStatus } from '@/lib/sync/provider-status'
 import useSettingStore from '@/stores/setting'
 import { useSettingsDialogStore } from '@/stores/settings-dialog'
 import useSyncStore from '@/stores/sync'
-import type { SyncPlatform } from '@/types/sync'
+import type { PrimarySyncPlatform } from '@/types/sync'
 import { useShallow } from 'zustand/react/shallow'
 
 import { getSyncConfiguration } from './file-tree-action-policy'
@@ -40,7 +40,12 @@ export function useSyncAvailability() {
     webdav: state.webdavConnected,
     cloudFolder: state.cloudFolderConnected,
   })))
-  const [state, setState] = useState<{ configured: boolean; platform: SyncPlatform }>({
+  const [state, setState] = useState<{
+    configured: boolean
+    platform: PrimarySyncPlatform
+    noteGenReady?: boolean
+    noteGenIssue?: 'inactive' | 'disconnected' | 'locked'
+  }>({
     configured: false,
     platform: credentials.primaryBackupMethod,
   })
@@ -53,6 +58,32 @@ export function useSyncAvailability() {
     setConfigurationChecking(true)
     try {
       const next = await getSyncConfiguration()
+      if (next.platform === 'noteGenServer') {
+        const [
+          { loadServerProfile },
+          { getNoteGenServerBackgroundReadiness },
+        ] = await Promise.all([
+          import('@/lib/sync/note-gen-server'),
+          import('@/lib/sync/note-gen-server-background'),
+        ])
+        const profile = await loadServerProfile()
+        const configured = Boolean(profile?.enabled && profile.workspaceId)
+        const readiness = getNoteGenServerBackgroundReadiness()
+        const noteGenState = {
+          configured,
+          platform: next.platform,
+          noteGenReady: readiness.primary && readiness.connected && readiness.unlocked,
+          noteGenIssue: !readiness.primary
+            ? 'inactive' as const
+            : !readiness.connected
+              ? 'disconnected' as const
+              : !readiness.unlocked
+                ? 'locked' as const
+                : undefined,
+        }
+        if (configurationRequestRef.current === requestId) setState(noteGenState)
+        return noteGenState
+      }
       if (next.configured && (next.platform === 's3' || next.platform === 'webdav' || next.platform === 'cloudFolder')) {
         await checkSyncProviderStatus(next.platform)
       }
@@ -70,11 +101,27 @@ export function useSyncAvailability() {
     void refresh()
   }, [credentials, refresh, settingsOpen])
 
+  useEffect(() => {
+    if (credentials.primaryBackupMethod !== 'noteGenServer') return
+    let unsubscribe: (() => void) | undefined
+    let cancelled = false
+    void import('@/lib/sync/note-gen-server-background').then(({ subscribeNoteGenServerBackgroundStatus }) => {
+      if (cancelled) return
+      unsubscribe = subscribeNoteGenServerBackgroundStatus(() => void refresh())
+    })
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
+  }, [credentials.primaryBackupMethod, refresh])
+
   let status: SyncAvailabilityStatus
   if (configurationChecking) {
     status = 'checking'
   } else if (!state.configured) {
     status = 'not-configured'
+  } else if (state.platform === 'noteGenServer') {
+    status = state.noteGenReady ? 'available' : 'unavailable'
   } else if (state.platform === 's3' || state.platform === 'webdav' || state.platform === 'cloudFolder') {
     status = providerStates[state.platform] ? 'available' : 'unavailable'
   } else {

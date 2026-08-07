@@ -2,7 +2,7 @@ import { getDb } from "./index"
 import { BaseDirectory, exists, mkdir, remove } from "@tauri-apps/plugin-fs"
 import { insertActivityEvent } from './activity'
 import { truncateActivityText } from '@/lib/activity/events'
-import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-queue'
+import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-bridge'
 import {
   getMarkLocalAssetPath,
   getMarkLocalAssetPaths,
@@ -22,9 +22,10 @@ export interface Mark {
   deleted: 0 | 1
   createdAt: number
   sourceId?: string | null
+  syncId?: string | null
 }
 
-const MARK_COLUMNS = 'id, tagId, type, content, url, desc, deleted, createdAt, sourceId'
+const MARK_COLUMNS = 'id, tagId, type, content, url, desc, deleted, createdAt, sourceId, syncId'
 
 async function deleteMarkLocalAsset(assetPath: string) {
   const fileExists = await exists(assetPath, { baseDir: BaseDirectory.AppData })
@@ -215,12 +216,55 @@ export async function insertExternalMark(mark: Partial<Mark> & { sourceId: strin
 
 export async function getAllMarks() {
   const db = await getDb();
-  return await db.select<Mark[]>(`select ${MARK_COLUMNS} from marks order by createdAt desc`)
+  const marks = await db.select<Mark[]>(`select ${MARK_COLUMNS} from marks order by createdAt desc`)
+  for (const mark of marks) {
+    if (mark.syncId) continue
+    mark.syncId = crypto.randomUUID()
+    await db.execute('update marks set syncId = $1 where id = $2 and syncId is null', [mark.syncId, mark.id])
+  }
+  return marks
+}
+
+export async function upsertMarkFromNoteGenServerSync(
+  mark: Omit<Mark, 'id' | 'tagId'> & { id?: number, syncId: string },
+  tagId: number,
+): Promise<Mark> {
+  const db = await getDb()
+  let existing = (await db.select<Mark[]>(`select ${MARK_COLUMNS} from marks where syncId = $1 limit 1`, [mark.syncId]))[0]
+  if (!existing && mark.sourceId) {
+    existing = (await db.select<Mark[]>(
+      `select ${MARK_COLUMNS} from marks where sourceId = $1 limit 1`,
+      [mark.sourceId],
+    ))[0]
+  }
+  if (!existing && mark.id !== undefined) {
+    existing = (await db.select<Mark[]>(
+      `select ${MARK_COLUMNS} from marks where id = $1 and type = $2 and createdAt = $3 limit 1`,
+      [mark.id, mark.type, mark.createdAt],
+    ))[0]
+  }
+  if (existing) {
+    await db.execute(
+      'update marks set tagId = $1, type = $2, content = $3, url = $4, desc = $5, createdAt = $6, deleted = $7, sourceId = $8, syncId = $9 where id = $10',
+      [tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, mark.sourceId ?? null, mark.syncId, existing.id],
+    )
+    return { ...mark, id: existing.id, tagId }
+  }
+  const result = await db.execute(
+    'insert into marks (tagId, type, content, url, desc, createdAt, deleted, sourceId, syncId) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+    [tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, mark.sourceId ?? null, mark.syncId],
+  )
+  return { ...mark, id: Number(result.lastInsertId), tagId }
+}
+
+export async function getMarkBySyncId(syncId: string): Promise<Mark | null> {
+  const db = await getDb()
+  return (await db.select<Mark[]>(`select ${MARK_COLUMNS} from marks where syncId = $1 limit 1`, [syncId]))[0] ?? null
 }
 
 export async function updateMark(mark: Mark) {
   const db = await getDb();
-  const previousMarks = await db.select<Mark[]>("select type, url, content from marks where id = $1", [mark.id])
+  const previousMarks = await db.select<Mark[]>("select type, url, content, syncId from marks where id = $1", [mark.id])
   const res = await db.execute(
     "update marks set tagId = $1, url = $2, desc = $3, content = $4, createdAt = $5 where id = $6",
     [mark.tagId, mark.url, mark.desc, mark.content, mark.createdAt, mark.id]
@@ -272,6 +316,7 @@ export async function deleteAllMarks() {
   const db = await getDb();
   const marks = await getAllMarks()
   const result = await db.execute("delete from marks")
+  enqueueRecordsAutoSync('mark:delete-all')
   await Promise.all(marks.map(mark => removeMarkKnowledgeIndex(mark.id)))
   return result
 }
@@ -312,7 +357,7 @@ export async function insertMarks(marks: Partial<Mark>[]) {
 
 export async function delMarkForever(id: number) {
   const db = await getDb();
-  const marks = await db.select<Mark[]>("select type, url, content from marks where id = $1", [id])
+  const marks = await db.select<Mark[]>("select type, url, content, syncId from marks where id = $1", [id])
   await queueRecordAssetRemoteDeletions(marks)
   await deleteMarkLocalAssets(marks)
   const result = await db.execute("delete from marks where id = $1", [id])
@@ -323,7 +368,7 @@ export async function delMarkForever(id: number) {
 
 export async function clearTrash() {
   const db = await getDb();
-  const marks = await db.select<Mark[]>("select id, type, url, content from marks where deleted = $1", [1])
+  const marks = await db.select<Mark[]>("select id, type, url, content, syncId from marks where deleted = $1", [1])
   await queueRecordAssetRemoteDeletions(marks)
   await deleteMarkLocalAssets(marks)
   const result = await db.execute("delete from marks where deleted = $1", [1])

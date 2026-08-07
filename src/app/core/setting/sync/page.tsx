@@ -32,6 +32,7 @@ import { CloudFolderSync } from './cloud-folder-sync'
 import { UsePlatformButton } from './components/use-platform-button'
 import { WorkspaceRepoMapping } from './components/workspace-repo-mapping'
 import { DataSyncOverview } from './components/data-sync-overview'
+import { NoteGenServerSync, type NoteGenServerConnectionState } from './note-gen-server-sync'
 import { SettingType } from '../components/setting-base'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -67,7 +68,7 @@ import { checkSyncProviderStatus } from '@/lib/sync/provider-status'
 import type { SyncRepoPlatform, WorkspaceSyncRepos } from '@/lib/sync/workspace-repos'
 import useSettingStore from '@/stores/setting'
 import useSyncStore from '@/stores/sync'
-import { SYNC_PLATFORMS, SYNC_PLATFORM_INFO, type SyncPlatform } from '@/types/sync'
+import { SYNC_PLATFORMS, SYNC_PLATFORM_INFO, type PrimarySyncPlatform, type SyncPlatform } from '@/types/sync'
 
 const PLATFORM_ICONS: Record<SyncPlatform, LucideIcon> = {
   github: GitBranch,
@@ -85,6 +86,10 @@ const PLATFORM_LOGOS: Partial<Record<SyncPlatform, string>> = {
   gitlab: '/sync-platforms/gitlab.svg',
   gitea: '/sync-platforms/gitea.svg',
 }
+
+type DisplaySyncPlatform = PrimarySyncPlatform
+
+const DISPLAY_SYNC_PLATFORMS: DisplaySyncPlatform[] = ['noteGenServer', ...SYNC_PLATFORMS]
 
 export default function SyncPage() {
   const t = useTranslations()
@@ -120,8 +125,9 @@ export default function SyncPage() {
     cloudFolderConnected,
   } = useSyncStore()
 
-  const [platform, setPlatform] = useState<SyncPlatform>(primaryBackupMethod)
+  const [platform, setPlatform] = useState<DisplaySyncPlatform>(primaryBackupMethod)
   const [activeTab, setActiveTab] = useState('connection')
+  const [noteGenConnectionState, setNoteGenConnectionState] = useState<NoteGenServerConnectionState>('checking')
   const [isLoading, setIsLoading] = useState(true)
   const [checkingPlatforms, setCheckingPlatforms] = useState<Set<SyncPlatform>>(new Set())
   const checkingPlatformsRef = useRef<Set<SyncPlatform>>(new Set())
@@ -171,7 +177,7 @@ export default function SyncPage() {
     async function loadPrimaryBackupMethod() {
       try {
         const store = await Store.load('store.json')
-        const savedMethod = await store.get<SyncPlatform>('primaryBackupMethod')
+        const savedMethod = await store.get<PrimarySyncPlatform>('primaryBackupMethod')
         if (savedMethod) {
           await setPrimaryBackupMethod(savedMethod)
           setPlatform(savedMethod)
@@ -201,6 +207,7 @@ export default function SyncPage() {
 
   useEffect(() => {
     if (isLoading) return
+    if (platform === 'noteGenServer') return
     void checkPlatformStatus(platform)
   }, [checkPlatformStatus, isLoading, platform, workspacePath])
 
@@ -225,14 +232,23 @@ export default function SyncPage() {
     }
   }
 
-  const currentSyncState = getSyncState(platform)
+  const currentSyncState = platform === 'noteGenServer'
+    ? noteGenConnectionState === 'checking'
+      ? SyncStateEnum.checking
+      : noteGenConnectionState === 'connected'
+        ? SyncStateEnum.success
+        : SyncStateEnum.fail
+    : getSyncState(platform)
   const isAutoSyncDisabled = currentSyncState !== SyncStateEnum.success
-  const currentPlatformInfo = SYNC_PLATFORM_INFO[platform]
-  const currentPlatformName = platform === 'cloudFolder'
+  const currentPlatformInfo = platform === 'noteGenServer' ? null : SYNC_PLATFORM_INFO[platform]
+  const currentPlatformName = platform === 'noteGenServer'
+    ? t('settings.sync.noteGenServer.title')
+    : platform === 'cloudFolder'
     ? t('settings.sync.cloudFolder.title')
-    : currentPlatformInfo.name
+    : currentPlatformInfo?.name
 
-  function handlePlatformChange(nextPlatform: SyncPlatform) {
+  function handlePlatformChange(nextPlatform: DisplaySyncPlatform) {
+    if (nextPlatform === 'noteGenServer') setNoteGenConnectionState('checking')
     setPlatform(nextPlatform)
     setActiveTab('connection')
   }
@@ -251,6 +267,8 @@ export default function SyncPage() {
 
   function renderSyncContent() {
     switch (platform) {
+      case 'noteGenServer':
+        return <NoteGenServerSync />
       case 'github':
         return <GithubSync />
       case 'gitee':
@@ -312,8 +330,8 @@ export default function SyncPage() {
           </CardHeader>
           <CardContent>
             <ItemGroup className="gap-1">
-              {SYNC_PLATFORMS.map((itemPlatform) => {
-                const platformInfo = SYNC_PLATFORM_INFO[itemPlatform]
+              {DISPLAY_SYNC_PLATFORMS.map((itemPlatform) => {
+                const platformInfo = itemPlatform === 'noteGenServer' ? null : SYNC_PLATFORM_INFO[itemPlatform]
                 const isCurrentPlatform = primaryBackupMethod === itemPlatform
                 const isSelectedPlatform = platform === itemPlatform
                 return (
@@ -331,13 +349,17 @@ export default function SyncPage() {
                       onClick={() => void handlePlatformChange(itemPlatform)}
                     >
                       <ItemMedia>
-                        <SyncPlatformIcon platform={itemPlatform} small />
+                        {itemPlatform === 'noteGenServer'
+                          ? <Server />
+                          : <SyncPlatformIcon platform={itemPlatform} small />}
                       </ItemMedia>
                       <ItemContent>
                         <ItemTitle>
-                          {itemPlatform === 'cloudFolder'
+                          {itemPlatform === 'noteGenServer'
+                            ? t('settings.sync.noteGenServer.title')
+                            : itemPlatform === 'cloudFolder'
                             ? t('settings.sync.cloudFolder.title')
-                            : platformInfo.name}
+                            : platformInfo?.name}
                         </ItemTitle>
                       </ItemContent>
                       {isCurrentPlatform ? (
@@ -357,7 +379,7 @@ export default function SyncPage() {
           <Card>
             <CardHeader>
               <div className="flex min-w-0 items-center gap-3">
-                <SyncPlatformIcon platform={platform} />
+                {platform === 'noteGenServer' ? <Server /> : <SyncPlatformIcon platform={platform} />}
                 <div className="min-w-0 flex-1">
                   <CardTitle>{currentPlatformName}</CardTitle>
                   <CardDescription>{t('settings.sync.platformDesc')}</CardDescription>
@@ -375,104 +397,107 @@ export default function SyncPage() {
             </CardHeader>
           </Card>
 
-          <Tabs orientation="horizontal" value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid h-9 w-full grid-cols-2">
-              <TabsTrigger className="!justify-center" value="connection">
-                <Settings2 data-icon="inline-start" />
-                {t('settings.sync.connectionTab')}
-              </TabsTrigger>
-              <TabsTrigger className="!justify-center" value="options">
-                <SlidersHorizontal data-icon="inline-start" />
-                {t('settings.sync.syncOptionsTab')}
-              </TabsTrigger>
-            </TabsList>
+          {platform === 'noteGenServer' ? (
+            <NoteGenServerSync onConnectionStateChange={setNoteGenConnectionState} />
+          ) : (
+              <Tabs orientation="horizontal" value={activeTab} onValueChange={setActiveTab}>
+                <TabsList className="grid h-9 w-full grid-cols-2">
+                  <TabsTrigger className="!justify-center" value="connection">
+                    <Settings2 data-icon="inline-start" />
+                    {t('settings.sync.connectionTab')}
+                  </TabsTrigger>
+                  <TabsTrigger className="!justify-center" value="options">
+                    <SlidersHorizontal data-icon="inline-start" />
+                    {t('settings.sync.syncOptionsTab')}
+                  </TabsTrigger>
+                </TabsList>
 
-            <TabsContent value="connection" className="flex flex-col gap-4">
-              {renderSyncContent()}
-              {platform !== 's3' && platform !== 'webdav' && platform !== 'cloudFolder' ? (
-                <WorkspaceRepoMapping
-                  platform={platform}
-                  workspaceOptions={workspaceOptions}
-                  currentWorkspacePath={workspacePath}
-                  workspaceRepos={workspaceRepos}
-                  defaultRepoName={RepoNames.sync}
-                  onRepoChange={(targetWorkspacePath, repo) => handleWorkspaceRepoChange(targetWorkspacePath, platform, repo)}
-                />
-              ) : null}
-            </TabsContent>
+                <TabsContent value="connection" className="flex flex-col gap-4">
+                  {renderSyncContent()}
+                  {platform !== 's3' && platform !== 'webdav' && platform !== 'cloudFolder' ? (
+                    <WorkspaceRepoMapping
+                      platform={platform}
+                      workspaceOptions={workspaceOptions}
+                      currentWorkspacePath={workspacePath}
+                      workspaceRepos={workspaceRepos}
+                      defaultRepoName={RepoNames.sync}
+                      onRepoChange={(targetWorkspacePath, repo) => handleWorkspaceRepoChange(targetWorkspacePath, platform, repo)}
+                    />
+                  ) : null}
+                </TabsContent>
 
-            <TabsContent value="options" className="flex flex-col gap-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>{t('settings.sync.noteSettings')}</CardTitle>
-                  <CardDescription>{t('settings.sync.noteSettingsDesc')}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ItemGroup>
-                    <Item variant="outline">
-                      <ItemMedia variant="icon"><RefreshCcw /></ItemMedia>
-                      <ItemContent>
-                        <ItemTitle>{t('settings.sync.autoSync')}</ItemTitle>
-                        <ItemDescription>{t('settings.sync.autoSyncDesc')}</ItemDescription>
-                      </ItemContent>
-                      <ItemActions>
-                        <Select
-                          value={autoSync}
-                          onValueChange={setAutoSync}
-                          disabled={isAutoSyncDisabled || platform === 'cloudFolder'}
-                        >
-                          <SelectTrigger className="w-45">
-                            <SelectValue placeholder={t('settings.sync.autoSyncOptions.placeholder')} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectGroup>
-                              <SelectItem value="disabled">{t('settings.sync.autoSyncOptions.disabled')}</SelectItem>
-                              <SelectItem value="2">{t('settings.sync.autoSyncOptions.2s')}</SelectItem>
-                              <SelectItem value="3">{t('settings.sync.autoSyncOptions.3s')}</SelectItem>
-                              <SelectItem value="5">{t('settings.sync.autoSyncOptions.5s')}</SelectItem>
-                              <SelectItem value="10">{t('settings.sync.autoSyncOptions.10s')}</SelectItem>
-                              <SelectItem value="20">{t('settings.sync.autoSyncOptions.20s')}</SelectItem>
-                              <SelectItem value="30">{t('settings.sync.autoSyncOptions.30s')}</SelectItem>
-                              <SelectItem value="60">{t('settings.sync.autoSyncOptions.1m')}</SelectItem>
-                              <SelectItem value="120">{t('settings.sync.autoSyncOptions.2m')}</SelectItem>
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                      </ItemActions>
-                    </Item>
+                <TabsContent value="options" className="flex flex-col gap-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>{t('settings.sync.noteSettings')}</CardTitle>
+                      <CardDescription>{t('settings.sync.noteSettingsDesc')}</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <ItemGroup>
+                        <Item variant="outline">
+                          <ItemMedia variant="icon"><RefreshCcw /></ItemMedia>
+                          <ItemContent>
+                            <ItemTitle>{t('settings.sync.autoSync')}</ItemTitle>
+                            <ItemDescription>{t('settings.sync.autoSyncDesc')}</ItemDescription>
+                          </ItemContent>
+                          <ItemActions>
+                            <Select
+                              value={autoSync}
+                              onValueChange={setAutoSync}
+                              disabled={isAutoSyncDisabled || platform === 'cloudFolder'}
+                            >
+                              <SelectTrigger className="w-45">
+                                <SelectValue placeholder={t('settings.sync.autoSyncOptions.placeholder')} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectGroup>
+                                  <SelectItem value="disabled">{t('settings.sync.autoSyncOptions.disabled')}</SelectItem>
+                                  <SelectItem value="2">{t('settings.sync.autoSyncOptions.2s')}</SelectItem>
+                                  <SelectItem value="3">{t('settings.sync.autoSyncOptions.3s')}</SelectItem>
+                                  <SelectItem value="5">{t('settings.sync.autoSyncOptions.5s')}</SelectItem>
+                                  <SelectItem value="10">{t('settings.sync.autoSyncOptions.10s')}</SelectItem>
+                                  <SelectItem value="20">{t('settings.sync.autoSyncOptions.20s')}</SelectItem>
+                                  <SelectItem value="30">{t('settings.sync.autoSyncOptions.30s')}</SelectItem>
+                                  <SelectItem value="60">{t('settings.sync.autoSyncOptions.1m')}</SelectItem>
+                                  <SelectItem value="120">{t('settings.sync.autoSyncOptions.2m')}</SelectItem>
+                                </SelectGroup>
+                              </SelectContent>
+                            </Select>
+                          </ItemActions>
+                        </Item>
 
-                    <Item variant="outline">
-                      <ItemMedia variant="icon"><FileDown /></ItemMedia>
-                      <ItemContent>
-                        <ItemTitle>{t('settings.sync.autoPullOnOpen')}</ItemTitle>
-                        <ItemDescription>{t('settings.sync.autoPullOnOpenDesc')}</ItemDescription>
-                      </ItemContent>
-                      <ItemActions className="mobile-setting-inline-action">
-                        <Switch
-                          checked={autoPullOnOpen}
-                          onCheckedChange={setAutoPullOnOpen}
-                          disabled={isAutoSyncDisabled || platform === 'cloudFolder'}
-                        />
-                      </ItemActions>
-                    </Item>
+                        <Item variant="outline">
+                          <ItemMedia variant="icon"><FileDown /></ItemMedia>
+                          <ItemContent>
+                            <ItemTitle>{t('settings.sync.autoPullOnOpen')}</ItemTitle>
+                            <ItemDescription>{t('settings.sync.autoPullOnOpenDesc')}</ItemDescription>
+                          </ItemContent>
+                          <ItemActions className="mobile-setting-inline-action">
+                            <Switch
+                              checked={autoPullOnOpen}
+                              onCheckedChange={setAutoPullOnOpen}
+                              disabled={isAutoSyncDisabled || platform === 'cloudFolder'}
+                            />
+                          </ItemActions>
+                        </Item>
+                      </ItemGroup>
+                    </CardContent>
+                  </Card>
 
-                  </ItemGroup>
-                </CardContent>
-              </Card>
+                  <DataSyncOverview
+                    autoRecordSyncEnabled={autoRecordSyncEnabled}
+                    autoSettingsSyncEnabled={autoSettingsSyncEnabled}
+                    autoConversationSyncEnabled={autoConversationSyncEnabled}
+                    excludeSensitiveConfig={excludeSensitiveConfig}
+                    onRecordSyncChange={setAutoRecordSyncEnabled}
+                    onSettingsSyncChange={setAutoSettingsSyncEnabled}
+                    onConversationSyncChange={setAutoConversationSyncEnabled}
+                    onSensitiveConfigChange={handleExcludeSensitiveConfigChange}
+                  />
 
-              <DataSyncOverview
-                autoRecordSyncEnabled={autoRecordSyncEnabled}
-                autoSettingsSyncEnabled={autoSettingsSyncEnabled}
-                autoConversationSyncEnabled={autoConversationSyncEnabled}
-                excludeSensitiveConfig={excludeSensitiveConfig}
-                onRecordSyncChange={setAutoRecordSyncEnabled}
-                onSettingsSyncChange={setAutoSettingsSyncEnabled}
-                onConversationSyncChange={setAutoConversationSyncEnabled}
-                onSensitiveConfigChange={handleExcludeSensitiveConfigChange}
-              />
-
-            </TabsContent>
-          </Tabs>
+                </TabsContent>
+              </Tabs>
+          )}
         </div>
       </div>
     </SettingType>

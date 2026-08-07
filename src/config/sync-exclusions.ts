@@ -92,6 +92,7 @@ export const ALWAYS_SYNC_EXCLUDED_FIELDS: string[] = [
   'autoRecordSyncEnabled',
   'autoSettingsSyncEnabled',
   'autoConversationSyncEnabled',
+  'primaryBackupMethod',
   'autoVectorEnabled',
   'closeBehavior',
   'excludeSensitiveConfig',
@@ -109,9 +110,18 @@ export const ALWAYS_SYNC_EXCLUDED_FIELDS: string[] = [
   'autoDataSyncLastAppliedRemoteMeta',
   'autoDataSyncRecordSnapshots',
   'autoDataSyncBaselineFingerprints',
+  // NoteGen Server 的连接身份、令牌和设备 ID 只能保存在当前设备。
+  // 一旦被设置同步覆盖，新设备会冒充旧设备，甚至在重启后失去自己的登录态。
+  'noteGenServerSyncProfile',
+  'noteGenServerSyncSession',
+  'noteGenServerDeviceId',
+  // 资源远端删除队列记录的是本机尚未完成的副作用，不能跨设备执行。
+  'pendingRecordAssetRemoteDeletions',
   // Development builds may have written this local-only diagnostic key.
   'autoConversationSyncDiagnostic',
   'lastRecordTagId',
+  // 标签的数据库主键是设备本地自增值，当前选中项不能跨设备复用。
+  'currentTagId',
   // 云盘文件夹备份由各设备独立配置，不能覆盖另一台设备的本地路径和执行状态。
   'managedBackupDirectory',
   'managedBackupSchedule',
@@ -137,7 +147,6 @@ export const SENSITIVE_SYNC_EXCLUDED_FIELDS: string[] = [
   'uiScale',
   'contentTextScale',
   'customCss',
-  'primaryBackupMethod',
   'aiModelList',
   's3SyncConfig',
   'webdavSyncConfig',

@@ -115,7 +115,7 @@ export function DeleteFolder({ item, shortcut }: DeleteFolderProps) {
           </ContextMenuShortcut>
         )}
       </ContextMenuItem>
-      {primaryBackupMethod !== 'cloudFolder' ? (
+      {primaryBackupMethod !== 'cloudFolder' && primaryBackupMethod !== 'noteGenServer' ? (
         <ContextMenuItem
           inset
           disabled={!hasRemoteFolderData(item)}

@@ -1,5 +1,5 @@
 import { getDb } from './index'
-import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-queue'
+import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-bridge'
 import { nextConversationSyncTimestamp } from './conversation-sync-state'
 
 export interface ConversationCompaction {
@@ -153,4 +153,16 @@ export async function deleteConversationCompactions(conversationId: number) {
 export async function deleteAllConversationCompactions() {
   const db = await getDb()
   await db.execute('delete from conversation_compactions', [])
+  const syncUpdatedAt = await nextConversationSyncTimestamp()
+  const conversations = await db.select<Array<{ id: number }>>(
+    'select id from conversations',
+    [],
+  )
+  for (const conversation of conversations) {
+    await db.execute(
+      'update conversations set syncUpdatedAt = $1 where id = $2',
+      [syncUpdatedAt, conversation.id],
+    )
+  }
+  enqueueAutoDataSync('conversations', 'conversation-compactions-cleared')
 }

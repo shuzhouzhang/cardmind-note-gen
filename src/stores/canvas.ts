@@ -15,7 +15,8 @@ import {
 import { createCanvasDocument } from '@/lib/canvas/templates'
 import { CANVAS_THUMBNAIL_VERSION, generateCanvasThumbnail, removeCanvasThumbnail } from '@/lib/canvas/thumbnail'
 import { purgeCanvas, uploadCanvas } from '@/lib/sync/canvas-sync'
-import { enqueueAutoDataSync, isAutoDataSyncProviderConfigured } from '@/lib/sync/auto-data-sync-queue'
+import { enqueueAutoDataSync } from '@/lib/sync/auto-data-sync-bridge'
+import { isAutoDataSyncProviderConfigured } from '@/lib/sync/auto-data-sync-queue'
 import type {
   CanvasDocument,
   CanvasHistoryState,
@@ -29,6 +30,8 @@ const thumbnailTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const thumbnailGenerationPromises = new Map<string, Promise<void>>()
 const thumbnailRepairAttempts = new Set<string>()
 const historySaveChains = new Map<string, Promise<void>>()
+const canvasSaveInFlight = new Set<string>()
+const canvasSaveQueued = new Set<string>()
 const MAX_THUMBNAIL_REPAIR_ATTEMPTS = 256
 
 function persistCanvasHistory(id: string, history: CanvasHistoryState) {
@@ -219,27 +222,37 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   saveProject: async (id) => {
-    const document = get().documents[id]
-    if (!document) return
-    const cachedProject = get().projects.find(project => project.id === id)
-    const hasDocumentChanges = !cachedProject
-      || JSON.stringify(cachedProject.document) !== JSON.stringify(document)
-    if (!hasDocumentChanges) {
-      if (!cachedProject?.thumbnailPath) void get().refreshThumbnail(id)
+    if (canvasSaveInFlight.has(id)) {
+      canvasSaveQueued.add(id)
       return
     }
-    const updatedAt = await updateCanvasDocument(id, document)
-    set(state => ({
-      projects: state.projects
-        .map(project => project.id === id ? { ...project, document, updatedAt } : project)
-        .sort((left, right) => right.updatedAt - left.updatedAt),
-    }))
-    const previousThumbnailTimer = thumbnailTimers.get(id)
-    if (previousThumbnailTimer) clearTimeout(previousThumbnailTimer)
-    thumbnailTimers.set(id, setTimeout(() => {
-      thumbnailTimers.delete(id)
-      void get().refreshThumbnail(id)
-    }, 1500))
+    canvasSaveInFlight.add(id)
+    try {
+      const document = get().documents[id]
+      if (!document) return
+      const cachedProject = get().projects.find(project => project.id === id)
+      const hasDocumentChanges = !cachedProject
+        || JSON.stringify(cachedProject.document) !== JSON.stringify(document)
+      if (!hasDocumentChanges) {
+        if (!cachedProject?.thumbnailPath) void get().refreshThumbnail(id)
+        return
+      }
+      const updatedAt = await updateCanvasDocument(id, document)
+      set(state => ({
+        projects: state.projects
+          .map(project => project.id === id ? { ...project, document, updatedAt } : project)
+          .sort((left, right) => right.updatedAt - left.updatedAt),
+      }))
+      const previousThumbnailTimer = thumbnailTimers.get(id)
+      if (previousThumbnailTimer) clearTimeout(previousThumbnailTimer)
+      thumbnailTimers.set(id, setTimeout(() => {
+        thumbnailTimers.delete(id)
+        void get().refreshThumbnail(id)
+      }, 1500))
+    } finally {
+      canvasSaveInFlight.delete(id)
+      if (canvasSaveQueued.delete(id)) void get().saveProject(id)
+    }
   },
 
   refreshThumbnail: async (id) => {

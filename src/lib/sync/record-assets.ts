@@ -1,6 +1,7 @@
 import { BaseDirectory, exists, mkdir, readFile, writeFile } from '@tauri-apps/plugin-fs'
 import { Store } from '@tauri-apps/plugin-store'
 import emitter from '@/lib/emitter'
+import { isAutoDataSyncApplyingRemote } from './auto-data-sync-bridge'
 import { recordSyncTiming } from './sync-timing'
 import {
   deleteRemoteFile,
@@ -14,6 +15,7 @@ type RecordAssetMark = {
   type: 'scan' | 'text' | 'image' | 'link' | 'file' | 'recording' | 'todo'
   url: string
   content?: string
+  syncId?: string | null
 }
 
 const HTTP_URL_PATTERN = /^https?:\/\//i
@@ -47,6 +49,15 @@ export function getMarkLocalAssetPath(mark: RecordAssetMark): string | null {
     return normalizeStoredPath(mark.url) || null
   }
 
+  if (mark.type === 'file' && normalizeStoredPath(mark.url).startsWith('record-files/')) {
+    return normalizeStoredPath(mark.url)
+  }
+
+  if (mark.type === 'file' && mark.syncId) {
+    const fileName = getStoredFileName(mark.url).replace(/[^a-zA-Z0-9._-]/g, '_') || 'attachment.bin'
+    return `record-files/${mark.syncId}/${fileName}`
+  }
+
   return null
 }
 
@@ -75,6 +86,7 @@ async function ensureLocalAssetDirectory(localPath: string) {
 }
 
 export async function queueRecordAssetRemoteDeletions(marks: RecordAssetMark[]) {
+  if (isAutoDataSyncApplyingRemote()) return
   const paths = marks
     .flatMap(getMarkLocalAssetPaths)
     .map(getRemoteAssetPath)

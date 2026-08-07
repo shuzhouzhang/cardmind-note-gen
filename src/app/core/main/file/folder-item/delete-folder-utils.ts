@@ -1,7 +1,7 @@
 import { exists, remove } from "@tauri-apps/plugin-fs";
 import { Store } from "@tauri-apps/plugin-store";
 import type { DirTree } from "@/stores/article";
-import type { CloudFolderConfig, S3Config, SyncPlatform, WebDAVConfig } from "@/types/sync";
+import type { CloudFolderConfig, PrimarySyncPlatform, S3Config, SyncPlatform, WebDAVConfig } from "@/types/sync";
 import { computedParentPath, getCurrentFolder, joinRelativePath } from "@/lib/path";
 import { getFilePathOptions, getWorkspacePath } from "@/lib/workspace";
 import { getSyncRepoName } from "@/lib/sync/repo-utils";
@@ -403,10 +403,18 @@ async function deleteWebDAVRemoteFolder(config: WebDAVConfig, folderPath: string
 
 export async function deleteRemoteFolder(item: DirTree, localDeleted: boolean) {
   const store = await Store.load("store.json");
-  const platform = await store.get<SyncPlatform>("primaryBackupMethod") || "github";
+  const platform = await store.get<PrimarySyncPlatform>("primaryBackupMethod") || "github";
   const folderPath = computedParentPath(item);
   const loadedFileEntries = collectFolderFileEntries(item);
   const loadedFilePaths = loadedFileEntries.map(entry => entry.path).filter(isStringPath);
+
+  if (platform === "noteGenServer") {
+    return {
+      attempted: false,
+      deletedPaths: [],
+      failedPaths: [],
+    } satisfies DeleteRemoteFolderResult;
+  }
 
   if (localDeleted && !hasRemoteFolderData(item)) {
     return {

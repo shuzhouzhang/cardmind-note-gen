@@ -50,7 +50,9 @@ export function HistorySheet({ editor, prepareExternalAction, onMarkdownChange }
     try {
       const store = await Store.load('store.json')
       const provider = await store.get<string>('primaryBackupMethod') || 'github'
-      return provider as SyncProvider
+      return provider === 'github' || provider === 'gitee' || provider === 'gitlab' || provider === 'gitea'
+        ? provider
+        : null
     } catch {
       return null
     }

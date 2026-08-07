@@ -44,6 +44,7 @@ export function FooterBar({
   const activeFilePath = useArticleStore((state) => state.activeFilePath)
   const isMobile = isMobileDevice()
   const showEditorStats = useSettingStore((state) => state.showEditorStats)
+  const primaryBackupMethod = useSettingStore((state) => state.primaryBackupMethod)
   const tSourceMode = useTranslations('settings.editor.sourceMode')
   const fileName = activeFilePath
     ? activeFilePath.split('/').pop() || activeFilePath
@@ -76,15 +77,26 @@ export function FooterBar({
               {viewMode === 'source' ? <Eye /> : <Code2 />}
             </Button>
           ) : null}
-          <HistorySheet editor={editor} prepareExternalAction={prepareExternalAction} onMarkdownChange={onMarkdownChange} />
-          <SyncButton getMarkdown={getMarkdown} prepareExternalAction={prepareExternalAction} />
-          <PullButton
-            editor={editor}
-            markdown={sourceMarkdown}
-            getMarkdown={getMarkdown}
-            prepareExternalAction={prepareExternalAction}
-            onMarkdownChange={onMarkdownChange}
-          />
+          {primaryBackupMethod !== 'noteGenServer' ? (
+            <>
+              <HistorySheet
+                editor={editor}
+                prepareExternalAction={prepareExternalAction}
+                onMarkdownChange={onMarkdownChange}
+              />
+              <SyncButton
+                getMarkdown={getMarkdown}
+                prepareExternalAction={prepareExternalAction}
+              />
+              <PullButton
+                editor={editor}
+                markdown={sourceMarkdown}
+                getMarkdown={getMarkdown}
+                prepareExternalAction={prepareExternalAction}
+                onMarkdownChange={onMarkdownChange}
+              />
+            </>
+          ) : null}
         </div>
       </div>
     )

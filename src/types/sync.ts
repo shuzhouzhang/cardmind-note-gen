@@ -1,4 +1,5 @@
 export type SyncPlatform = 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'
+export type PrimarySyncPlatform = SyncPlatform | 'noteGenServer'
 
 export type SyncPlatformType = {
   platform: SyncPlatform

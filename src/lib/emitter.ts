@@ -12,6 +12,7 @@ interface Events {
   'editor-mode-changed': string;
   'external-content-update': string;
   'editor-content-from-remote': { content: string };
+  'article-saved': { path: string; content: string };
   'toolbar-text-number': number;
   'toolbar-reset-selected-text': unknown;
   'quickRecordText': unknown;

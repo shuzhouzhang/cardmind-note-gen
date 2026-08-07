@@ -22,7 +22,7 @@ import { ensureDirectoryExists, pullRemoteFile } from './auto-sync'
 import { getDataSyncRepoName, getSyncRepoName } from './repo-utils'
 import { getFilePathOptions } from '@/lib/workspace'
 import { decodeBase64ToBytes, getRemoteFileContent } from './remote-file'
-import type { CloudFolderConfig, S3Config, SyncPlatform, WebDAVConfig } from '@/types/sync'
+import type { CloudFolderConfig, PrimarySyncPlatform, S3Config, SyncPlatform, WebDAVConfig } from '@/types/sync'
 import { recordSyncTiming } from './sync-timing'
 
 const MARKDOWN_FILE_PATTERN = /\.md$/i
@@ -113,7 +113,11 @@ export type UploadAllResult = {
 }
 
 async function getPlatform(store: Store): Promise<SyncPlatform> {
-  return await store.get<SyncPlatform>('primaryBackupMethod') || 'github'
+  const platform = await store.get<PrimarySyncPlatform>('primaryBackupMethod') || 'github'
+  if (platform === 'noteGenServer') {
+    throw new Error('NoteGen Server 由后台工作区同步管理，不能调用旧版远程仓库接口')
+  }
+  return platform
 }
 
 async function getFileTransferConcurrency(): Promise<number> {

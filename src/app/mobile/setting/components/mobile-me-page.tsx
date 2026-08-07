@@ -88,6 +88,7 @@ export function MobileMePage({
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [loading, setLoading] = useState(() => !mobileActivityCache)
   const [cloudFolderProvider, setCloudFolderProvider] = useState<CloudFolderConfig['provider']>()
+  const [noteGenServerConnected, setNoteGenServerConnected] = useState(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const restoredScrollRef = useRef(false)
   const refreshOnMountRef = useRef(refreshOnMount)
@@ -157,6 +158,12 @@ export function MobileMePage({
 
       try {
         switch (primaryBackupMethod) {
+          case 'noteGenServer': {
+            const { loadServerProfile } = await import('@/lib/sync/note-gen-server')
+            const profile = await loadServerProfile()
+            if (!cancelled) setNoteGenServerConnected(Boolean(profile?.enabled && profile.workspaceId))
+            return
+          }
           case 'github': {
             const accessToken = await store.get<string>('accessToken')
             if (!accessToken) return
@@ -399,12 +406,12 @@ export function MobileMePage({
     fallbackName: tMe('profile.deviceName'),
     fallbackSubtitle: tMe('profile.deviceSubtitle'),
     streak: currentStreak,
-    streakLabel: tMe('profile.streak'),
+    streakLabel: tMe.raw('profile.streak'),
   }), [primaryBackupMethod, userInfo, giteeUserInfo, gitlabUserInfo, giteaUserInfo, tMe, currentStreak])
 
   const daySummary = useMemo(() => buildActivityDaySummaryText(selectedDay, {
     empty: tMe('activity.drawerEmpty'),
-    summary: tMe('activity.drawerSummary'),
+    summary: tMe.raw('activity.drawerSummary'),
   }), [selectedDay, tMe])
 
   const syncStatus = useMemo(() => getBackupMethodStatus({
@@ -416,6 +423,7 @@ export function MobileMePage({
     s3Connected,
     webdavConnected,
     cloudFolderConnected,
+    noteGenServerConnected,
     configuredLabel: tMe('sync.configured'),
     unavailableLabel: tMe('sync.unconfigured'),
   }), [
@@ -427,13 +435,14 @@ export function MobileMePage({
     s3Connected,
     webdavConnected,
     cloudFolderConnected,
+    noteGenServerConnected,
     tMe,
   ])
 
   const profileProviderType = useMemo<'git' | 'storage' | 'unconfigured'>(() => {
     const hasGitIdentity = Boolean(profile.avatarUrl)
     if (hasGitIdentity) return 'git'
-    if (primaryBackupMethod === 's3' || primaryBackupMethod === 'webdav' || primaryBackupMethod === 'cloudFolder') return 'storage'
+    if (primaryBackupMethod === 's3' || primaryBackupMethod === 'webdav' || primaryBackupMethod === 'cloudFolder' || primaryBackupMethod === 'noteGenServer') return 'storage'
     if (syncStatus === tMe('sync.unconfigured')) return 'unconfigured'
     return 'git'
   }, [profile.avatarUrl, primaryBackupMethod, syncStatus, tMe])

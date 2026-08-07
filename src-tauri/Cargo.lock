@@ -4138,6 +4138,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
+ "tauri-plugin-barcode-scanner",
  "tauri-plugin-clipboard",
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-deep-link",
@@ -7102,6 +7103,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9641831518c56775a364a8750e0eed8852adee87e0f11006d043b9ebba0bf5"
 dependencies = [
  "auto-launch",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "tauri-plugin-barcode-scanner"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3f79bba83da3c115ac248a658c5613db1325a7c7ba889e344287e373828a08b"
+dependencies = [
+ "log",
  "serde",
  "serde_json",
  "tauri",

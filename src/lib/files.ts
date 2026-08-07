@@ -61,7 +61,7 @@ export async function collectMarkdownFiles(folderPath: string): Promise<Array<{p
         if (entry.isDirectory) {
           // 递归处理子目录
           await processDirectory(entryPath);
-        } else if (entry.name.endsWith('.md')) {
+        } else if (/\.(?:md|markdown)$/i.test(entry.name)) {
           // 添加 Markdown 文件
           files.push({
             path: entryPath,
@@ -81,8 +81,12 @@ export async function collectMarkdownFiles(folderPath: string): Promise<Array<{p
 /**
  * 获取工作区中所有Markdown文件（平铺所有文件夹）
  * @param includeMetadata 是否包含文件元数据（如修改时间），默认 false
+ * @param strict 读取任一目录失败时是否中止，避免调用方把不完整列表当作完整快照
  */
-export async function getAllMarkdownFiles(includeMetadata: boolean = false): Promise<MarkdownFile[]> {
+export async function getAllMarkdownFiles(
+  includeMetadata: boolean = false,
+  strict: boolean = false,
+): Promise<MarkdownFile[]> {
   const workspace = await getWorkspacePath();
 
 
@@ -111,7 +115,7 @@ export async function getAllMarkdownFiles(includeMetadata: boolean = false): Pro
           // 递归处理子目录
           const childPath = await join(dirPath, entry.name);
           await processDirectory(childPath, useCustomPath, currentRelativePath, depth + 1);
-        } else if (entry.name.endsWith('.md')) {
+        } else if (/\.(?:md|markdown)$/i.test(entry.name)) {
           // 添加Markdown文件
           const fullPath = useCustomPath
             ? await join(dirPath, entry.name)
@@ -158,6 +162,7 @@ export async function getAllMarkdownFiles(includeMetadata: boolean = false): Pro
         error: String(error),
         errorMessage: error instanceof Error ? error.message : String(error),
       });
+      if (strict) throw error
     }
   }
 

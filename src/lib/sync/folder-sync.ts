@@ -42,6 +42,16 @@ export class FolderSync {
     // 每次同步前重新读取平台配置
     await this.init()
 
+    if (this.platform === 'noteGenServer') {
+      return {
+        success: false,
+        totalFiles: 0,
+        successCount: 0,
+        failedCount: 0,
+        message: 'NoteGen Server 由工作区后台同步统一处理',
+      }
+    }
+
     try {
       // 1. 获取本地文件夹下所有 Markdown 文件
       const markdownFiles = await collectMarkdownFiles(localFolderPath)

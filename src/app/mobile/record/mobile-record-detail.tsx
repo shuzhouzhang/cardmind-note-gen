@@ -50,6 +50,13 @@ import { toast } from '@/hooks/use-toast'
 import { cn, isHttpUrl } from '@/lib/utils'
 import useMarkStore from '@/stores/mark'
 import useTagStore from '@/stores/tag'
+import {
+  getNoteGenServerBackgroundConnection,
+} from '@/lib/sync/note-gen-server-background'
+import {
+  getNoteGenServerStructuredSession,
+  type NoteGenServerTextSession,
+} from '@/lib/sync/note-gen-server-collab'
 
 interface MobileRecordDetailProps {
   markId: number
@@ -130,6 +137,42 @@ export function MobileRecordDetail({ markId }: MobileRecordDetailProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const autoSaveTimerRef = useRef<number | null>(null)
   const swipeBackRef = useRef<SwipeBackHandle>(null)
+  const collaborationSessionRef = useRef<NoteGenServerTextSession | null>(null)
+
+  useEffect(() => {
+    let disposed = false
+    const previous = collaborationSessionRef.current
+    collaborationSessionRef.current = null
+    previous?.destroy()
+    const connection = getNoteGenServerBackgroundConnection()
+    if (!mark || !connection?.profile.workspaceId) return
+    void getNoteGenServerStructuredSession({
+      workspaceId: connection.profile.workspaceId,
+      documentId: `record:${mark.id}`,
+      initialFields: mark as unknown as Record<string, unknown>,
+    }).then(session => {
+      if (disposed || !session) return
+      collaborationSessionRef.current = session
+      session.subscribeFields(fields => {
+        if (disposed || fields.id === undefined) return
+        const nextMark = fields as unknown as Mark
+        if (JSON.stringify(nextMark) === JSON.stringify(useMarkStore.getState().marks.find(item => item.id === markId))) return
+        setMark(nextMark)
+        setDraft(createDraft(nextMark))
+        const state = useMarkStore.getState()
+        state.setMarks(state.marks.map(item => item.id === nextMark.id ? nextMark : item))
+      })
+    })
+    return () => {
+      disposed = true
+      collaborationSessionRef.current?.destroy()
+      collaborationSessionRef.current = null
+    }
+  }, [mark?.id, markId])
+
+  useEffect(() => {
+    if (mark) collaborationSessionRef.current?.setFields(mark as unknown as Record<string, unknown>)
+  }, [mark])
 
   useEffect(() => {
     let cancelled = false

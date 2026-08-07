@@ -24,7 +24,8 @@ async function loadDatabase(): Promise<Database> {
       desc text default null,
       deleted integer default 0,
       createdAt integer,
-      sourceId text default null
+      sourceId text default null,
+      syncId text default null
     )
   `)
   try {
@@ -34,6 +35,14 @@ async function loadDatabase(): Promise<Database> {
   }
   await nextDatabase.execute(
     'create unique index if not exists idx_marks_source_id on marks(sourceId) where sourceId is not null'
+  )
+  try {
+    await nextDatabase.select('select syncId from marks limit 1')
+  } catch {
+    await nextDatabase.execute('alter table marks add column syncId text default null')
+  }
+  await nextDatabase.execute(
+    'create unique index if not exists idx_marks_sync_id on marks(syncId) where syncId is not null'
   )
 
   return nextDatabase
@@ -98,6 +107,7 @@ async function initializeAllDatabases() {
   const { initConversationSyncStateDb } = await import('./conversation-sync-state');
   const { initImageAnalysisCacheDb } = await import('./image-analysis-cache');
   const { initKnowledgeDb } = await import('./knowledge');
+  const { initNoteGenServerSyncDb } = await import('./note-gen-server-sync');
 
   // 执行初始化：先确保基础表存在，再做 conversations 对 chats 的迁移/补列。
   await initChatsDb();
@@ -113,6 +123,7 @@ async function initializeAllDatabases() {
   await initActivityDb();
   await initCanvasesDb();
   await initKnowledgeDb();
+  await initNoteGenServerSyncDb();
   const { bootstrapStructuredKnowledgeRegistry } = await import('@/lib/knowledge-index');
   await bootstrapStructuredKnowledgeRegistry();
 

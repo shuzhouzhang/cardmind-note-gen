@@ -6,10 +6,10 @@ import { useTranslations } from 'next-intl'
 
 import { Button } from '@/components/ui/button'
 import useSettingStore from '@/stores/setting'
-import type { SyncPlatform } from '@/types/sync'
+import type { PrimarySyncPlatform } from '@/types/sync'
 
 interface UsePlatformButtonProps {
-  platform: SyncPlatform
+  platform: PrimarySyncPlatform
   disabled?: boolean
   size?: 'default' | 'sm'
 }

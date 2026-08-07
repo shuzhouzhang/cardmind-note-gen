@@ -113,6 +113,11 @@ export function AppFootbar() {
 
     setQuickActionOpen(false)
     router.push(item.url)
+    try {
+      window.localStorage.setItem('noteGenMobileCurrentPage', item.url)
+    } catch {
+      // WebView 禁用本地存储时仍允许正常导航。
+    }
     const store = await Store.load('store.json')
     await store.set('currentPage', item.url)
   }
