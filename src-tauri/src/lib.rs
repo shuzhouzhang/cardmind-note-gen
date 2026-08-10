@@ -27,6 +27,7 @@ mod skill_runtime;
 mod skills;
 mod storefront;
 mod system_trash;
+mod sync_atomic;
 
 use ai::{
     ai_binary_request, ai_chat_completion_stream, ai_json_request, ai_multipart_request,
@@ -78,6 +79,7 @@ pub fn run() {
         .manage(McpServerManager::new())
         .manage(RuntimeInstallManager::new())
         .manage(AiRequestManager::new())
+        .manage(sync_atomic::SyncAtomicDatabase::default())
         .manage(RemoteSkillManager::default());
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -185,6 +187,7 @@ pub fn run() {
             printing::print_webview,
             mobile_system_bars::set_mobile_system_bars,
             system_trash::move_paths_to_trash,
+            sync_atomic::apply_sync_atomic_batch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

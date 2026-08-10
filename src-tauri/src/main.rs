@@ -27,6 +27,7 @@ mod skill_runtime;
 mod skills;
 mod storefront;
 mod system_trash;
+mod sync_atomic;
 mod tray;
 mod web_clipper;
 mod window;
@@ -91,6 +92,7 @@ fn main() {
         .manage(McpServerManager::new())
         .manage(RuntimeInstallManager::new())
         .manage(AiRequestManager::new())
+        .manage(sync_atomic::SyncAtomicDatabase::default())
         .manage(SkillProcessManager::default())
         .manage(RemoteSkillManager::default())
         .manage(WebClipperState::new())
@@ -164,6 +166,7 @@ fn main() {
             printing::print_webview,
             file_open::drain_pending_open_files,
             system_trash::move_paths_to_trash,
+            sync_atomic::apply_sync_atomic_batch,
             approve_web_clipper_pairing,
             reject_web_clipper_pairing,
             get_web_clipper_status,

@@ -35,13 +35,22 @@ export class FolderSync {
    */
   private async init() {
     const store = await Store.load('store.json')
-    this.platform = await store.get<string>('primaryBackupMethod') || 'github'
+    this.platform = await store.get<string>('primaryBackupMethod') || 'local'
   }
 
   async syncFolder(localFolderPath: string): Promise<FolderSyncResult> {
     // 每次同步前重新读取平台配置
     await this.init()
 
+    if (this.platform === 'local') {
+      return {
+        success: false,
+        totalFiles: 0,
+        successCount: 0,
+        failedCount: 0,
+        message: '当前使用本地存储，不执行远程文件夹同步',
+      }
+    }
     if (this.platform === 'noteGenServer') {
       return {
         success: false,

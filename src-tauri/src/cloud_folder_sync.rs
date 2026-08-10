@@ -42,14 +42,14 @@ fn resolve_icloud_sync_folder() -> Result<String, String> {
 
     // Apple recommends resolving an ubiquity container away from the main thread.
     // The command below runs this function through Tauri's blocking task pool.
-    let manager = unsafe { NSFileManager::defaultManager() };
-    if unsafe { manager.ubiquityIdentityToken() }.is_none() {
+    let manager = NSFileManager::defaultManager();
+    if manager.ubiquityIdentityToken().is_none() {
         return Err("iCloud Drive is unavailable. Sign in to iCloud and enable iCloud Drive.".into());
     }
 
-    let container = unsafe { manager.URLForUbiquityContainerIdentifier(None) }
+    let container = manager.URLForUbiquityContainerIdentifier(None)
         .ok_or_else(|| "NoteGen could not access its iCloud container.".to_string())?;
-    let container_path = unsafe { container.path() }
+    let container_path = container.path()
         .ok_or_else(|| "NoteGen could not resolve its iCloud container path.".to_string())?
         .to_string();
     let documents = PathBuf::from(container_path).join("Documents");

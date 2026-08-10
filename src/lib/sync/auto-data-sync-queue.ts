@@ -185,8 +185,12 @@ const listeners = new Set<AutoDataSyncListener>()
 
 async function getAutoDataSyncStateKey(baseKey: string) {
   const store = await Store.load('store.json')
-  if (await store.get<string>('primaryBackupMethod') === 'noteGenServer') {
+  const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local'
+  if (primaryBackupMethod === 'noteGenServer') {
     return `${baseKey}:${JSON.stringify(['noteGenServer', ''])}`
+  }
+  if (primaryBackupMethod === 'local') {
+    return `${baseKey}:${JSON.stringify(['local', ''])}`
   }
   const provider = await getAutoDataSyncProvider(store)
   const repo = provider === 'cloudFolder'
@@ -485,15 +489,40 @@ export function enqueueAutoDataSync(domain: AutoDataSyncDomain, reason = 'change
     return
   }
   if (isNoteGenServerPrimaryEnabled()) {
-    void import('./note-gen-server-domains')
-      .then(module => module.queueNoteGenServerDomainChange(domain))
-      .then(queued => queued
-        ? import('./note-gen-server-background').then(module => module.triggerNoteGenServerBackgroundSync())
-        : undefined)
-      .catch(error => console.error('Failed to queue NoteGen Server app data:', error))
+    enqueueNoteGenServerDataSync(domain)
     return
   }
 
+  // The background runtime initializes asynchronously. A business-data write
+  // can happen before its in-memory `primaryEnabled` flag has caught up with
+  // the persisted provider selection (most visibly when deleting a record or
+  // canvas just after startup). Resolve that startup window from the store so
+  // the mutation is not accidentally sent to the legacy provider queue.
+  void Store.load('store.json').then(async store => {
+    if (await store.get<string>('primaryBackupMethod') === 'noteGenServer') {
+      enqueueNoteGenServerDataSync(domain)
+      return
+    }
+    enqueueProviderDataSync(domain, reason, mode)
+  }).catch(error => {
+    console.error('Failed to resolve automatic data sync provider:', error)
+  })
+}
+
+function enqueueNoteGenServerDataSync(domain: AutoDataSyncDomain): void {
+  void import('./note-gen-server-domains')
+    .then(module => module.queueNoteGenServerDomainChange(domain))
+    .then(queued => queued
+      ? import('./note-gen-server-background').then(module => module.triggerNoteGenServerBackgroundSync())
+      : undefined)
+    .catch(error => console.error('Failed to queue NoteGen Server app data:', error))
+}
+
+function enqueueProviderDataSync(
+  domain: AutoDataSyncDomain,
+  reason: string,
+  mode: 'auto' | 'manual',
+): void {
   delete failedTasks[domain]
   delete failedTaskErrors[domain]
   const lastTask = queue[queue.length - 1]
@@ -612,6 +641,8 @@ export function finishAutoDataSyncRepositoryChange() {
   })
   void (async () => {
     if (!await isAutoDataSyncProviderConfigured()) return
+    const store = await Store.load('store.json')
+    if ((await store.get<string>('primaryBackupMethod') || 'local') === 'local') return
 
     // A repository has its own independent baseline. Existing local data may
     // be clean relative to the previous repository but still be absent from
@@ -632,6 +663,9 @@ function trackAutoDataSyncDirtyWrite(domain: AutoDataSyncDomain) {
 
 export async function uploadAutoDataSyncNow(options: AutoDataSyncUploadOptions = {}): Promise<void> {
   debugAutoDataSync('manual upload requested')
+
+  const selectedProvider = await Store.load('store.json')
+  if ((await selectedProvider.get<string>('primaryBackupMethod') || 'local') === 'local') return
 
   if (!await isAutoDataSyncProviderConfigured()) {
     updateState({
@@ -719,6 +753,8 @@ export async function downloadAutoDataSyncNow(
   options: AutoDataSyncDownloadOptions = {}
 ): Promise<boolean> {
   const downloadStartedAt = Date.now()
+  const selectedProvider = await Store.load('store.json')
+  if ((await selectedProvider.get<string>('primaryBackupMethod') || 'local') === 'local') return true
   if (!await isAutoDataSyncProviderConfigured()) {
     debugAutoDataSync('download blocked because provider is not configured')
     updateState({
@@ -894,6 +930,8 @@ export async function downloadAutoDataSyncNow(
 
 export async function refreshRemoteRecordsNow(): Promise<boolean> {
   try {
+    const selectedProvider = await Store.load('store.json')
+    if ((await selectedProvider.get<string>('primaryBackupMethod') || 'local') === 'local') return true
     if (!await isAutoDataSyncProviderConfigured()) {
       updateState({
         isSyncing: false,
@@ -1119,6 +1157,15 @@ export async function initAutoDataSyncRuntime(): Promise<void> {
       return
     }
 
+    if ((await store.get<string>('primaryBackupMethod') || 'local') === 'local') {
+      debugAutoDataSync('runtime initialized with local storage selected')
+      updateState({
+        isSyncing: false, phase: 'idle', currentDomain: null, syncMode: null,
+        status: 'idle', lastError: null,
+      })
+      return
+    }
+
     if (!await isAutoDataSyncProviderConfigured()) {
       debugAutoDataSync('runtime waiting for provider configuration')
       updateState({
@@ -1205,7 +1252,9 @@ async function getEnabledAutoDataSyncDomains() {
 
 export async function isAutoDataSyncProviderConfigured(): Promise<boolean> {
   const store = await Store.load('store.json')
-  const provider = await store.get<string>('primaryBackupMethod') || 'github'
+  const provider = await store.get<string>('primaryBackupMethod') || 'local'
+
+  if (provider === 'local') return false
 
   switch (provider) {
     case 'github':
@@ -1365,6 +1414,16 @@ async function processQueue() {
       currentDomain: null,
       status: 'idle',
       lastError: null,
+    })
+    return
+  }
+
+  const selectedProvider = await Store.load('store.json')
+  if ((await selectedProvider.get<string>('primaryBackupMethod') || 'local') === 'local') {
+    queue = []
+    updateState({
+      isSyncing: false, phase: 'idle', currentDomain: null, syncMode: null,
+      status: 'idle', lastError: null,
     })
     return
   }
@@ -2887,7 +2946,7 @@ function isAutoDataSyncDomain(value: unknown): value is AutoDataSyncDomain {
 }
 
 async function getAutoDataSyncProvider(store: Store): Promise<AutoDataSyncProvider> {
-  const provider = await store.get<string>('primaryBackupMethod') || 'github'
+  const provider = await store.get<string>('primaryBackupMethod') || 'local'
 
   if (
     provider === 'github' ||
@@ -2901,7 +2960,7 @@ async function getAutoDataSyncProvider(store: Store): Promise<AutoDataSyncProvid
     return provider
   }
 
-  return 'github'
+  throw new Error(`Remote data sync is unavailable for primary method: ${provider}`)
 }
 
 async function getStoredNumber(store: Store, key: string) {
@@ -3234,7 +3293,7 @@ function isRemoteFileEntry(value: unknown): value is RemoteFileEntry {
 
 async function ensureAutoDataSyncRemoteDataPath() {
   const store = await Store.load('store.json')
-  const provider = await store.get<string>('primaryBackupMethod') || 'github'
+  const provider = await store.get<string>('primaryBackupMethod') || 'local'
 
   if (provider !== 'github') {
     debugAutoDataSync('skip remote .data path conflict check for provider', { provider })

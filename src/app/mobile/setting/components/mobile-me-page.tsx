@@ -8,6 +8,7 @@ import { Store } from '@tauri-apps/plugin-store'
 import { platform } from '@tauri-apps/plugin-os'
 
 import { ActivityHeatmap } from '@/components/activity/activity-heatmap'
+import AppStatus from '@/components/app-status'
 import { Button } from '@/components/ui/button'
 import { loadActivityCalendarData } from '@/lib/activity'
 import type { ActivityCalendarData, ActivityDaySummary } from '@/lib/activity/types'
@@ -502,6 +503,16 @@ export function MobileMePage({
             providerType={profileProviderType}
           />
         </motion.div>
+
+        {primaryBackupMethod === 'noteGenServer' ? (
+          <motion.div
+            variants={embeddedItemVariants}
+            className="mobile-dock-surface flex items-center justify-between rounded-[1.35rem] px-4 py-3"
+          >
+            <span className="text-sm font-medium">{tMe('profile.syncPlatform')}</span>
+            <AppStatus />
+          </motion.div>
+        ) : null}
 
         <motion.section variants={embeddedItemVariants} className="mobile-dock-surface rounded-[1.35rem] p-4">
           <div className="mb-3 flex items-center justify-between gap-3">

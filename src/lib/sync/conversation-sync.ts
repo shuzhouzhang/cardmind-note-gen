@@ -116,7 +116,7 @@ interface ConversationRemoteStorage {
 }
 
 async function getConversationSyncVersionsKey(store: Store) {
-  const provider = await store.get<string>('primaryBackupMethod') || 'github'
+  const provider = await store.get<string>('primaryBackupMethod') || 'local'
   let target: unknown
   if (provider === 's3') {
     const config = await store.get<S3Config>('s3SyncConfig')
@@ -158,7 +158,7 @@ function decodeRemoteContent(value: unknown, path: string) {
 }
 
 async function createConversationRemoteStorage(store: Store): Promise<ConversationRemoteStorage | null> {
-  const provider = await store.get<string>('primaryBackupMethod') || 'github'
+  const provider = await store.get<string>('primaryBackupMethod') || 'local'
 
   if (provider === 'github') {
     const repo = await getDataSyncRepoName('github')

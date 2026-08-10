@@ -41,7 +41,7 @@ interface TagState {
 
 const useTagStore = create<TagState>((set, get) => ({
   // 当前选择的 tag
-  currentTagId: 1,
+  currentTagId: 0,
   setCurrentTagId: async(currentTagId: number) => {
     set({ currentTagId })
     const store = await Store.load('store.json');
@@ -50,7 +50,7 @@ const useTagStore = create<TagState>((set, get) => ({
   initTags: async () => {
     const store = await Store.load('store.json');
     const currentTagId = await store.get<number>('currentTagId')
-    if (currentTagId) set({ currentTagId })
+    if (currentTagId !== undefined) set({ currentTagId })
     get().getCurrentTag()
   },
 
@@ -67,12 +67,15 @@ const useTagStore = create<TagState>((set, get) => ({
   fetchTags: async () => {
     const tags = await getTags()
     set({ tags })
+    if (!tags.some(tag => tag.id === get().currentTagId)) {
+      await get().setCurrentTagId(tags[0]?.id ?? 0)
+    }
   },
 
   deleteTag: async (id: number) => {
     await delTag(id)
     await get().fetchTags()
-    await get().setCurrentTagId(get().tags[0].id)
+    get().getCurrentTag()
   },
 
   // 同步
@@ -90,7 +93,7 @@ const useTagStore = create<TagState>((set, get) => ({
     const filename = 'tags.json'
     const tags = await getTags()
     const store = await Store.load('store.json');
-    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github';
+    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local';
     let result = false
     let res;
     let files: any;
@@ -203,7 +206,7 @@ const useTagStore = create<TagState>((set, get) => ({
     const path = '.data'
     const filename = 'tags.json'
     const store = await Store.load('store.json');
-    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github';
+    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local';
     let result: Tag[] = []
     let hasRemoteData = false
     let files;

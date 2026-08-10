@@ -15,6 +15,13 @@ function getCachedMobilePage() {
   }
 }
 
+function isMobileWebViewUserAgent() {
+  if (typeof navigator === 'undefined') return false
+  const userAgent = navigator.userAgent.toLowerCase()
+  return /android|iphone|ipad|ipod/.test(userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+}
+
 export default function Home() {
   const router = useRouter()
 
@@ -39,7 +46,7 @@ export default function Home() {
   useEffect(() => {
     // iOS/Android 的 store.json 可能包含较大的同步缓存。首屏路由不能为了读取
     // currentPage 等待整个 Store 反序列化，否则 WebView 会长时间保持纯白。
-    if (isMobileDevice()) {
+    if (isMobileDevice() || isMobileWebViewUserAgent()) {
       router.replace(getCachedMobilePage())
       return
     }
@@ -50,9 +57,6 @@ export default function Home() {
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background text-foreground">
       <div className="flex flex-col items-center gap-3" role="status" aria-live="polite">
-        <div className="flex size-12 items-center justify-center rounded-xl bg-foreground text-lg font-semibold text-background">
-          N
-        </div>
         <div className="text-base font-semibold">NoteGen</div>
         <div className="text-sm text-muted-foreground">正在启动…</div>
       </div>

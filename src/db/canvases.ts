@@ -269,6 +269,10 @@ export async function upsertCanvasProjectFromSync(project: CanvasProject) {
        title = excluded.title,
        canvasType = excluded.canvasType,
        schemaVersion = excluded.schemaVersion,
+       thumbnailPath = case
+         when canvases.content != excluded.content then null
+         else canvases.thumbnailPath
+       end,
        content = excluded.content,
        createdAt = excluded.createdAt,
        updatedAt = excluded.updatedAt,

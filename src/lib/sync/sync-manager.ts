@@ -198,7 +198,7 @@ export class SyncManager {
    */
   async getCurrentPlatform(): Promise<string> {
     const store = await Store.load('store.json')
-    return await store.get<string>('primaryBackupMethod') || 'github'
+    return await store.get<string>('primaryBackupMethod') || 'local'
   }
 
   /**
@@ -929,7 +929,7 @@ function hasConfiguredText(value: string | null | undefined): boolean {
 export async function isSyncConfigured(): Promise<boolean> {
   try {
     const store = await Store.load('store.json')
-    const platform = await store.get<string>('primaryBackupMethod') || 'github'
+    const platform = await store.get<string>('primaryBackupMethod') || 'local'
 
     // 检查对应平台的访问令牌（确保不是空字符串）
     switch (platform) {

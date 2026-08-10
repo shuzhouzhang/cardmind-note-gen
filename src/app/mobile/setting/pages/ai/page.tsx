@@ -1,7 +1,7 @@
 'use client';
 
-import SettingAI from "@/app/core/setting/ai/page";
+import { AiSettings } from "@/app/core/setting/ai/ai-settings";
 
 export default function AIPage() {
-  return <SettingAI mobile />
+  return <AiSettings mobile />
 }

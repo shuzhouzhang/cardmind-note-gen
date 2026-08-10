@@ -8,7 +8,6 @@ import { Search, Settings, Minus, Square, X, PanelLeft, PanelRight, SquarePen, C
 import { useTranslations } from 'next-intl'
 import { useSidebarStore } from '@/stores/sidebar'
 import { PinToggle } from './pin-toggle'
-import AppStatus from './app-status'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import useSettingStore from '@/stores/setting'
@@ -359,7 +358,6 @@ export function TitleBar({ onSearchClick, onActivityClick, activityOpen = false 
             </TooltipContent>
           </Tooltip>
           
-          <AppStatus />
         </div>
 
         {/* Windows 控制按钮 */}

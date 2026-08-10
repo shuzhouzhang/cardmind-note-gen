@@ -113,9 +113,12 @@ export type UploadAllResult = {
 }
 
 async function getPlatform(store: Store): Promise<SyncPlatform> {
-  const platform = await store.get<PrimarySyncPlatform>('primaryBackupMethod') || 'github'
+  const platform = await store.get<PrimarySyncPlatform>('primaryBackupMethod') || 'local'
+  if (platform === 'local') {
+    throw new Error('当前使用本地存储，不能调用远程同步接口')
+  }
   if (platform === 'noteGenServer') {
-    throw new Error('NoteGen Server 由后台工作区同步管理，不能调用旧版远程仓库接口')
+    throw new Error('自托管由后台工作区同步管理，不能调用旧版远程仓库接口')
   }
   return platform
 }

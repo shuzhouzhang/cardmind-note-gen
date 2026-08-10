@@ -1,5 +1,8 @@
 import { CircleAlert, CloudCheck, CloudDownload, CloudUpload, LoaderCircle } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { getSyncV2ObjectStatus } from '@/db/note-gen-server-sync-index'
+import emitter from '@/lib/emitter'
+import { getNoteGenServerBackgroundV2Context, subscribeNoteGenServerBackgroundStatus } from '@/lib/sync/note-gen-server-background'
 
 import type { FileTreeSyncStatus } from './file-tree-action-policy'
 
@@ -9,13 +12,40 @@ export function FileTreeDecorations({
   syncStatus,
   syncTitle,
   alwaysShowSynced = false,
+  relativePath,
 }: {
   iconSize: string
   knowledge?: ReactNode
   syncStatus: FileTreeSyncStatus
   syncTitle: string
   alwaysShowSynced?: boolean
+  relativePath?: string
 }) {
+  const [v2Status, setV2Status] = useState<'conflict' | 'pending' | 'synced' | null>(null)
+  const isMarkdown = Boolean(relativePath && /\.(?:md|markdown)$/i.test(relativePath))
+  useEffect(() => {
+    if (!relativePath) return
+    let refreshGeneration = 0
+    let disposed = false
+    const refresh = () => {
+      const generation = ++refreshGeneration
+      const context = getNoteGenServerBackgroundV2Context()
+      if (!context) return setV2Status(null)
+      void getSyncV2ObjectStatus(context.syncScopeId, relativePath).then(status => {
+        if (!disposed && generation === refreshGeneration) setV2Status(status)
+      })
+    }
+    refresh()
+    const unsubscribe = subscribeNoteGenServerBackgroundStatus(refresh)
+    emitter.on('note-gen-server-conflict-created', refresh)
+    emitter.on('note-gen-server-conflict-resolved', refresh)
+    return () => {
+      disposed = true
+      unsubscribe()
+      emitter.off('note-gen-server-conflict-created', refresh)
+      emitter.off('note-gen-server-conflict-resolved', refresh)
+    }
+  }, [relativePath])
   const syncDecoration = (() => {
     if (syncStatus === 'loading') {
       return <LoaderCircle className={`${iconSize} animate-spin text-muted-foreground`} />
@@ -44,6 +74,18 @@ export function FileTreeDecorations({
   return (
     <span className="ml-auto flex min-w-5 shrink-0 items-center justify-end gap-1 pr-1">
       {knowledge}
+      {v2Status === 'conflict' && isMarkdown ? (
+        <button type="button" title="在 Markdown 编辑器中处理同步冲突"
+          className="inline-flex shrink-0 items-center justify-center rounded-sm hover:bg-destructive/10"
+          onClick={() => window.setTimeout(() => {
+            emitter.emit('sync-markdown-conflict-open', { path: relativePath })
+          }, 100)}>
+          <CircleAlert className={`${iconSize} text-destructive`} aria-label="需要解决同步冲突" />
+        </button>
+      ) : v2Status === 'conflict' ? (
+        <CircleAlert className={`${iconSize} text-destructive`} aria-label="需要解决同步冲突" />
+      ) : null}
+      {v2Status === 'pending' ? <CloudUpload className={`${iconSize} text-muted-foreground`} aria-label="待同步" /> : null}
       {syncDecoration ? (
         <span
           className="inline-flex shrink-0 items-center justify-center"

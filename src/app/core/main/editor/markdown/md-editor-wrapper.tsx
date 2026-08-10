@@ -16,6 +16,7 @@ import { Store } from '@tauri-apps/plugin-store'
 import { useShallow } from 'zustand/react/shallow'
 import useSettingStore from '@/stores/setting'
 import { prepareActiveEditorDeactivationDurably } from '@/lib/editor-deactivation'
+import { MarkdownConflictEditor } from './sync/markdown-conflict-editor'
 
 interface MdEditorProps {
   tabContentsRef: RefObject<Record<string, string>>
@@ -379,6 +380,7 @@ export function MdEditor({ tabContentsRef, filePath, isActive }: MdEditorProps) 
         onToggleOutline={handleToggleOutline}
         applyLayoutPreferences
         isActive={isActive}
+        topContent={<MarkdownConflictEditor filePath={filePath} editor={editorInstance} />}
         editable={!isPulling && !aiStreaming}
         autoScroll={aiStreaming}
         showOverlay={aiStreaming}

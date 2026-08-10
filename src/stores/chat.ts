@@ -367,13 +367,14 @@ const useChatStore = create<ChatState>((set, get) => ({
       await get().initConversations()
     }
 
-    const res = await insertChat({ ...chat, conversationId })
+    const chatWithSyncIdentity = { ...chat, conversationId, syncId: chat.syncId || crypto.randomUUID() }
+    const res = await insertChat(chatWithSyncIdentity)
     let data: Chat
     if (res.lastInsertId) {
       data =  {
         id: res.lastInsertId,
         createdAt: Date.now(),
-        ...chat,
+        ...chatWithSyncIdentity,
         conversationId
       }
       const chats = get().chats
@@ -436,8 +437,10 @@ const useChatStore = create<ChatState>((set, get) => ({
   },
   deleteChat: async (id) => {
     const chats = get().chats
+    const removedChat = chats.find(item => item.id === id)
     const newChats = chats.filter(item => item.id !== id)
     set({ chats: newChats })
+    if (removedChat?.syncId) conversationCollaborationSession?.deleteMessages([removedChat.syncId])
     publishConversationMessages(newChats)
 
     if (get().isTemporaryConversation) {
@@ -473,7 +476,9 @@ const useChatStore = create<ChatState>((set, get) => ({
   // 兼容旧代码：clearChats 现在会清空当前会话的聊天记录
   clearChats: async (tagId) => {
     const isTemporaryConversation = get().isTemporaryConversation
+    const deletedSyncIds = get().chats.flatMap(chat => chat.syncId ? [chat.syncId] : [])
     set({ chats: [] })
+    conversationCollaborationSession?.deleteMessages(deletedSyncIds)
     publishConversationMessages([])
     // 清空聊天记录时同步清理 Agent 状态
     get().resetAgentState()

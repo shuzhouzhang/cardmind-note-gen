@@ -8,14 +8,12 @@ import { AlertCircle, Check, Copy, ExternalLink, Globe, KeyRound, Loader2, LogOu
 import { useTranslations } from 'next-intl'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { SyncConflictDialog } from '@/components/sync-conflict-dialog'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/components/ui/item'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import useSettingStore from '@/stores/setting'
 import {
   authenticateServer,
   cancelServerDeviceAuthorization,
@@ -48,6 +46,7 @@ import {
   getNoteGenServerBackgroundConnection,
   getNoteGenServerLocalWorkspaceKey,
   initNoteGenServerBackgroundRuntime,
+  retryNoteGenServerBackgroundSync,
   subscribeNoteGenServerBackgroundStatus,
   subscribeNoteGenServerSession,
   syncNoteGenServerNow,
@@ -56,7 +55,7 @@ import {
   type NoteGenServerBackgroundStatus,
 } from '@/lib/sync/note-gen-server-background'
 
-type BusyAction = 'authenticate' | 'browser-authorize' | 'scan-pairing' | 'restore' | 'unlock' | 'enable-e2ee' | 'enable-managed' | null
+type BusyAction = 'authenticate' | 'browser-authorize' | 'scan-pairing' | 'restore' | 'unlock' | 'enable-e2ee' | 'enable-managed' | 'retry-sync' | null
 type ConnectionMethod = 'browser' | 'password'
 type WorkspaceUnlockMethod = 'passphrase' | 'recovery'
 type RestoreStage = 'local' | 'server' | 'workspace'
@@ -78,8 +77,6 @@ interface NoteGenServerSyncProps {
 export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSyncProps = {}) {
   const t = useTranslations('settings.sync.noteGenServer')
   const syncT = useTranslations('settings.sync')
-  const workspacePath = useSettingStore(state => state.workspacePath)
-  const primaryBackupMethod = useSettingStore(state => state.primaryBackupMethod)
   const authorizationAttempt = useRef(0)
   const [connectionMethod, setConnectionMethod] = useState<ConnectionMethod>('browser')
   const [mode, setMode] = useState<'login' | 'register'>('login')
@@ -108,6 +105,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
     phase: 'idle',
     updatedAt: Date.now(),
   })
+  const [conflictsOpen, setConflictsOpen] = useState(false)
 
   useEffect(() => {
     const attempt = ++authorizationAttempt.current
@@ -201,7 +199,6 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
   )
   const authenticated = session !== null && capabilities !== null
   const unlocked = authenticated && workspaceKey !== null && workspaceId.length > 0
-  const isCurrentPlatform = primaryBackupMethod === 'noteGenServer'
   const mobile = isMobileRuntime()
 
   useEffect(() => {
@@ -282,7 +279,6 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
         workspaceKeys: provisioned.unlocked.keys,
         keyVersion: provisioned.unlocked.keyVersion,
       })
-      await syncNoteGenServerNow()
     }
     setBaseUrl(normalizedBaseUrl)
     setLogin(accountLogin)
@@ -552,6 +548,19 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
     }
   }
 
+  async function handleRetrySync() {
+    if (busy !== null) return
+    setBusy('retry-sync')
+    setError('')
+    try {
+      await retryNoteGenServerBackgroundSync()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
   function resetConnectionResults() {
     setRecoveryKey('')
     setRecoveryCopied(false)
@@ -598,52 +607,6 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
         <CardDescription>{t('description')}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
-        <ItemGroup>
-          <Item variant="muted">
-            <ItemContent>
-              <ItemTitle>{t('status')}</ItemTitle>
-              {backgroundStatus.result ? (
-                <>
-                  <ItemDescription>
-                    {t('syncSummary', {
-                      pushed: backgroundStatus.result.pushed,
-                      pulled: backgroundStatus.result.pulled,
-                      conflicts: backgroundStatus.result.conflicts.length,
-                    })}
-                  </ItemDescription>
-                  {backgroundStatus.result.pendingOutbox > 0 || backgroundStatus.result.storedInbox > 0 ? (
-                    <ItemDescription>
-                      {t('queueSummary', {
-                        pending: backgroundStatus.result.pendingOutbox,
-                        stored: backgroundStatus.result.storedInbox,
-                      })}
-                    </ItemDescription>
-                  ) : null}
-                </>
-              ) : null}
-            </ItemContent>
-            <ItemActions>
-              <Badge variant={backgroundStatus.phase === 'error' ? 'destructive' : backgroundStatus.phase === 'offline' || backgroundStatus.phase === 'workspace-mismatch' ? 'outline' : unlocked && isCurrentPlatform ? 'default' : 'outline'}>
-                {backgroundStatus.phase === 'syncing'
-                  ? t('syncing')
-                  : backgroundStatus.phase === 'synced'
-                    ? t('synced')
-                    : backgroundStatus.phase === 'offline'
-                      ? t('offline')
-                    : backgroundStatus.phase === 'workspace-mismatch'
-                      ? t('workspaceMismatch')
-                    : backgroundStatus.phase === 'error'
-                      ? t('syncError')
-                      : unlocked
-                        ? isCurrentPlatform ? t('ready') : t('authenticated')
-                        : authenticated
-                          ? t('authenticated')
-                          : t('disconnected')}
-              </Badge>
-            </ItemActions>
-          </Item>
-        </ItemGroup>
-
         {backgroundStatus.phase === 'syncing' ? (
           <Alert>
             <Loader2 className="animate-spin" />
@@ -659,12 +622,6 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
             </AlertDescription>
           </Alert>
         ) : null}
-
-        <Alert>
-          <RefreshCw />
-          <AlertTitle>{t('previewTitle')}</AlertTitle>
-          <AlertDescription>{t('previewDescription')}</AlertDescription>
-        </Alert>
 
         {busy === 'restore' ? (
           <Alert>
@@ -792,16 +749,6 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
           </FieldGroup>
         ) : (
           <div className="flex flex-col gap-4">
-            <Alert>
-              <RefreshCw />
-              <AlertTitle>{isCurrentPlatform ? t('automaticSyncTitle') : t('connectedNotActiveTitle')}</AlertTitle>
-              <AlertDescription>
-                {isCurrentPlatform
-                  ? t('automaticSyncDescription', { path: workspacePath || t('defaultWorkspacePath') })
-                  : t('connectedNotActiveDescription')}
-              </AlertDescription>
-            </Alert>
-
             {selectedWorkspace?.encryptionMode === 'e2ee' && !unlocked ? (
               <details open className="rounded-lg border p-4">
                 <summary className="cursor-pointer font-medium">{t('advancedEncryption')}</summary>
@@ -932,20 +879,61 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         ) : null}
-        {backgroundStatus.phase === 'error' && backgroundStatus.error ? (
+        {(backgroundStatus.phase === 'error' || backgroundStatus.phase === 'needs-attention')
+          && backgroundStatus.error ? (
           <Alert variant="destructive">
             <AlertCircle />
             <AlertTitle>{t('syncError')}</AlertTitle>
             <AlertDescription className="flex flex-col items-start gap-3">
               <span>{backgroundStatus.error}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void triggerNoteGenServerBackgroundSync()}
-              >
-                <RefreshCw data-icon="inline-start" />
-                {t('syncNow')}
-              </Button>
+              {backgroundStatus.problems?.length ? (
+                <ul className="flex w-full flex-col gap-2 text-sm">
+                  {backgroundStatus.problems.map(problem => (
+                    <li
+                      key={`${problem.category}:${problem.identity}`}
+                      className="rounded-md border border-destructive/30 bg-destructive/5 p-3"
+                    >
+                      <div className="font-medium">
+                        {problem.category === 'outbox'
+                          ? t('problemCategory.outbox')
+                          : problem.category === 'inbox'
+                            ? t('problemCategory.inbox')
+                            : t('problemCategory.transfer')}
+                      </div>
+                      {problem.lastError ? (
+                        <div className="mt-1 break-words text-xs text-muted-foreground">
+                          {problem.lastError === 'command_id_reused'
+                            ? t('problemReason.commandIdReused')
+                            : problem.lastError}
+                        </div>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {backgroundStatus.result?.unresolvedConflicts ? (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setConflictsOpen(true)}
+                >
+                  {t('resolveConflicts', {
+                    count: backgroundStatus.result.unresolvedConflicts,
+                  })}
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleRetrySync()}
+                  disabled={busy !== null}
+                >
+                  {busy === 'retry-sync'
+                    ? <Loader2 data-icon="inline-start" className="animate-spin" />
+                    : <RefreshCw data-icon="inline-start" />}
+                  {busy === 'retry-sync' ? t('syncingNow') : t('syncNow')}
+                </Button>
+              )}
             </AlertDescription>
           </Alert>
         ) : null}
@@ -1023,12 +1011,13 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
           </>
         ) : null}
         {profile ? (
-          <Button variant="outline" onClick={() => void handleReset()} disabled={busy !== null}>
+          <Button variant="destructive" onClick={() => void handleReset()} disabled={busy !== null}>
             <LogOut data-icon="inline-start" />
             {t('reset')}
           </Button>
         ) : null}
       </CardFooter>
+      <SyncConflictDialog open={conflictsOpen} onOpenChange={setConflictsOpen} />
     </Card>
   )
 }

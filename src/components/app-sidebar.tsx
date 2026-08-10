@@ -82,7 +82,7 @@ export function AppSidebar({ onSearchClick }: AppSidebarProps) {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <AppStatus />
+            <AppStatus compact />
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>

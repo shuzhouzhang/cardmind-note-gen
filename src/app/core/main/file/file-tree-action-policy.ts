@@ -3,7 +3,7 @@ import { Store } from '@tauri-apps/plugin-store'
 import { getOptionalSyncRepoName } from '@/lib/sync/repo-utils'
 import type { DirTree } from '@/stores/article'
 import {
-  SYNC_PLATFORMS,
+  normalizePrimarySyncPlatform,
   type CloudFolderConfig,
   type PrimarySyncPlatform,
   type S3Config,
@@ -73,13 +73,15 @@ export async function getSyncConfiguration(): Promise<{
   reason?: 'missing-credentials' | 'missing-repository' | 'background-managed' | 'unsupported-platform'
 }> {
   const store = await Store.load('store.json')
-  const storedPlatform = await store.get<string>('primaryBackupMethod') ?? 'github'
-  const platform = storedPlatform === 'noteGenServer'
-    ? storedPlatform
-    : SYNC_PLATFORMS.find(candidate => candidate === storedPlatform)
+  const storedPlatform = await store.get<unknown>('primaryBackupMethod')
+  const platform = normalizePrimarySyncPlatform(storedPlatform)
 
-  if (!platform) {
-    return { platform: 'github', configured: false, reason: 'unsupported-platform' }
+  if (storedPlatform !== undefined && storedPlatform !== platform) {
+    return { platform, configured: false, reason: 'unsupported-platform' }
+  }
+
+  if (platform === 'local') {
+    return { platform, configured: true }
   }
 
   if (platform === 'noteGenServer') {

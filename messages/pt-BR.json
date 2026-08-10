@@ -1232,8 +1232,12 @@
         "selfHostedDesc": "Insira o endereço do seu servidor Gitea auto-hospedado (ex: https://gitea.example.com)"
       },
       "giteaAccessTokenDesc": "Crie um token de acesso pessoal em {instanceDisplayName}, requer permissão total de repositório",
+      "localStorage": {
+        "title": "Armazenamento local",
+        "description": "Mantenha notas e dados do app somente neste dispositivo, sem sincronização entre dispositivos."
+      },
       "noteGenServer": {
-        "title": "NoteGen",
+        "title": "Auto-hospedado",
       "description": "Conecte um servidor NoteGen oficial ou próprio. Após entrar, notas, registros, telas, conversas e configurações sincronizáveis são atualizados automaticamente em tempo real.",
         "status": "Status da conexão",
         "previewTitle": "Sincronização automática em tempo real",
@@ -1244,6 +1248,14 @@
         "syncing": "Sincronizando",
         "synced": "Sincronizado",
         "syncError": "A sincronização precisa de atenção",
+        "problemCategory": {
+          "outbox": "Operação de envio bloqueada",
+          "inbox": "Falha ao aplicar dados recebidos",
+          "transfer": "Falha na transferência do anexo"
+        },
+        "problemReason": {
+          "commandIdReused": "Este ID de comando já representou outro conteúdo de sincronização. O cliente preservará a operação e tentará novamente com segurança usando um novo ID."
+        },
         "syncSummary": "Neste ciclo: {pushed} enviados, {pulled} recebidos e {conflicts} cópias de conflito.",
         "initialSyncTitle": "Sincronização em andamento",
         "initialSyncDescription": "Sincronizando notas, registros, telas, conversas e configurações sincronizáveis do servidor. Mantenha o aplicativo aberto.",
@@ -1268,6 +1280,7 @@
         "enablingManaged": "Migrando chaves de criptografia",
         "serverUpgradeRequired": "Este servidor é antigo demais para sincronização automática em tempo real. Atualize o note-gen-server e execute a migração do banco de dados.",
         "syncNow": "Sincronizar agora",
+        "resolveConflicts": "Resolver {count} conflitos",
         "activateAndSync": "Usar como plataforma atual e sincronizar",
         "syncingNow": "Sincronizando",
         "serverUrl": "URL do servidor",
@@ -3836,6 +3849,7 @@
         "syncRepoRequired": "Configure primeiro o nome do repositório de sincronização do espaço de trabalho atual",
         "syncNotConfigured": "A sincronização não está configurada",
         "syncConfigured": "A sincronização com {platform} está configurada",
+        "localStorage": "Usando armazenamento local",
         "syncAvailable": "A sincronização com {platform} está disponível",
         "syncChecking": "Verificando a sincronização com {platform}",
         "syncUnavailable": "A sincronização com {platform} está indisponível",

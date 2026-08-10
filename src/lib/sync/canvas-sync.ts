@@ -233,7 +233,7 @@ function mergeCanvasProjects(
 }
 
 async function createCanvasRemoteStorage(store: Store): Promise<CanvasRemoteStorage | null> {
-  const provider = await store.get<string>('primaryBackupMethod') || 'github'
+  const provider = await store.get<string>('primaryBackupMethod') || 'local'
 
   if (provider === 'github') {
     const repo = await getDataSyncRepoName('github')

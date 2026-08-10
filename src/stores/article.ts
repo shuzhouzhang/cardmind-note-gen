@@ -62,6 +62,17 @@ type PendingArticleSave = {
 
 const pendingArticleSaves = new Map<string, PendingArticleSave>()
 const inFlightArticleSaves = new Map<string, Promise<void>>()
+const remotelyDeletedArticlePaths = new Set<string>()
+const remotelyDeletedFolderPaths = new Set<string>()
+
+function isRemotelyDeletedArticlePath(path: string): boolean {
+  if (remotelyDeletedArticlePaths.has(path)) return true
+  for (const folderPath of remotelyDeletedFolderPaths) {
+    const prefix = folderPath.endsWith('/') ? folderPath : `${folderPath}/`
+    if (path === folderPath || path.startsWith(prefix)) return true
+  }
+  return false
+}
 let vectorCalculationTimer: ReturnType<typeof setTimeout> | null = null
 let pendingVectorCalculation: { path: string; content: string } | null = null
 let inFlightVectorCalculation: { path: string; promise: Promise<void> } | null = null
@@ -1113,6 +1124,9 @@ const useArticleStore = create<NoteState>((set, get) => ({
   cleanTabsByDeletedFile: async (deletedPath: string) => {
     discardQueuedArticleSaves(deletedPath)
     discardPendingVectorCalculation(deletedPath)
+    if (!isRemotelyDeletedArticlePath(deletedPath) && /\.(?:md|markdown)$/i.test(deletedPath)) {
+      emitter.emit('article-deleted', { path: deletedPath })
+    }
 
     const currentTabs = get().openTabs
     const currentActiveTabId = get().activeTabId
@@ -1885,7 +1899,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
       if (!await isSyncConfigured()) return
       if (!await canApplyRemoteFileTreeRequest(requestContext)) return
       const store = await getStore();
-      const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github'
+      const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local'
       
       if (primaryBackupMethod === 'github') {
         const accessToken = await store.get<string>('accessToken')
@@ -2295,7 +2309,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
     if (!await isSyncConfigured()) return
     if (!await canApplyRemoteFileTreeRequest(requestContext)) return
     const store = await getStore();
-    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github';
+    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local';
     
     // 检查是否配置了访问令牌
     if (primaryBackupMethod === 'github') {
@@ -3121,6 +3135,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
     const justPulled = get().justPulledFile
 
     if (path && content !== undefined && content !== null) {
+      if (isRemotelyDeletedArticlePath(path)) return
       // 如果是从远程刚拉取的文件，不触发推送（避免 SHA 不匹配错误）
       if (justPulled) {
         // 清除标志
@@ -3132,6 +3147,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
         const previousSave = inFlightArticleSaves.get(path)
         const savePromise = (async () => {
           if (previousSave) await previousSave
+          if (isRemotelyDeletedArticlePath(path)) return
           // 只保存本地文件，不触发同步推送
           const pathOptions = await getFilePathOptions(path)
           if (!pathOptions.baseDir) {
@@ -3176,6 +3192,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
           pendingSave.timer = null
         }
         pendingArticleSaves.delete(path)
+        if (isRemotelyDeletedArticlePath(path)) return
 
         const previousSave = inFlightArticleSaves.get(path)
         const commitPromise = (async () => {
@@ -3207,6 +3224,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
                 dirExists = await exists(dirOptions.path, { baseDir: dirOptions.baseDir })
               }
               if (!dirExists) {
+                if (isRemotelyDeletedArticlePath(savePath)) return
                 if (!dirOptions.baseDir) {
                   await mkdir(dirOptions.path)
                 } else {
@@ -3217,6 +3235,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
           }
 
           // 保存文件内容
+          if (isRemotelyDeletedArticlePath(savePath)) return
           if (!pathOptions.baseDir) {
             await writeTextFile(pathOptions.path, saveContent)
           } else {
@@ -3678,3 +3697,13 @@ registerEditorPathWriteTransactionRunner((path, transaction) => (
 ))
 
 export default useArticleStore
+
+export function acceptArticlePathFromSync(path: string, folder = false): void {
+  remotelyDeletedArticlePaths.delete(path)
+  if (folder) remotelyDeletedFolderPaths.delete(path.replace(/\/+$/, ''))
+}
+
+export function discardArticlePathFromSync(path: string, folder = false): void {
+  if (folder) remotelyDeletedFolderPaths.add(path.replace(/\/+$/, ''))
+  else remotelyDeletedArticlePaths.add(path)
+}

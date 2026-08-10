@@ -181,7 +181,7 @@ export async function getLocalFileMetadata(path: string): Promise<FileMetadata> 
  */
 export async function getRemoteFileInfo(path: string): Promise<{ sha?: string; lastModified?: number }> {
   const store = await Store.load('store.json')
-  const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github'
+  const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local'
 
   try {
     let file
@@ -457,7 +457,7 @@ export async function compareFileVersions(path: string): Promise<SyncResult> {
  */
 export async function pullRemoteFile(path: string): Promise<string> {
   const store = await Store.load('store.json')
-  const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github'
+  const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local'
 
   try {
     let file
@@ -619,8 +619,8 @@ export async function getRemoteCommitInfo(path: string): Promise<{
 } | null> {
   try {
     const store = await Store.load('store.json')
-    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github'
-    if (primaryBackupMethod === 'noteGenServer') return null
+    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local'
+    if (primaryBackupMethod === 'local' || primaryBackupMethod === 'noteGenServer') return null
     const repo = await getSyncRepoName(primaryBackupMethod as 'github' | 'gitee' | 'gitlab' | 'gitea')
     
     let commits: any[] = []
@@ -987,7 +987,7 @@ async function performSync(path: string, enableConflictResolution: boolean): Pro
 export async function hasNetworkConnection(): Promise<boolean> {
   try {
     const store = await Store.load('store.json')
-    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github'
+    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local'
 
     // 真正的网络检测：尝试发送请求到 API 端点
     const controller = new AbortController()

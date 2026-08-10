@@ -4,7 +4,9 @@ import { invoke } from '@tauri-apps/api/core'
 
 const PROFILE_KEY = 'noteGenServerSyncProfile'
 const SESSION_KEY = 'noteGenServerSyncSession'
-const PBKDF2_ITERATIONS = 210_000
+const ARGON2_MEMORY_KIB = 64 * 1024
+const ARGON2_ITERATIONS = 3
+const ARGON2_PARALLELISM = 1
 
 export interface NoteGenServerProfile {
   baseUrl: string
@@ -34,6 +36,9 @@ export interface ServerCapabilities {
     managedDefaultWorkspace?: boolean
     blobUpload?: boolean
     resumableBlobUploads?: boolean
+    durableCrdtUpdates?: boolean
+    synchronizedConflicts?: boolean
+    assetObjects?: boolean
   }
   limits?: {
     maxBatchOperations: number
@@ -100,63 +105,6 @@ interface KeyEnvelope {
 interface WorkspaceKeyVersion {
   keyVersion: number
   envelopes: KeyEnvelope[]
-}
-
-export interface PushResult {
-  operationId: string
-  status: 'applied' | 'conflict' | 'rejected'
-  revision?: string
-  sequence?: string
-  duplicate?: boolean
-  code?: string
-  retryable?: boolean
-  current?: ServerObjectSnapshot | null
-}
-
-export interface ServerChange {
-  sequence: string
-  objectId: string
-  revision: string
-  operationId: string
-  sourceDeviceId: string
-  changeType: 'upsert' | 'delete'
-  kind: string
-  ciphertext: string
-  ciphertextHash: string
-  keyVersion: number
-  blobRefs: string[]
-  deleted: boolean
-  createdAt: string
-}
-
-export interface ServerChangePage {
-  changes: ServerChange[]
-  nextCursor: string
-  hasMore: boolean
-  latestSequence: string
-}
-
-export interface ServerObjectSnapshot {
-  objectId: string
-  currentRevision: string
-  kind: string
-  ciphertext: string
-  ciphertextHash: string
-  keyVersion: number
-  blobRefs: string[]
-  deletedAt: string | null
-}
-
-export interface EncryptedWorkspaceOperation {
-  operationId: string
-  objectId: string
-  kind: 'note' | 'folder' | 'asset' | 'canvas' | 'record' | 'tag' | 'mark' | 'conversation' | 'memory' | 'setting' | 'yjs-checkpoint' | 'yjs-update'
-  baseRevision: string | null
-  keyVersion: number
-  ciphertext: string
-  ciphertextHash: string
-  blobRefs: string[]
-  delete: boolean
 }
 
 export async function loadServerProfile(): Promise<NoteGenServerProfile | null> {
@@ -284,6 +232,9 @@ export async function discoverServer(baseUrl: string): Promise<ServerCapabilitie
   if (capabilities.protocol.minimum > 1 || capabilities.protocol.maximum < 1) {
     throw new Error('The server protocol is incompatible with this NoteGen version')
   }
+  if (capabilities.features?.assetObjects !== true) {
+    throw new Error('服务器缺少附件资源对象能力，请先升级 NoteGen Sync Server')
+  }
   return capabilities
 }
 
@@ -404,7 +355,11 @@ export async function createServerWorkspace(input: {
   const workspaceKeyBytes = randomBytes(32)
   const workspaceKey = await importAesKey(workspaceKeyBytes)
   const passphraseSalt = randomBytes(16)
-  const passphraseKey = await derivePassphraseKey(input.syncPassphrase, passphraseSalt, PBKDF2_ITERATIONS)
+  const passphraseKey = await deriveArgon2idKey(input.syncPassphrase, passphraseSalt, {
+    memorySize: ARGON2_MEMORY_KIB,
+    iterations: ARGON2_ITERATIONS,
+    parallelism: ARGON2_PARALLELISM,
+  })
   const recoveryKeyBytes = randomBytes(32)
   const recoveryKey = await importAesKey(recoveryKeyBytes)
   const nameCiphertext = await encryptText(workspaceKey, input.name)
@@ -422,7 +377,12 @@ export async function createServerWorkspace(input: {
           recipientId: null,
           wrappedKey: await encryptBytes(passphraseKey, workspaceKeyBytes),
           kdfSalt: toBase64Url(passphraseSalt),
-          kdfParams: { iterations: PBKDF2_ITERATIONS, hashBits: 256 },
+          kdfParams: {
+            memorySize: ARGON2_MEMORY_KIB,
+            iterations: ARGON2_ITERATIONS,
+            parallelism: ARGON2_PARALLELISM,
+            hashBits: 256,
+          },
         },
         {
           type: 'recovery',
@@ -548,11 +508,11 @@ export async function enableServerWorkspaceEndToEndEncryption(input: {
 }): Promise<string> {
   const workspaceKeyBytes = new Uint8Array(await crypto.subtle.exportKey('raw', input.workspaceKey))
   const passphraseSalt = randomBytes(16)
-  const passphraseKey = await derivePassphraseKey(
-    input.syncPassphrase,
-    passphraseSalt,
-    PBKDF2_ITERATIONS,
-  )
+  const passphraseKey = await deriveArgon2idKey(input.syncPassphrase, passphraseSalt, {
+    memorySize: ARGON2_MEMORY_KIB,
+    iterations: ARGON2_ITERATIONS,
+    parallelism: ARGON2_PARALLELISM,
+  })
   const recoveryKeyBytes = randomBytes(32)
   const recoveryKey = await importAesKey(recoveryKeyBytes)
   await serverRequest(
@@ -569,7 +529,12 @@ export async function enableServerWorkspaceEndToEndEncryption(input: {
             recipientId: null,
             wrappedKey: await encryptBytes(passphraseKey, workspaceKeyBytes),
             kdfSalt: toBase64Url(passphraseSalt),
-            kdfParams: { iterations: PBKDF2_ITERATIONS, hashBits: 256 },
+            kdfParams: {
+              memorySize: ARGON2_MEMORY_KIB,
+              iterations: ARGON2_ITERATIONS,
+              parallelism: ARGON2_PARALLELISM,
+              hashBits: 256,
+            },
           },
           {
             type: 'recovery',
@@ -615,6 +580,15 @@ async function deriveEnvelopePassphraseKey(
   if (!syncPassphrase || !envelope.kdfSalt || !iterations) {
     throw new Error('Workspace has no compatible passphrase envelope')
   }
+  const memorySize = envelope.kdfParams?.memorySize
+  const parallelism = envelope.kdfParams?.parallelism
+  if (memorySize && parallelism) {
+    return await deriveArgon2idKey(syncPassphrase, fromBase64Url(envelope.kdfSalt), {
+      memorySize,
+      iterations,
+      parallelism,
+    })
+  }
   return await derivePassphraseKey(syncPassphrase, fromBase64Url(envelope.kdfSalt), iterations)
 }
 
@@ -630,201 +604,12 @@ async function importRecoveryKey(value: string): Promise<CryptoKey> {
   }
 }
 
-export async function runServerWorkspaceTest(input: {
-  baseUrl: string
-  accessToken: string
-  workspaceId: string
-  workspaceKey: CryptoKey
-  keyVersion: number
-}): Promise<{ sequence: string }> {
-  const objectId = crypto.randomUUID()
-  const operationId = crypto.randomUUID()
-  const ciphertext = await encryptText(input.workspaceKey, JSON.stringify({
-    schemaVersion: 1,
-    type: 'connection-test',
-    createdAt: new Date().toISOString(),
-  }))
-  const ciphertextHash = await sha256Base64Url(fromBase64Url(ciphertext))
-  const pushed = await pushOperation(input, {
-    operationId,
-    objectId,
-    kind: 'setting',
-    baseRevision: null,
-    keyVersion: input.keyVersion,
-    ciphertext,
-    ciphertextHash,
-    blobRefs: [],
-    delete: false,
-  })
-  if (pushed.status !== 'applied' || !pushed.sequence || !pushed.revision) {
-    throw new Error(`Connection test Push failed: ${pushed.code ?? pushed.status}`)
-  }
-
-  const pulled = await serverRequest<{ changes: Array<{ operationId: string, ciphertext: string }> }>(
-    normalizeServerOrigin(input.baseUrl),
-    `/v1/workspaces/${input.workspaceId}/sync/changes?after=${decrementCounter(pushed.sequence)}`,
-    { accessToken: input.accessToken },
-  )
-  const change = pulled.changes.find(item => item.operationId === operationId)
-  if (!change) throw new Error('Connection test Pull did not return the pushed object')
-  const plaintext = await decryptText(input.workspaceKey, change.ciphertext)
-  const parsed = JSON.parse(plaintext) as { type?: string }
-  if (parsed.type !== 'connection-test') throw new Error('Connection test payload verification failed')
-
-  const deletedCiphertext = await encryptText(input.workspaceKey, '{}')
-  const deletedHash = await sha256Base64Url(fromBase64Url(deletedCiphertext))
-  const deleted = await pushOperation(input, {
-    operationId: crypto.randomUUID(),
-    objectId,
-    kind: 'setting',
-    baseRevision: pushed.revision,
-    keyVersion: input.keyVersion,
-    ciphertext: deletedCiphertext,
-    ciphertextHash: deletedHash,
-    blobRefs: [],
-    delete: true,
-  })
-  if (deleted.status !== 'applied' || !deleted.sequence) throw new Error('Connection test cleanup failed')
-  return { sequence: deleted.sequence }
-}
-
-export async function listServerWorkspaceObjects(input: {
-  baseUrl: string
-  accessToken: string
-  workspaceId: string
-}): Promise<{ objects: ServerObjectSnapshot[], snapshotSequence: string }> {
-  const objects: ServerObjectSnapshot[] = []
-  let afterObjectId: string | null = null
-  let bootstrapSessionId: string | null = null
-  let snapshotSequence = '0'
-
-  do {
-    const query = new URLSearchParams({ limit: '1000' })
-    if (afterObjectId) query.set('afterObjectId', afterObjectId)
-    if (bootstrapSessionId) query.set('bootstrapSessionId', bootstrapSessionId)
-    const page = await serverRequest<{
-      objects: ServerObjectSnapshot[]
-      nextObjectId: string | null
-      hasMore: boolean
-      snapshotSequence: string
-      bootstrapSessionId: string | null
-    }>(
-      normalizeServerOrigin(input.baseUrl),
-      `/v1/workspaces/${input.workspaceId}/sync/bootstrap?${query.toString()}`,
-      { accessToken: input.accessToken },
-    )
-    objects.push(...page.objects)
-    snapshotSequence = page.snapshotSequence
-    afterObjectId = page.hasMore ? page.nextObjectId : null
-    bootstrapSessionId = page.hasMore ? page.bootstrapSessionId : null
-  } while (afterObjectId)
-
-  return { objects, snapshotSequence }
-}
-
-export async function createServerSyncSession(input: {
-  baseUrl: string
-  accessToken: string
-  workspaceId: string
-  cursor: string
-}): Promise<{
-  latestSequence: string
-  cursorValid: boolean
-  bootstrapRequired: boolean
-  webSocketPath: string
-}> {
-  return await serverRequest(
-    normalizeServerOrigin(input.baseUrl),
-    `/v1/workspaces/${input.workspaceId}/sync/session`,
-    { method: 'POST', accessToken: input.accessToken, body: { cursor: input.cursor } },
-  )
-}
-
-export async function pullServerChanges(input: {
-  baseUrl: string
-  accessToken: string
-  workspaceId: string
-  after: string
-  limit?: number
-}): Promise<ServerChangePage> {
-  const query = new URLSearchParams({
-    after: input.after,
-    limit: String(input.limit ?? 200),
-  })
-  return await serverRequest(
-    normalizeServerOrigin(input.baseUrl),
-    `/v1/workspaces/${input.workspaceId}/sync/changes?${query.toString()}`,
-    { accessToken: input.accessToken },
-  )
-}
-
-export async function acknowledgeServerCursor(input: {
-  baseUrl: string
-  accessToken: string
-  workspaceId: string
-  cursor: string
-}): Promise<void> {
-  await serverRequest(
-    normalizeServerOrigin(input.baseUrl),
-    `/v1/workspaces/${input.workspaceId}/sync/cursor`,
-    { method: 'PUT', expectedStatus: 204, accessToken: input.accessToken, body: { cursor: input.cursor } },
-  )
-}
-
-export async function createEncryptedWorkspaceOperation(input: {
-  operationId?: string
-  workspaceKey: CryptoKey
-  keyVersion: number
-  objectId: string
-  kind: EncryptedWorkspaceOperation['kind']
-  baseRevision: string | null
-  payload: unknown
-  blobRefs?: string[]
-  delete?: boolean
-}): Promise<EncryptedWorkspaceOperation> {
-  const operationId = input.operationId ?? crypto.randomUUID()
-  const ciphertext = await encryptWorkspaceJson(input.workspaceKey, input.payload, operationId)
-  return {
-    operationId,
-    objectId: input.objectId,
-    kind: input.kind,
-    baseRevision: input.baseRevision,
-    keyVersion: input.keyVersion,
-    ciphertext,
-    ciphertextHash: await sha256Base64Url(fromBase64Url(ciphertext)),
-    blobRefs: input.blobRefs ?? [],
-    delete: input.delete ?? false,
-  }
-}
-
-export async function pushServerOperationBatch(input: {
-  baseUrl: string
-  accessToken: string
-  workspaceId: string
-  operations: EncryptedWorkspaceOperation[]
-}): Promise<PushResult[]> {
-  if (input.operations.length === 0) return []
-  if (input.operations.length > 100) throw new Error('A Push batch cannot contain more than 100 operations')
-  const response = await serverRequest<{ results: PushResult[] }>(
-    normalizeServerOrigin(input.baseUrl),
-    `/v1/workspaces/${input.workspaceId}/sync/push`,
-    { method: 'POST', accessToken: input.accessToken, body: { operations: input.operations } },
-  )
-  return response.results
-}
-
-export async function decryptWorkspacePayload<T>(workspaceKey: CryptoKey, ciphertext: string): Promise<T> {
-  const plaintext = await decryptBytes(workspaceKey, ciphertext)
-  const bytes = hasBytePrefix(plaintext, [0x4e, 0x47, 0x5a, 0x31])
-    ? await decompressGzip(plaintext.slice(4))
-    : plaintext
-  return JSON.parse(new TextDecoder().decode(bytes)) as T
-}
-
 export interface EncryptedServerBlob {
   blobId: string
   ciphertextHash: string
-  ciphertext: Uint8Array
+  ciphertext?: Uint8Array
+  ciphertextSize?: number
+  readRange?: (start: number, endExclusive: number) => Promise<Uint8Array>
 }
 
 export async function encryptServerBlob(
@@ -860,6 +645,45 @@ export async function decryptServerBlob(
   workspaceKey: CryptoKey,
   ciphertext: Uint8Array,
 ): Promise<Uint8Array> {
+  if (ciphertext.length >= 24
+    && ciphertext[0] === 0x4e && ciphertext[1] === 0x47
+    && ciphertext[2] === 0x42 && ciphertext[3] === 0x32) {
+    const header = ciphertext.subarray(0, 24)
+    const view = new DataView(header.buffer, header.byteOffset, header.byteLength)
+    const chunkBytes = view.getUint32(4)
+    const plaintextSize = Number(view.getBigUint64(8))
+    if (!Number.isSafeInteger(plaintextSize) || plaintextSize < 0
+      || chunkBytes < 64 * 1024 || chunkBytes > 16 * 1024 * 1024) {
+      throw new Error('服务器 Blob 分块加密头无效')
+    }
+    const chunkCount = Math.ceil(plaintextSize / chunkBytes)
+    const expectedSize = 24 + plaintextSize + (chunkCount * 16)
+    if (ciphertext.byteLength !== expectedSize) throw new Error('服务器 Blob 分块密文长度无效')
+    const plaintext = new Uint8Array(plaintextSize)
+    let ciphertextOffset = 24
+    let plaintextOffset = 0
+    for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      const plainLength = Math.min(chunkBytes, plaintextSize - plaintextOffset)
+      const encryptedLength = plainLength + 16
+      const nonce = new Uint8Array(12)
+      nonce.set(header.subarray(16, 24), 0)
+      new DataView(nonce.buffer).setUint32(8, chunkIndex)
+      const chunkNumber = new Uint8Array(4)
+      new DataView(chunkNumber.buffer).setUint32(0, chunkIndex)
+      const additionalData = joinByteArrays(
+        new TextEncoder().encode('notegen-server-blob-v2'), header, chunkNumber,
+      )
+      const decrypted = new Uint8Array(await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: nonce, additionalData }, workspaceKey,
+        ciphertext.subarray(ciphertextOffset, ciphertextOffset + encryptedLength),
+      ))
+      if (decrypted.byteLength !== plainLength) throw new Error('服务器 Blob 分块解密长度无效')
+      plaintext.set(decrypted, plaintextOffset)
+      ciphertextOffset += encryptedLength
+      plaintextOffset += plainLength
+    }
+    return plaintext
+  }
   if (ciphertext.length <= 32
     || ciphertext[0] !== 0x4e || ciphertext[1] !== 0x47
     || ciphertext[2] !== 0x42 || ciphertext[3] !== 0x31) {
@@ -873,12 +697,29 @@ export async function decryptServerBlob(
   ))
 }
 
+function joinByteArrays(...parts: Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(parts.reduce((size, part) => size + part.byteLength, 0))
+  let offset = 0
+  for (const part of parts) {
+    result.set(part, offset)
+    offset += part.byteLength
+  }
+  return result
+}
+
 export async function uploadServerBlob(input: {
   baseUrl: string
   accessToken: string
   workspaceId: string
   blob: EncryptedServerBlob
+  onProgress?: (progress: { blobId: string, completedBytes: number, totalBytes: number }) => void | Promise<void>
 }): Promise<void> {
+  const ciphertextSize = input.blob.ciphertext?.byteLength ?? input.blob.ciphertextSize
+  if (!ciphertextSize || ciphertextSize <= 0) throw new Error('Blob 密文长度无效')
+  const readRange = input.blob.readRange ?? (async (start: number, endExclusive: number) => {
+    if (!input.blob.ciphertext) throw new Error('Blob 密文读取器不可用')
+    return input.blob.ciphertext.slice(start, endExclusive)
+  })
   const upload = await serverRequest<{
     alreadyExists: boolean
     uploadId: string | null
@@ -890,27 +731,52 @@ export async function uploadServerBlob(input: {
     expectedStatus: [200, 201],
     body: {
       blobId: input.blob.blobId,
-      expectedSize: String(input.blob.ciphertext.byteLength),
+      expectedSize: String(ciphertextSize),
       ciphertextHash: input.blob.ciphertextHash,
     },
   })
-  if (upload.alreadyExists) return
+  if (upload.alreadyExists) {
+    await input.onProgress?.({
+      blobId: input.blob.blobId,
+      completedBytes: ciphertextSize,
+      totalBytes: ciphertextSize,
+    })
+    return
+  }
   if (!upload.uploadId || upload.partBytes <= 0) throw new Error('服务器返回了无效的 Blob 上传会话')
   const uploadedParts = new Set(upload.uploadedParts.map(part => part.partNumber))
-  const partCount = Math.ceil(input.blob.ciphertext.byteLength / upload.partBytes)
+  const partCount = Math.ceil(ciphertextSize / upload.partBytes)
+  const partSize = (partNumber: number) => Math.max(0, Math.min(
+    upload.partBytes,
+    ciphertextSize - ((partNumber - 1) * upload.partBytes),
+  ))
+  let completedBytes = Array.from(uploadedParts).reduce(
+    (total, partNumber) => total + partSize(partNumber), 0,
+  )
+  await input.onProgress?.({
+    blobId: input.blob.blobId,
+    completedBytes,
+    totalBytes: ciphertextSize,
+  })
   for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
     if (uploadedParts.has(partNumber)) continue
     const start = (partNumber - 1) * upload.partBytes
-    const end = Math.min(input.blob.ciphertext.byteLength, start + upload.partBytes)
+    const end = Math.min(ciphertextSize, start + upload.partBytes)
     await binaryServerRequest(
       normalizeServerOrigin(input.baseUrl),
       `/v1/workspaces/${input.workspaceId}/blobs/uploads/${upload.uploadId}/parts/${partNumber}`,
       {
         method: 'PUT',
         accessToken: input.accessToken,
-        body: input.blob.ciphertext.slice(start, end),
+        body: await readRange(start, end),
       },
     )
+    completedBytes += end - start
+    await input.onProgress?.({
+      blobId: input.blob.blobId,
+      completedBytes,
+      totalBytes: ciphertextSize,
+    })
   }
   await serverRequest(
     normalizeServerOrigin(input.baseUrl),
@@ -936,6 +802,51 @@ export async function downloadServerBlob(input: {
   return await decryptServerBlob(input.workspaceKey, response)
 }
 
+export async function getServerBlobMetadata(input: {
+  baseUrl: string
+  accessToken: string
+  workspaceId: string
+  blobId: string
+}): Promise<{ size: number, ciphertextHash: string }> {
+  const response = await binaryServerResponse(
+    normalizeServerOrigin(input.baseUrl),
+    `/v1/workspaces/${input.workspaceId}/blobs/${input.blobId}`,
+    { method: 'HEAD', accessToken: input.accessToken },
+  )
+  const size = Number(response.headers.get('content-length'))
+  const ciphertextHash = response.headers.get('x-ciphertext-hash') || ''
+  if (!Number.isSafeInteger(size) || size <= 0 || ciphertextHash !== input.blobId) {
+    throw new Error('服务器返回了无效的 Blob 元数据')
+  }
+  return { size, ciphertextHash }
+}
+
+export async function downloadServerBlobRange(input: {
+  baseUrl: string
+  accessToken: string
+  workspaceId: string
+  blobId: string
+  start: number
+  end: number
+}): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(input.start) || !Number.isSafeInteger(input.end)
+    || input.start < 0 || input.end < input.start) {
+    throw new Error('Blob 下载区间无效')
+  }
+  const response = await binaryServerRequest(
+    normalizeServerOrigin(input.baseUrl),
+    `/v1/workspaces/${input.workspaceId}/blobs/${input.blobId}`,
+    {
+      accessToken: input.accessToken,
+      headers: { range: `bytes=${input.start}-${input.end}` },
+    },
+  )
+  if (response.byteLength !== input.end - input.start + 1) {
+    throw new Error('服务器返回的 Blob 分片长度不正确')
+  }
+  return response
+}
+
 export async function createDeterministicNoteObjectId(workspaceId: string, relativePath: string): Promise<string> {
   const normalizedPath = relativePath.trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+/g, '/').normalize('NFC')
   return await createDeterministicServerObjectId(workspaceId, 'note', normalizedPath)
@@ -956,19 +867,6 @@ export async function createDeterministicServerObjectId(
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
-async function pushOperation(
-  input: { baseUrl: string, accessToken: string, workspaceId: string },
-  operation: Record<string, unknown>,
-): Promise<PushResult> {
-  const results = await pushServerOperationBatch({
-    ...input,
-    operations: [operation as unknown as EncryptedWorkspaceOperation],
-  })
-  const result = results[0]
-  if (!result) throw new Error('Server returned an empty Push response')
-  return result
-}
-
 export class NoteGenServerRequestError extends Error {
   constructor(
     message: string,
@@ -981,7 +879,7 @@ export class NoteGenServerRequestError extends Error {
   }
 }
 
-async function serverRequest<T>(
+export async function serverRequest<T>(
   baseUrl: string,
   path: string,
   options: {
@@ -1030,16 +928,35 @@ async function serverRequest<T>(
     } catch {
       // Keep the raw response.
     }
-    throw new NoteGenServerRequestError(message, response.status, code, retryable)
+    throw new NoteGenServerRequestError(`${message} [${path}]`, response.status, code, retryable)
   }
-  return (text ? JSON.parse(text) : undefined) as T
+  if (!text) return undefined as T
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new NoteGenServerRequestError(
+      `同步服务器返回了不完整的数据（${path}，HTTP ${response.status}，${text.length} 字节）`,
+      response.status,
+      'invalid_json_response',
+      true,
+    )
+  }
 }
 
 async function binaryServerRequest(
   baseUrl: string,
   path: string,
-  options: { method?: string, accessToken: string, body?: Uint8Array },
+  options: { method?: string, accessToken: string, body?: Uint8Array, headers?: Record<string, string> },
 ): Promise<Uint8Array> {
+  const response = await binaryServerResponse(baseUrl, path, options)
+  return new Uint8Array(await response.arrayBuffer())
+}
+
+async function binaryServerResponse(
+  baseUrl: string,
+  path: string,
+  options: { method?: string, accessToken: string, body?: Uint8Array, headers?: Record<string, string> },
+): Promise<Response> {
   const request = isTauriRuntime() ? httpFetch : globalThis.fetch
   const timeoutController = new AbortController()
   const timeout = globalThis.setTimeout(() => timeoutController.abort(), 120_000)
@@ -1050,6 +967,7 @@ async function binaryServerRequest(
       headers: {
         authorization: `Bearer ${options.accessToken}`,
         ...(options.body ? { 'content-type': 'application/octet-stream' } : {}),
+        ...options.headers,
       },
       ...(options.body ? { body: options.body } : {}),
       signal: timeoutController.signal,
@@ -1075,7 +993,7 @@ async function binaryServerRequest(
     }
     throw new NoteGenServerRequestError(message, response.status, code, retryable)
   }
-  return new Uint8Array(await response.arrayBuffer())
+  return response
 }
 
 export function normalizeServerOrigin(value: string): string {
@@ -1121,6 +1039,24 @@ async function derivePassphraseKey(passphrase: string, salt: Uint8Array, iterati
   )
 }
 
+async function deriveArgon2idKey(
+  passphrase: string,
+  salt: Uint8Array,
+  params: { memorySize: number, iterations: number, parallelism: number },
+): Promise<CryptoKey> {
+  const { argon2id } = await import('hash-wasm')
+  const bytes = await argon2id({
+    password: passphrase,
+    salt,
+    memorySize: params.memorySize,
+    iterations: params.iterations,
+    parallelism: params.parallelism,
+    hashLength: 32,
+    outputType: 'binary',
+  })
+  return await importAesKey(bytes)
+}
+
 async function importAesKey(bytes: Uint8Array): Promise<CryptoKey> {
   return await crypto.subtle.importKey('raw', bytes, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt'])
 }
@@ -1129,49 +1065,13 @@ async function encryptText(key: CryptoKey, value: string): Promise<string> {
   return await encryptBytes(key, new TextEncoder().encode(value))
 }
 
-async function encryptWorkspaceJson(key: CryptoKey, value: unknown, operationId: string): Promise<string> {
-  const plaintext = new TextEncoder().encode(JSON.stringify(value))
-  if (plaintext.byteLength < 64 * 1024 || typeof CompressionStream === 'undefined') {
-    return await encryptBytes(key, plaintext, await deriveOperationIv(key, operationId, plaintext))
-  }
-  const compressed = await compressGzip(plaintext)
-  if (compressed.byteLength + 4 >= plaintext.byteLength) {
-    return await encryptBytes(key, plaintext, await deriveOperationIv(key, operationId, plaintext))
-  }
-  const payload = new Uint8Array(4 + compressed.byteLength)
-  payload.set([0x4e, 0x47, 0x5a, 0x31])
-  payload.set(compressed, 4)
-  return await encryptBytes(key, payload, await deriveOperationIv(key, operationId, payload))
-}
-
-async function decryptText(key: CryptoKey, value: string): Promise<string> {
-  return new TextDecoder().decode(await decryptBytes(key, value))
-}
-
-async function encryptBytes(key: CryptoKey, value: Uint8Array, suppliedIv?: Uint8Array): Promise<string> {
-  const iv = suppliedIv ?? randomBytes(12)
+async function encryptBytes(key: CryptoKey, value: Uint8Array): Promise<string> {
+  const iv = randomBytes(12)
   const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, value))
   const result = new Uint8Array(iv.length + encrypted.length)
   result.set(iv)
   result.set(encrypted, iv.length)
   return toBase64Url(result)
-}
-
-async function deriveOperationIv(
-  key: CryptoKey,
-  operationId: string,
-  payload: Uint8Array,
-): Promise<Uint8Array> {
-  const rawKey = new Uint8Array(await crypto.subtle.exportKey('raw', key))
-  const hmacKey = await crypto.subtle.importKey(
-    'raw', rawKey, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
-  )
-  const operationBytes = new TextEncoder().encode(`notegen-operation-v1:${operationId}`)
-  const payloadHash = new Uint8Array(await crypto.subtle.digest('SHA-256', payload))
-  const material = new Uint8Array(operationBytes.length + payloadHash.length)
-  material.set(operationBytes)
-  material.set(payloadHash, operationBytes.length)
-  return new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, material)).slice(0, 12)
 }
 
 async function decryptBytes(key: CryptoKey, value: string): Promise<Uint8Array> {
@@ -1182,37 +1082,6 @@ async function decryptBytes(key: CryptoKey, value: string): Promise<Uint8Array> 
     key,
     bytes.slice(12),
   ))
-}
-
-/** Encrypts a transient Yjs update without exposing its contents to the sync server. */
-export async function encryptNoteGenServerCollaborationUpdate(
-  workspaceKey: CryptoKey,
-  update: Uint8Array,
-): Promise<string> {
-  return encryptBytes(workspaceKey, update)
-}
-
-/** Decrypts a transient Yjs update received from the collaboration room. */
-export async function decryptNoteGenServerCollaborationUpdate(
-  workspaceKey: CryptoKey,
-  ciphertext: string,
-): Promise<Uint8Array> {
-  return decryptBytes(workspaceKey, ciphertext)
-}
-
-async function compressGzip(value: Uint8Array): Promise<Uint8Array> {
-  const stream = new Blob([value]).stream().pipeThrough(new CompressionStream('gzip'))
-  return new Uint8Array(await new Response(stream).arrayBuffer())
-}
-
-async function decompressGzip(value: Uint8Array): Promise<Uint8Array> {
-  if (typeof DecompressionStream === 'undefined') throw new Error('当前系统不支持解压远端同步对象')
-  const stream = new Blob([value]).stream().pipeThrough(new DecompressionStream('gzip'))
-  return new Uint8Array(await new Response(stream).arrayBuffer())
-}
-
-function hasBytePrefix(value: Uint8Array, prefix: number[]): boolean {
-  return value.length >= prefix.length && prefix.every((byte, index) => value[index] === byte)
 }
 
 async function sha256Base64Url(value: Uint8Array): Promise<string> {
@@ -1246,18 +1115,4 @@ function parseStoredSession(value: string | null): StoredServerSession | null {
   } catch {
     return null
   }
-}
-
-function decrementCounter(value: string): string {
-  if (!/^\d+$/.test(value) || /^0+$/.test(value)) throw new Error('Server returned an invalid sequence')
-  const digits = value.split('')
-  for (let index = digits.length - 1; index >= 0; index -= 1) {
-    const digit = Number(digits[index])
-    if (digit > 0) {
-      digits[index] = String(digit - 1)
-      break
-    }
-    digits[index] = '9'
-  }
-  return digits.join('').replace(/^0+(?=\d)/, '')
 }

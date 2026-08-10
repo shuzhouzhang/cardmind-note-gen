@@ -17,6 +17,14 @@ import { toast } from '@/hooks/use-toast'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import { isMobileDevice } from '@/lib/check'
+import { getSyncV2EntityByLocalKey } from '@/db/note-gen-server-sync-index'
+import {
+  getNoteGenServerBackgroundConnection,
+  getNoteGenServerBackgroundV2Context,
+  triggerNoteGenServerBackgroundSync,
+} from '@/lib/sync/note-gen-server-background'
+import { listSyncV2ObjectVersions } from '@/lib/sync/note-gen-server-sync-protocol'
+import { enqueueSyncV2HistoricalRestore } from '@/lib/sync/note-gen-server-history'
 
 interface CommitInfo {
   sha: string
@@ -27,7 +35,7 @@ interface CommitInfo {
   url: string
 }
 
-type SyncProvider = 'github' | 'gitee' | 'gitlab' | 'gitea'
+type SyncProvider = 'github' | 'gitee' | 'gitlab' | 'gitea' | 'noteGenServer'
 
 interface HistorySheetProps {
   editor: Editor
@@ -49,7 +57,12 @@ export function HistorySheet({ editor, prepareExternalAction, onMarkdownChange }
   const getProvider = useCallback(async (): Promise<SyncProvider | null> => {
     try {
       const store = await Store.load('store.json')
-      const provider = await store.get<string>('primaryBackupMethod') || 'github'
+      const provider = await store.get<string>('primaryBackupMethod') || 'local'
+      if (provider === 'local') {
+        setHistory([])
+        return null
+      }
+      if (provider === 'noteGenServer') return provider
       return provider === 'github' || provider === 'gitee' || provider === 'gitlab' || provider === 'gitea'
         ? provider
         : null
@@ -66,6 +79,36 @@ export function HistorySheet({ editor, prepareExternalAction, onMarkdownChange }
     try {
       const provider = await getProvider()
       if (!provider) return
+
+      if (provider === 'noteGenServer') {
+        const context = getNoteGenServerBackgroundV2Context()
+        const connection = getNoteGenServerBackgroundConnection()
+        if (!context || !connection) throw new Error('NoteGen Server 同步空间尚未解锁')
+        const entity = await getSyncV2EntityByLocalKey(context.syncScopeId, activeFilePath)
+        if (!entity || entity.kind !== 'note') {
+          setHistory([])
+          setProvider(provider)
+          return
+        }
+        const result = await listSyncV2ObjectVersions({
+          baseUrl: connection.profile.baseUrl,
+          accessToken: connection.session.accessToken,
+          workspaceId: context.workspaceId,
+          objectId: entity.objectId,
+          limit: 20,
+        })
+        setHistory(result.versions.map(version => ({
+          sha: `r${version.revision}`,
+          fullSha: version.revision,
+          message: version.deleted ? '删除版本' : `同步版本 ${version.revision}`,
+          author: 'NoteGen Server',
+          date: new Date(version.createdAt),
+          url: '',
+        })))
+        setProvider(provider)
+        setRepoInfo({})
+        return
+      }
 
       const repo = await getSyncRepoName(provider)
       let commits: any[] = []
@@ -174,6 +217,33 @@ export function HistorySheet({ editor, prepareExternalAction, onMarkdownChange }
     try {
       const provider = await getProvider()
       if (!provider) return
+
+      if (provider === 'noteGenServer') {
+        const context = getNoteGenServerBackgroundV2Context()
+        const connection = getNoteGenServerBackgroundConnection()
+        if (!context || !connection) throw new Error('NoteGen Server 同步空间尚未解锁')
+        const entity = await getSyncV2EntityByLocalKey(context.syncScopeId, activeFilePath)
+        if (!entity || entity.kind !== 'note') throw new Error('当前笔记尚未建立服务器同步身份')
+        const restored = await enqueueSyncV2HistoricalRestore({
+          baseUrl: connection.profile.baseUrl,
+          accessToken: connection.session.accessToken,
+          workspaceId: context.workspaceId,
+          syncScopeId: context.syncScopeId,
+          objectId: entity.objectId,
+          revision: commitSha,
+          workspaceKeys: context.workspaceKeys,
+          workspaceKey: context.workspaceKey,
+          keyVersion: context.keyVersion,
+        })
+        const payload = restored.payload as { content?: unknown }
+        if (typeof payload.content !== 'string') throw new Error('历史版本不包含可恢复的 Markdown 内容')
+        await saveLocalFile(activeFilePath, payload.content)
+        editor.commands.setContent(payload.content, { contentType: 'markdown' })
+        await triggerNoteGenServerBackgroundSync()
+        toast({ title: '已恢复', description: `历史版本 r${commitSha} 已作为新版本提交` })
+        setIsOpen(false)
+        return
+      }
 
       const repo = await getSyncRepoName(provider)
       let content = ''
@@ -332,15 +402,12 @@ export function HistorySheet({ editor, prepareExternalAction, onMarkdownChange }
                 className="p-2 border rounded hover:bg-muted/50 transition-colors"
               >
                 <div className="flex items-center justify-between mb-1">
-                  <a
-                    href={commit.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs font-mono text-muted-foreground hover:text-primary inline-flex items-center gap-1"
-                  >
-                    {commit.sha}
-                    <ExternalLink size={10} />
-                  </a>
+                  {commit.url ? (
+                    <a href={commit.url} target="_blank" rel="noopener noreferrer"
+                      className="text-xs font-mono text-muted-foreground hover:text-primary inline-flex items-center gap-1">
+                      {commit.sha}<ExternalLink size={10} />
+                    </a>
+                  ) : <span className="text-xs font-mono text-muted-foreground">{commit.sha}</span>}
                   <span className="text-xs text-muted-foreground">
                     {commit.date.toLocaleString()}
                   </span>
@@ -354,15 +421,15 @@ export function HistorySheet({ editor, prepareExternalAction, onMarkdownChange }
                   </p>
                   <button
                     onClick={() => restoreVersion(commit.fullSha || commit.sha)}
-                    disabled={restoringSha === commit.sha}
+                    disabled={restoringSha === (commit.fullSha || commit.sha)}
                     className={cn(
                       'text-xs text-blue-500 hover:text-blue-600 inline-flex items-center gap-1',
-                      restoringSha === commit.sha && 'opacity-50'
+                      restoringSha === (commit.fullSha || commit.sha) && 'opacity-50'
                     )}
                     title="恢复此版本"
                   >
                     <RotateCcw size={12} />
-                    {restoringSha === commit.sha ? '恢复中...' : '恢复'}
+                    {restoringSha === (commit.fullSha || commit.sha) ? '恢复中...' : '恢复'}
                   </button>
                 </div>
               </li>

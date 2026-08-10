@@ -1,7 +1,7 @@
 'use client'
 
-import CanvasSettingPage from '@/app/core/setting/canvas/page'
+import { CanvasSettings } from '@/app/core/setting/canvas/canvas-settings'
 
 export default function MobileCanvasSettingPage() {
-  return <CanvasSettingPage mobile />
+  return <CanvasSettings mobile />
 }

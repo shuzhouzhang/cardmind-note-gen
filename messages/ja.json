@@ -1287,8 +1287,12 @@
         "selfHostedDesc": "输入您的自建 Gitea 服务器地址（如：https://gitea.example.com）"
       },
       "giteaAccessTokenDesc": "在 {instanceDisplayName} 创建个人访问令牌，需要完整的 repository 权限",
+      "localStorage": {
+        "title": "ローカルストレージ",
+        "description": "ノートとアプリデータをこのデバイスだけに保存します。デバイス間の同期は行いません。"
+      },
       "noteGenServer": {
-        "title": "NoteGen",
+        "title": "セルフホスト",
       "description": "NoteGen 公式またはセルフホストの同期サーバーに接続します。ログイン後、ノート、記録、キャンバス、会話、同期可能な設定が自動でリアルタイム同期されます。",
         "status": "接続状態",
         "previewTitle": "自動リアルタイム同期",
@@ -1299,6 +1303,14 @@
         "syncing": "同期中",
         "synced": "同期済み",
         "syncError": "同期の確認が必要です",
+        "problemCategory": {
+          "outbox": "送信操作がブロックされました",
+          "inbox": "受信データの適用に失敗しました",
+          "transfer": "添付ファイルの転送に失敗しました"
+        },
+        "problemReason": {
+          "commandIdReused": "このコマンド ID は以前に別の同期内容で使用されています。操作を保持したまま新しい ID で安全に再試行します。"
+        },
         "syncSummary": "今回の同期：送信 {pushed} 件、受信 {pulled} 件、競合コピー {conflicts} 件。",
         "initialSyncTitle": "同期中",
         "initialSyncDescription": "サーバーからノート、記録、キャンバス、会話、同期可能な設定を同期しています。アプリを開いたままにしてください。",
@@ -1323,6 +1335,7 @@
         "enablingManaged": "暗号化キーを移行中",
         "serverUpgradeRequired": "サーバーが古く、自動リアルタイム同期に対応していません。note-gen-server を更新してデータベース移行を実行してください。",
         "syncNow": "今すぐ同期",
+        "resolveConflicts": "{count} 件の競合を解決",
         "activateAndSync": "現在のプラットフォームに設定して同期",
         "syncingNow": "同期中",
         "serverUrl": "サーバー URL",
@@ -3853,6 +3866,7 @@
         "syncRepoRequired": "現在のワークスペースの同期リポジトリ名を設定してください",
         "syncNotConfigured": "同期が設定されていません",
         "syncConfigured": "{platform} 同期は設定済みです",
+        "localStorage": "ローカルストレージを使用中",
         "syncAvailable": "{platform} 同期を利用できます",
         "syncChecking": "{platform} 同期を確認中です",
         "syncUnavailable": "{platform} 同期を利用できません",

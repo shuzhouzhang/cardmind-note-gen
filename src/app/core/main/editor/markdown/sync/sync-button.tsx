@@ -17,7 +17,7 @@ import { setLocalRecordedSha } from '@/lib/sync/auto-sync'
 import { debugSyncPerf } from '@/lib/sync/remote-file'
 import { generateGitSyncCommitMessage } from '@/lib/sync/commit-message'
 import { uploadRemoteText } from '@/lib/sync/remote-library'
-import type { S3Config, WebDAVConfig } from '@/types/sync'
+import { normalizePrimarySyncPlatform, type S3Config, type WebDAVConfig } from '@/types/sync'
 import { useSettingsDialogStore } from '@/stores/settings-dialog'
 
 type SyncProvider = 'gitee' | 'github' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'
@@ -179,10 +179,12 @@ export function SyncButton({
     try {
       logPerf('start')
       const store = await Store.load('store.json')
-      const provider = (await store.get<string>('primaryBackupMethod') || 'github') as SyncProvider
+      const provider = normalizePrimarySyncPlatform(await store.get<string>('primaryBackupMethod'))
+      if (provider === 'local' || provider === 'noteGenServer') return
       providerForLog = provider
       const needsRepo = provider !== 's3' && provider !== 'webdav' && provider !== 'cloudFolder'
-      const repo = needsRepo ? await getOptionalSyncRepoName(provider) : ''
+      const repo = needsRepo
+        ? await getOptionalSyncRepoName(provider as 'github' | 'gitee' | 'gitlab' | 'gitea') : ''
       if (needsRepo && !repo) {
         toast({ description: t('settings.sync.repositoryRequired'), variant: 'destructive' })
         useSettingsDialogStore.getState().openSettings('sync')

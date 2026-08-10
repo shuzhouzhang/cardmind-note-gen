@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Eye, EyeOff, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import { testS3Connection } from '@/lib/sync/s3';
+import { persistSyncTargetConfig } from '@/lib/sync/sync-target-config';
 import { S3Config } from '@/types/sync';
 import { Store } from '@tauri-apps/plugin-store';
 import useSyncStore from '@/stores/sync';
@@ -77,9 +78,7 @@ export function S3Sync() {
 
     const timer = setTimeout(async () => {
       try {
-        const store = await Store.load('store.json');
-        await store.set('s3SyncConfig', config);
-        await store.save();
+        await persistSyncTargetConfig('s3SyncConfig', 's3', config);
       } catch (error) {
         console.error('Failed to auto-save S3 config:', error);
       }

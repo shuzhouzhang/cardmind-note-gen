@@ -6,7 +6,7 @@ import { Redo2, Undo2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
 
-import { MobileCanvasPage } from '@/app/mobile/canvas/page'
+import { MobileCanvasPage } from '@/app/mobile/canvas/mobile-canvas-page'
 import { Button } from '@/components/ui/button'
 import { SwipeBack, type SwipeBackHandle } from '@/components/ui/swipe-back'
 import { MobileBackButton } from '@/components/mobile-back-button'

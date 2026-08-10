@@ -168,29 +168,25 @@ const ChatContent = React.memo(function ChatContent() {
           <MessageScrollerContent
             className={cn("items-end", chats.length === 0 && "h-full")}
           >
-            {chats.length ? chats.map((chat) => (
-              <React.Fragment key={chat.id}>
-                <MessageScrollerItem
-                  messageId={String(chat.id)}
-                  scrollAnchor={chat.role === 'user'}
-                  className="w-full"
-                >
-                  <Message chat={chat} />
-                </MessageScrollerItem>
-                {activeCompaction?.coveredThroughChatId === chat.id && (
-                  <MessageScrollerItem className="w-full">
-                    <div
-                      className="flex w-full items-center gap-3 py-1 text-xs text-muted-foreground"
-                      title={`${activeCompaction.sourceTokenCount} → ${activeCompaction.summaryTokenCount} tokens`}
-                    >
-                      <Separator className="flex-1" />
-                      <span>{t('record.chat.condensed.message', { count: compactedMessageCount })}</span>
-                      <Separator className="flex-1" />
-                    </div>
+            {chats.length ? chats.map((chat) => {
+              const messageId = chat.syncId || String(chat.id)
+              return (
+                <React.Fragment key={messageId}>
+                  <MessageScrollerItem
+                    messageId={messageId}
+                    scrollAnchor={chat.role === 'user'}
+                    className="w-full"
+                  >
+                    <Message chat={chat} />
                   </MessageScrollerItem>
-                )}
-              </React.Fragment>
-            )) : (
+                  <CompactionDivider
+                    chatId={chat.id}
+                    compaction={activeCompaction}
+                    message={t('record.chat.condensed.message', { count: compactedMessageCount })}
+                  />
+                </React.Fragment>
+              )
+            }) : (
               <MessageScrollerItem className="flex min-h-full w-full flex-1">
                 <ChatEmpty />
               </MessageScrollerItem>
@@ -227,6 +223,24 @@ const ChatContent = React.memo(function ChatContent() {
   )
 })
 ChatContent.displayName = 'ChatContent'
+
+function CompactionDivider({ chatId, compaction, message }: {
+  chatId: number
+  compaction: DisplayedConversationCompaction | null
+  message: string
+}) {
+  if (!compaction || compaction.coveredThroughChatId !== chatId) return null
+  const title = `${compaction.sourceTokenCount} → ${compaction.summaryTokenCount} tokens`
+  return (
+    <MessageScrollerItem className="w-full">
+      <div className="flex w-full items-center gap-3 py-1 text-xs text-muted-foreground" title={title}>
+        <Separator className="flex-1" />
+        <span>{message}</span>
+        <Separator className="flex-1" />
+      </div>
+    </MessageScrollerItem>
+  )
+}
 
 const MessageWrapper = React.memo(function MessageWrapper({ chat, children }: { chat: Chat, children: React.ReactNode }) {
   const { deleteChat } = useChatStore()

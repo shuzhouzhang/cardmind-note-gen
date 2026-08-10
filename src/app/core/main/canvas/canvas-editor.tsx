@@ -330,20 +330,50 @@ function CanvasEditorInner({ canvasId, mobile = false }: CanvasEditorProps) {
     previous?.destroy()
     const connection = getNoteGenServerBackgroundConnection()
     if (!connection?.profile.workspaceId || !document) return
+    const { nodes: initialNodes, edges: initialEdges, ...initialMetadata } = document
     void getNoteGenServerStructuredSession({
       workspaceId: connection.profile.workspaceId,
       documentId: `canvas:${canvasId}`,
-      initialFields: { document },
+      initialFields: { document: initialMetadata },
     }).then(session => {
       if (disposed || !session) return
       collaborationSessionRef.current = session
-      session.subscribeFields(fields => {
-        if (disposed) return
-        const nextDocument = fields.document as CanvasDocument | undefined
+      const legacyDocument = session.getFields().document as CanvasDocument | undefined
+      const hasLegacyGraph = Array.isArray(legacyDocument?.nodes) && Array.isArray(legacyDocument?.edges)
+      let latestMetadata = legacyDocument
+        ? Object.fromEntries(Object.entries(legacyDocument).filter(([key]) => key !== 'nodes' && key !== 'edges'))
+        : initialMetadata
+      let latestGraph = session.getCanvasGraph()
+      if (latestGraph.nodes.length === 0 && latestGraph.edges.length === 0 && hasLegacyGraph) {
+        latestGraph = { nodes: legacyDocument!.nodes, edges: legacyDocument!.edges }
+        session.setCanvasGraph(legacyDocument!.nodes, legacyDocument!.edges)
+        session.setFields({ document: latestMetadata })
+      } else if (latestGraph.nodes.length === 0 && latestGraph.edges.length === 0) {
+        latestGraph = { nodes: initialNodes, edges: initialEdges }
+        session.setCanvasGraph(initialNodes, initialEdges)
+      }
+      const applyRemoteDocument = () => {
+        const nextDocument = {
+          ...latestMetadata,
+          nodes: latestGraph.nodes,
+          edges: latestGraph.edges,
+        } as CanvasDocument
         const currentDocument = useCanvasStore.getState().documents[canvasId]
-        if (nextDocument && JSON.stringify(nextDocument) !== JSON.stringify(currentDocument)) {
+        if (JSON.stringify(nextDocument) !== JSON.stringify(currentDocument)) {
           updateDocument(canvasId, nextDocument)
         }
+      }
+      session.subscribeFields(fields => {
+        if (disposed) return
+        const nextMetadata = fields.document as Omit<CanvasDocument, 'nodes' | 'edges'> | undefined
+        if (!nextMetadata) return
+        latestMetadata = nextMetadata
+        applyRemoteDocument()
+      })
+      session.subscribeCanvas(graph => {
+        if (disposed) return
+        latestGraph = graph
+        applyRemoteDocument()
       })
     })
     return () => {
@@ -357,7 +387,9 @@ function CanvasEditorInner({ canvasId, mobile = false }: CanvasEditorProps) {
     if (!document) return
     const session = collaborationSessionRef.current
     if (!session) return
-    session.setFields({ document })
+    const { nodes, edges, ...metadata } = document
+    session.setFields({ document: metadata })
+    session.setCanvasGraph(nodes, edges)
   }, [document])
 
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<FlowCanvasNode>(

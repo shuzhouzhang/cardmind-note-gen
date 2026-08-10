@@ -20,10 +20,9 @@ import { TableHeader } from '@tiptap/extension-table-header'
 import Image from '@tiptap/extension-image'
 import { Markdown } from '@tiptap/markdown'
 import Collaboration from '@tiptap/extension-collaboration'
-import * as Y from 'yjs'
 import { SearchAndReplace } from '@sereneinserenade/tiptap-search-and-replace'
 import { Extension, nodeInputRule, type Editor as CoreEditor } from '@tiptap/core'
-import { AllSelection, EditorState, Plugin, PluginKey, TextSelection, type Selection } from '@tiptap/pm/state'
+import { AllSelection, EditorState, Plugin, PluginKey, TextSelection, type Selection, type Transaction } from '@tiptap/pm/state'
 import { redoDepth, undoDepth } from '@tiptap/pm/history'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import { dropPoint } from '@tiptap/pm/transform'
@@ -31,7 +30,7 @@ import 'katex/dist/katex.min.css'
 import { InlineMath, BlockMath } from './math-extension'
 import { MermaidDiagram } from './mermaid-extension'
 import { SearchReplacePanel } from './search-replace-panel'
-import { useEffect, useId, useLayoutEffect, useRef, useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent as ReactUIEvent } from 'react'
 import { openPath, openUrl } from '@tauri-apps/plugin-opener'
 import { open } from '@tauri-apps/plugin-dialog'
 import { BaseDirectory, readFile } from '@tauri-apps/plugin-fs'
@@ -50,6 +49,14 @@ import { ImageBubbleMenu } from './image-bubble-menu'
 import { toast } from '@/hooks/use-toast'
 import { FloatingTableMenu } from './floating-table-menu'
 import { FooterBar } from './footer-bar/index'
+import {
+  RemoteCollaborationScrollGuard,
+  RemoteEditorPresence,
+  isRemoteCollaborationTransaction,
+  remoteEditorPresencePluginKey,
+  removeRemoteEditorPresence,
+  updateRemoteEditorPresence,
+} from './sync/remote-editor-presence'
 import { Outline } from './outline'
 import { SlashCommand, suggestionOptions } from './slash-command'
 import { SlashCommandPortal } from './slash-command/slash-command-portal'
@@ -125,10 +132,15 @@ import {
 import dynamic from 'next/dynamic'
 import './style.css'
 import {
+  getNoteGenServerMarkdownDoc,
   getNoteGenServerTextSession,
   type NoteGenServerTextSession,
 } from '@/lib/sync/note-gen-server-collab'
-import { getNoteGenServerBackgroundConnection } from '@/lib/sync/note-gen-server-background'
+import {
+  getNoteGenServerBackgroundConnection,
+  triggerNoteGenServerBackgroundSync,
+} from '@/lib/sync/note-gen-server-background'
+import { retainActiveNoteGenServerMarkdownEditor } from '@/lib/sync/note-gen-server-active-editors'
 
 const MathEditorDialog = dynamic(
   () => import('./math-editor-dialog').then((module) => module.MathEditorDialog),
@@ -1083,6 +1095,7 @@ interface TipTapEditorProps {
   applyLayoutPreferences?: boolean
   enableLargeDocumentMode?: boolean
   isActive?: boolean
+  topContent?: ReactNode
   onTerminate?: () => void
   documentScope?: 'document' | 'section'
   documentMarkdown?: string
@@ -1147,6 +1160,18 @@ function getMarkdownLineAtPosition(markdown: string, position: number): number {
   return line
 }
 
+function getMountedEditorView(editor: CoreEditor): EditorView | null {
+  if (editor.isDestroyed) return null
+  try {
+    const view = editor.view
+    return view.dom ? view : null
+  } catch {
+    // Tiptap intentionally throws while EditorContent has not mounted its
+    // ProseMirror view yet. Mobile renders can expose this short interval.
+    return null
+  }
+}
+
 function getEditorUndoRedoState(editor: CoreEditor): { undo: boolean; redo: boolean } {
   return {
     undo: undoDepth(editor.state) > 0,
@@ -1203,6 +1228,7 @@ export function TipTapEditor({
   applyLayoutPreferences = false,
   enableLargeDocumentMode = applyLayoutPreferences,
   isActive = true,
+  topContent,
   onTerminate,
   documentScope = 'document',
   documentMarkdown,
@@ -1397,6 +1423,8 @@ export function TipTapEditor({
   const [customAiInstruction, setCustomAiInstruction] = useState('')
   const [isCanvasDragOver, setIsCanvasDragOver] = useState(false)
   const [isCanvasDropPending, setIsCanvasDropPending] = useState(false)
+  const [collaborationReadyPath, setCollaborationReadyPath] = useState<string | null>(null)
+  const [editorMountVersion, setEditorMountVersion] = useState(0)
   const aiActionHandlersRef = useRef({
     polish: async () => {},
     concise: async () => {},
@@ -1510,6 +1538,7 @@ export function TipTapEditor({
       isReadyRef.current = false
       isFirstUpdateRef.current = true
       initializedForPathRef.current = activeFilePath
+      setCollaborationReadyPath(null)
       pendingSyncUpdateRef.current = null
       restoredViewPathRef.current = null
       sourceMarkdownRef.current = initialContent
@@ -1531,12 +1560,20 @@ export function TipTapEditor({
     }
   }, [activeFilePath, enableLargeDocumentMode, getEditorViewState, initialContent, isMobile, isSectionScope])
 
-  // Keep one Y.Doc for the lifetime of the active file. Tiptap writes its
-  // ProseMirror document into this CRDT directly; the WebSocket session below
-  // is only responsible for transporting and persisting Yjs updates.
+  // Reuse one Y.Doc for the whole workspace session, not for one tab mount.
+  // Closing and reopening a tab must only detach/reattach Tiptap; rebuilding
+  // the Y.Doc would merge persisted inserts into a fresh seed and duplicate
+  // Markdown content.
+  const collaborationWorkspaceId = getNoteGenServerBackgroundConnection()?.profile.workspaceId ?? null
   const collaborationDoc = useMemo(
-    () => editable && activeFilePath ? new Y.Doc() : null,
-    [activeFilePath, editable],
+    () => editable
+      && activeFilePath
+      && collaborationWorkspaceId
+      && !isLargeDocument
+      && !isSectionScope
+      ? getNoteGenServerMarkdownDoc(collaborationWorkspaceId, activeFilePath)
+      : null,
+    [activeFilePath, collaborationWorkspaceId, editable, isLargeDocument, isSectionScope],
   )
 
   const editor = useEditor({
@@ -1824,18 +1861,29 @@ export function TipTapEditor({
       // 自定义粘贴 Markdown 扩展
       PasteMarkdown,
       BlurSelectionHighlight,
+      RemoteEditorPresence,
+      RemoteCollaborationScrollGuard,
     ],
     // Parse after initialization so malformed or unsupported Markdown cannot
     // throw during React render and take down the entire editor tab.
     content: '',
     contentType: 'markdown',
     editable,
-    onUpdate: ({ editor }) => {
+    onCreate: () => setEditorMountVersion(version => version + 1),
+    onUpdate: ({ editor, transaction }) => {
       // Bug fix: Only trigger onChange if editor is ready (not during initialization)
       // Using counter to handle rapid successive updates
       if (externalUpdateCounterRef.current === 0 && isReadyRef.current) {
         markEditorPathMutation(activeFilePathRef.current)
         onContentDirtyRef.current?.()
+        // The XmlFragment changes synchronously. Mirror it in the same editor
+        // update so an immediate tab close cannot leave the materializer with
+        // the previous Markdown, while the ordinary disk write stays debounced.
+        if (!isRemoteCollaborationTransaction(transaction)) {
+          collaborationSessionRef.current?.setText(
+            normalizeMarkdownPlaceholders(editor.getMarkdown()),
+          )
+        }
         scheduleMarkdownChange(editor)
         // Mark that we've processed the first update
         isFirstUpdateRef.current = false
@@ -1847,7 +1895,7 @@ export function TipTapEditor({
         // Skip other updates (counter > 0 means external update)
       }
     },
-  })
+  }, [collaborationDoc])
 
   blockingActivityFlushRef.current = () => {
     if (!editor || editor.isDestroyed || blockingActivityTokensRef.current.size > 0) return
@@ -1858,37 +1906,150 @@ export function TipTapEditor({
     let disposed = false
     let announceFocus: (() => void) | undefined
     let clearFocus: (() => void) | undefined
+    let announceSelection: (() => void) | undefined
+    let unsubscribeAwareness: (() => void) | undefined
+    let unsubscribeMarkdown: (() => void) | undefined
+    let selectionTimer: ReturnType<typeof setTimeout> | undefined
+    let releaseActiveEditor: (() => void) | undefined
+    const remoteDeviceIds = new Set<string>()
     const previous = collaborationSessionRef.current
     collaborationSessionRef.current = null
-    if (previous) previous.destroy()
+    previous?.setAwareness(null)
     if (!editable || !activeFilePath) return
+    if (!collaborationDoc) {
+      setCollaborationReadyPath(activeFilePath)
+      return
+    }
 
     const connection = getNoteGenServerBackgroundConnection()
-    if (!connection?.profile.workspaceId) return
+    if (!connection?.profile.workspaceId) {
+      setCollaborationReadyPath(activeFilePath)
+      return
+    }
+    releaseActiveEditor = retainActiveNoteGenServerMarkdownEditor(activeFilePath)
     void getNoteGenServerTextSession({
       workspaceId: connection.profile.workspaceId,
       relativePath: activeFilePath,
       initialContent: initialContentRef.current,
       ...(collaborationDoc ? { doc: collaborationDoc } : {}),
     }).then(session => {
-      if (disposed || !session) return
+      if (disposed || !session) {
+        if (disposed) session?.setAwareness(null)
+        releaseActiveEditor?.()
+        releaseActiveEditor = undefined
+        if (!disposed) {
+          void import('@/lib/sync/note-gen-server-outbox').then(module => (
+            module.queueNoteGenServerMarkdownChange(activeFilePath, true, {
+              allowActiveEditor: true,
+            })
+          )).then(queued => {
+            if (queued) void triggerNoteGenServerBackgroundSync()
+          })
+          setCollaborationReadyPath(activeFilePath)
+        }
+        return
+      }
       collaborationSessionRef.current = session
-      announceFocus = () => session.setAwareness({ kind: 'editing', path: activeFilePath })
-      clearFocus = () => session.setAwareness(null)
+      setCollaborationReadyPath(activeFilePath)
+      unsubscribeMarkdown = session.subscribe(markdown => {
+        if (!isInitializedRef.current || !editor || editor.isDestroyed) return
+        // Ordinary mirror updates accompany XmlFragment updates and must not
+        // be replayed as another whole-document replacement. Only this
+        // device's pending external-file import needs to enter Tiptap here.
+        if (!session.hasPendingMarkdownImport()) return
+        const current = normalizeMarkdownPlaceholders(editor.getMarkdown())
+        if (current === markdown) {
+          session.completeMarkdownImport()
+          return
+        }
+        isReadyRef.current = false
+        externalUpdateCounterRef.current++
+        setSourceMarkdown(markdown)
+        try {
+          editor.commands.setContent(markdown, {
+            contentType: 'markdown',
+            emitUpdate: true,
+          })
+          setMarkdownParseError(null)
+        } catch (error) {
+          setMarkdownParseError(error instanceof Error ? error.message : String(error))
+        }
+        session.completeMarkdownImport()
+        onChangeRef.current?.(markdown)
+        isReadyRef.current = true
+        queueMicrotask(() => {
+          externalUpdateCounterRef.current = Math.max(0, externalUpdateCounterRef.current - 1)
+        })
+      })
+      const publishSelection = () => {
+        if (!editor || !getMountedEditorView(editor) || !editor.isFocused) return
+        const { anchor, head } = editor.state.selection
+        session.setAwareness({
+          label: isMobile ? '手机端' : '电脑端',
+          anchor,
+          head,
+        })
+      }
+      announceFocus = publishSelection
+      announceSelection = () => {
+        if (selectionTimer) clearTimeout(selectionTimer)
+        selectionTimer = setTimeout(publishSelection, 80)
+      }
+      clearFocus = () => {
+        if (selectionTimer) clearTimeout(selectionTimer)
+        selectionTimer = undefined
+        session.setAwareness(null)
+      }
+      unsubscribeAwareness = session.subscribeAwareness((deviceId, presence) => {
+        const mountedView = editor ? getMountedEditorView(editor) : null
+        if (!editor || !mountedView) return
+        if (presence) remoteDeviceIds.add(deviceId)
+        else remoteDeviceIds.delete(deviceId)
+        mountedView.dispatch(editor.state.tr.setMeta(
+          remoteEditorPresencePluginKey,
+          presence
+            ? updateRemoteEditorPresence(deviceId, presence)
+            : removeRemoteEditorPresence(deviceId),
+        ))
+      })
       editor?.on('focus', announceFocus)
       editor?.on('blur', clearFocus)
+      editor?.on('selectionUpdate', announceSelection)
+      publishSelection()
       // Tiptap's Collaboration extension observes the Y.Doc directly, so no
       // markdown round-trip is needed here (and concurrent edits remain CRDT
       // operations instead of whole-document replacements).
     })
     return () => {
       disposed = true
+      if (editor && !editor.isDestroyed) {
+        const finalMarkdown = normalizeMarkdownPlaceholders(editor.getMarkdown())
+        collaborationSessionRef.current?.setText(finalMarkdown)
+        flushMarkdownChange(editor)
+      }
       if (announceFocus) editor?.off('focus', announceFocus)
       if (clearFocus) editor?.off('blur', clearFocus)
-      collaborationSessionRef.current?.setAwareness(null)
-      collaborationSessionRef.current = null
+      if (announceSelection) editor?.off('selectionUpdate', announceSelection)
+      if (selectionTimer) clearTimeout(selectionTimer)
+      unsubscribeAwareness?.()
+      unsubscribeMarkdown?.()
+      const mountedView = editor ? getMountedEditorView(editor) : null
+      if (editor && mountedView) {
+        for (const deviceId of remoteDeviceIds) {
+          mountedView.dispatch(editor.state.tr.setMeta(
+            remoteEditorPresencePluginKey,
+            removeRemoteEditorPresence(deviceId),
+          ))
+        }
+      }
+      releaseActiveEditor?.()
+      const currentSession = collaborationSessionRef.current
+      currentSession?.setAwareness(null)
+      if (collaborationSessionRef.current === currentSession) {
+        collaborationSessionRef.current = null
+      }
     }
-  }, [activeFilePath, editable, editor, collaborationDoc])
+  }, [activeFilePath, editable, editor, collaborationDoc, flushMarkdownChange, isMobile])
 
   const trySetMarkdownContent = useCallback((
     targetEditor: CoreEditor,
@@ -2470,7 +2631,7 @@ export function TipTapEditor({
       document.removeEventListener('pointerup', handlePointerUp, true)
       document.removeEventListener('pointercancel', handlePointerCancel, true)
     }
-  }, [editor, isSectionVirtualView])
+  }, [editor, activeFilePath, editorMountVersion, isSectionVirtualView])
 
   const clearBlurSelectionHighlight = useCallback(() => {
     if (!editor || editor.isDestroyed) {
@@ -2576,8 +2737,10 @@ export function TipTapEditor({
       return
     }
 
+    const mountedView = getMountedEditorView(editor)
+    if (!mountedView) return
     const scrollContainer = scrollContainerRef.current
-    const proseMirror = editor.view.dom
+    const proseMirror = mountedView.dom
     const scrollTargets = [scrollContainer, proseMirror].filter((target): target is HTMLElement => !!target)
 
     if (!scrollTargets.length) {
@@ -2613,7 +2776,7 @@ export function TipTapEditor({
         window.cancelAnimationFrame(animationFrame)
       }
     }
-  }, [isMobile, editor, activeFilePath])
+  }, [isMobile, editor, activeFilePath, editorMountVersion])
 
   useEffect(() => {
     if (!editor || !activeFilePath) {
@@ -2726,17 +2889,18 @@ export function TipTapEditor({
         return
       }
 
-      if (isMobile) {
-        editor.commands.setTextSelection({
-          from: selectionFrom,
-          to: selectionTo,
-        })
-      } else {
-        editor.chain().focus().setTextSelection({
-          from: selectionFrom,
-          to: selectionTo,
-        }).run()
+      if (!isMobile) {
+        editor.commands.focus()
       }
+
+      const doc = editor.state.doc
+      const resolvedFrom = clampSelectionPosition(selectionFrom, doc.content.size)
+      const resolvedTo = clampSelectionPosition(selectionTo, doc.content.size)
+      const selection = TextSelection.between(
+        doc.resolve(resolvedFrom),
+        doc.resolve(resolvedTo),
+      )
+      editor.view.dispatch(editor.state.tr.setSelection(selection))
 
       requestAnimationFrame(() => {
         if (!scrollContainerRef.current) {
@@ -2842,7 +3006,11 @@ export function TipTapEditor({
       timers.clear()
     }
 
-    const scheduleSelectionScroll = () => {
+    const scheduleSelectionScroll = (event?: unknown) => {
+      const transaction = event && typeof event === 'object' && 'transaction' in event
+        ? (event as { transaction?: Transaction }).transaction
+        : undefined
+      if (transaction && isRemoteCollaborationTransaction(transaction)) return
       clearTimers()
 
       scrollDelays.forEach((delay) => {
@@ -3450,19 +3618,28 @@ export function TipTapEditor({
     }
 
     if (changed) {
-      editor.view.dispatch(tr)
+      getMountedEditorView(editor)?.dispatch(tr)
     }
-  }, [editor, pendingQuote, activeFilePath, isSectionScope, usesCanonicalMarkdown])
+  }, [
+    activeFilePath,
+    editor,
+    editorMountVersion,
+    isSectionScope,
+    pendingQuote,
+    usesCanonicalMarkdown,
+  ])
 
   useEffect(() => {
     if (!editor || !isMobile) return
 
-    const editorDom = editor.view.dom
+    const mountedView = getMountedEditorView(editor)
+    if (!mountedView) return
+    const editorDom = mountedView.dom
     const handleMobileImageClick = (event: Event) => {
       const target = event.target as HTMLElement | null
       if (!target || target.tagName !== 'IMG') return
 
-      const pos = editor.view.posAtDOM(target, 0)
+      const pos = mountedView.posAtDOM(target, 0)
       editor.chain().focus().setNodeSelection(pos).run()
       updateMobileContext()
     }
@@ -3471,7 +3648,7 @@ export function TipTapEditor({
     return () => {
       editorDom.removeEventListener('click', handleMobileImageClick)
     }
-  }, [editor, isMobile, updateMobileContext])
+  }, [editor, isMobile, updateMobileContext, editorMountVersion])
 
   // Auto scroll to bottom when content changes and autoScroll is enabled
   useEffect(() => {
@@ -3528,7 +3705,9 @@ export function TipTapEditor({
   // Handle image paste and file drop
   useEffect(() => {
     // Check if editor is fully initialized
-    if (!editor || !editor.view || !editor.view.dom) return
+    if (!editor) return
+    const mountedView = getMountedEditorView(editor)
+    if (!mountedView) return
 
     const handlePaste = (event: ClipboardEvent) => {
       const files = event.clipboardData?.files
@@ -3728,8 +3907,7 @@ export function TipTapEditor({
 
     // Add event listeners to editor DOM element
     // Check if editor is fully initialized first
-    if (!editor.view || !editor.view.dom) return
-    const dom = editor.view.dom
+    const dom = mountedView.dom
     dom.addEventListener('paste', handlePaste as EventListener)
     dom.addEventListener('drop', handleDrop as EventListener, true)
 
@@ -3737,12 +3915,14 @@ export function TipTapEditor({
       dom.removeEventListener('paste', handlePaste as EventListener)
       dom.removeEventListener('drop', handleDrop as EventListener, true)
     }
-  }, [beginBlockingActivity, editor, t, tImage])
+  }, [beginBlockingActivity, editor, editorMountVersion, t, tImage])
 
   // Handle copy event to output Markdown format
   useEffect(() => {
     // Check if editor is fully initialized
-    if (!editor || !editor.view || !editor.view.dom) return
+    if (!editor) return
+    const mountedView = getMountedEditorView(editor)
+    if (!mountedView) return
 
     const handleCopy = (event: ClipboardEvent) => {
       const { from, to } = editor.state.selection
@@ -3770,13 +3950,13 @@ export function TipTapEditor({
       }
     }
 
-    const dom = editor.view.dom
+    const dom = mountedView.dom
     dom.addEventListener('copy', handleCopy as EventListener)
 
     return () => {
       dom.removeEventListener('copy', handleCopy as EventListener)
     }
-  }, [editor])
+  }, [editor, editorMountVersion])
 
   // Handle AI Polish - improve selected text (with streaming and suggestion mode)
   const handleAIPolish = useCallback(async () => {
@@ -4401,6 +4581,8 @@ export function TipTapEditor({
   // Bug fix: Only initialize if the editor is for the current file path
   useEffect(() => {
     if (!editor || !activeFilePath) return
+    if (collaborationDoc && collaborationReadyPath !== activeFilePath) return
+    if (!getMountedEditorView(editor)) return
 
     // Check if this is still the correct file path (handle race conditions)
     const currentPath = activeFilePath
@@ -4410,7 +4592,7 @@ export function TipTapEditor({
     // Bug fix: Also check that we're initializing for the correct file path
     if (!isInitializedRef.current) {
       // Use setTimeout to avoid flushSync conflict during React render
-      setTimeout(() => {
+      const initializationTimer = setTimeout(() => {
         // Check if the file path is still the same (handle race condition)
         if (activeFilePath !== currentPath) return
 
@@ -4427,10 +4609,42 @@ export function TipTapEditor({
           return
         }
 
-        const didLoadVisualContent = trySetMarkdownContent(editor, nextContent, { resetHistory: true })
+        const collaborationSession = collaborationSessionRef.current
+        const restoredContent = normalizeMarkdownPlaceholders(editor.getMarkdown())
+        let didLoadVisualContent = true
+        if (collaborationSession?.hasPendingMarkdownImport()) {
+          const importedContent = collaborationSession.getText()
+          sourceMarkdownRef.current = importedContent
+          setSourceMarkdown(importedContent)
+          didLoadVisualContent = trySetMarkdownContent(
+            editor,
+            importedContent,
+            { resetHistory: true },
+          )
+          collaborationSession.completeMarkdownImport()
+          if (importedContent !== nextContent) onChangeRef.current?.(importedContent)
+        } else if (collaborationSession?.hasMarkdownMirror()) {
+          // Once migrated, the XmlFragment is authoritative. The disk file is
+          // only its local projection and may lag behind after a crash or a
+          // remote edit, so it must never overwrite restored CRDT state.
+          sourceMarkdownRef.current = restoredContent
+          setSourceMarkdown(restoredContent)
+          collaborationSession.setText(restoredContent)
+          if (restoredContent !== nextContent) onChangeRef.current?.(restoredContent)
+        } else {
+          // One-time migration: seed a note that has no Markdown CRDT mirror
+          // from its existing local file, after remote restoration completes.
+          sourceMarkdownRef.current = nextContent
+          setSourceMarkdown(nextContent)
+          didLoadVisualContent = trySetMarkdownContent(
+            editor,
+            nextContent,
+            { resetHistory: true },
+          )
+          collaborationSession?.setText(nextContent)
+        }
         setIsPreparingLargeDocumentVisual(false)
         if (!didLoadVisualContent) return
-
         // Mark as initialized to allow subsequent content updates
         isInitializedRef.current = true
         // Bug fix: Mark editor as ready AFTER content is set
@@ -4448,10 +4662,14 @@ export function TipTapEditor({
           restoreEditorViewState(currentPath)
         }
       }, 0)
+      return () => clearTimeout(initializationTimer)
     }
   }, [
     activeFilePath,
+    collaborationDoc,
+    collaborationReadyPath,
     editor,
+    editorMountVersion,
     initialContent,
     isLargeDocument,
     isSectionScope,
@@ -4492,7 +4710,7 @@ export function TipTapEditor({
       }
       editor.off('transaction', handleTransaction)
     }
-  }, [activeFilePath, editor, isActive, isSectionVirtualView])
+  }, [activeFilePath, editor, editorMountVersion, isActive, isSectionVirtualView])
 
   // Listen for search trigger from layout (Ctrl+F / Cmd+F)
   useEffect(() => {
@@ -4640,6 +4858,7 @@ export function TipTapEditor({
 
     const handleRemoteContentUpdate = (event: { content: string }) => {
       if (!editor || typeof event?.content !== 'string') return
+      if (collaborationSessionRef.current) return
       if (sourceMarkdownRef.current !== event.content) {
         markEditorPathMutation(activeFilePathRef.current)
       }
@@ -4714,6 +4933,10 @@ export function TipTapEditor({
 
     const handleSyncContentUpdated = (event: { path: string; content: string }) => {
       if (!editor || !event || event.path !== activeFilePath) return
+      // Active NoteGen sessions receive remote changes through Yjs. Applying a
+      // delayed materialized Markdown snapshot with setContent would replace
+      // newer local operations and make the text visibly jump backwards.
+      if (collaborationSessionRef.current) return
       if (sourceMarkdownRef.current !== event.content) {
         markEditorPathMutation(event.path)
       }
@@ -5434,7 +5657,9 @@ export function TipTapEditor({
         return
       }
 
-      if (isMobile && !isFocusWithinEditor(editor.view) && lastEditorSelectionQuote) {
+      const mountedView = getMountedEditorView(editor)
+      if (isMobile && lastEditorSelectionQuote
+        && (!mountedView || !isFocusWithinEditor(mountedView))) {
         useChatStore.getState().setEditorSelectionQuote(lastEditorSelectionQuote)
         return
       }
@@ -6236,7 +6461,7 @@ export function TipTapEditor({
     }
 
     // Register listeners synchronously
-    if (editor) {
+    if (editor && getMountedEditorView(editor)) {
       setupListeners()
     }
 
@@ -6245,6 +6470,7 @@ export function TipTapEditor({
     activeFilePath,
     classifyCanonicalMarkdown,
     editor,
+    editorMountVersion,
     flushSectionedMarkdown,
     handleSectionedMarkdownChange,
     handleSourceMarkdownChange,
@@ -6407,6 +6633,7 @@ export function TipTapEditor({
               : undefined
           }
         >
+        {topContent}
         {effectiveViewMode === 'source' ? (
           <div className="flex h-full min-h-0 w-full flex-col">
             {markdownParseError ? (

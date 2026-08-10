@@ -6,6 +6,7 @@ import { TipTapEditor } from '@/app/core/main/editor/markdown/tiptap-editor'
 import type { Editor } from '@tiptap/react'
 import { Loader2 } from 'lucide-react'
 import useArticleStore from '@/stores/article'
+import { MarkdownConflictEditor } from '@/app/core/main/editor/markdown/sync/markdown-conflict-editor'
 
 interface MobileEditorProps {
   onEditorReady?: (editor: Editor | null) => void
@@ -23,6 +24,7 @@ export function MobileEditor({ onEditorReady }: MobileEditorProps) {
   const [content, setContent] = useState('')
   const [isLoading, setIsLoading] = useState(Boolean(activeFilePath))
   const [isEditorReady, setIsEditorReady] = useState(false)
+  const [editorInstance, setEditorInstance] = useState<Editor | null>(null)
 
   const activePathRef = useRef<string>('')
   const contentRef = useRef<string>('')
@@ -44,6 +46,7 @@ export function MobileEditor({ onEditorReady }: MobileEditorProps) {
       contentRef.current = ''
       setIsLoading(false)
       setIsEditorReady(false)
+      setEditorInstance(null)
     }
   }, [activeFilePath])
 
@@ -101,6 +104,11 @@ export function MobileEditor({ onEditorReady }: MobileEditorProps) {
     setIsEditorReady(true)
   }, [])
 
+  const handleEditorInstance = useCallback((editor: Editor | null) => {
+    setEditorInstance(editor)
+    onEditorReady?.(editor)
+  }, [onEditorReady])
+
   // 清理定时器
   useEffect(() => {
     return () => {
@@ -128,9 +136,10 @@ export function MobileEditor({ onEditorReady }: MobileEditorProps) {
         placeholder={tEditor('placeholder')}
         activeFilePath={activeFilePath}
         onReady={handleEditorReady}
-        onEditorReady={onEditorReady}
+        onEditorReady={handleEditorInstance}
         mobileMode
         applyLayoutPreferences
+        topContent={<MarkdownConflictEditor filePath={activeFilePath} editor={editorInstance} />}
       />
     </div>
   )

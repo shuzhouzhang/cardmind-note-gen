@@ -27,10 +27,10 @@ import useSettingStore from '@/stores/setting'
 import useSyncStore from '@/stores/sync'
 import { SYNC_PLATFORMS, SYNC_PLATFORM_INFO, SyncPlatform, type CloudFolderConfig, type PrimarySyncPlatform } from '@/types/sync'
 
-type MobileSyncPlatform = SyncPlatform | 'iCloud' | 'oneDrive' | 'noteGenServer'
+type MobileSyncPlatform = SyncPlatform | 'local' | 'iCloud' | 'oneDrive' | 'noteGenServer'
 
 function toSyncPlatform(platformName: MobileSyncPlatform): SyncPlatform | null {
-  if (platformName === 'noteGenServer') return null
+  if (platformName === 'noteGenServer' || platformName === 'local') return null
   return platformName === 'iCloud' || platformName === 'oneDrive' ? 'cloudFolder' : platformName
 }
 
@@ -48,10 +48,10 @@ export default function SyncPage() {
   const isAndroid = currentPlatform === 'android'
   const standardPlatforms = SYNC_PLATFORMS.filter(platformName => platformName !== 'cloudFolder')
   const availablePlatforms: MobileSyncPlatform[] = isIOS
-    ? ['noteGenServer', ...standardPlatforms, 'iCloud', 'oneDrive']
+    ? ['local', 'noteGenServer', ...standardPlatforms, 'iCloud', 'oneDrive']
     : isAndroid
-      ? ['noteGenServer', ...standardPlatforms, 'oneDrive']
-      : ['noteGenServer', ...standardPlatforms]
+      ? ['local', 'noteGenServer', ...standardPlatforms, 'oneDrive']
+      : ['local', 'noteGenServer', ...standardPlatforms]
   const {
     primaryBackupMethod,
     setPrimaryBackupMethod,
@@ -164,10 +164,12 @@ export default function SyncPage() {
   }, [isAndroid, isIOS, setPrimaryBackupMethod])
 
   const selectedSyncPlatform = toSyncPlatform(tab)
-  const currentSyncState = selectedSyncPlatform
+  const currentSyncState = tab === 'local'
+    ? SyncStateEnum.success
+    : selectedSyncPlatform
     ? getCurrentSyncState(selectedSyncPlatform)
     : SyncStateEnum.fail
-  const isFileAutoSyncDisabled = currentSyncState !== SyncStateEnum.success
+  const isFileAutoSyncDisabled = tab === 'local' || currentSyncState !== SyncStateEnum.success
   const isCloudFolderTab = selectedSyncPlatform === 'cloudFolder'
   const supportsCloudFolderFileSync = tab === 'oneDrive'
 
@@ -197,6 +199,7 @@ export default function SyncPage() {
   }
 
   function getProviderLabel(platform: MobileSyncPlatform) {
+    if (platform === 'local') return t('settings.sync.localStorage.title')
     if (platform === 'noteGenServer') return t('settings.sync.noteGenServer.title')
     if (platform === 'iCloud') return t('settings.sync.iCloud.title')
     if (platform === 'oneDrive' || platform === 'cloudFolder') return t('settings.sync.oneDrive.title')
@@ -225,6 +228,15 @@ export default function SyncPage() {
     switch (tab) {
       case 'noteGenServer':
         return <NoteGenServerSync />
+      case 'local':
+        return (
+          <Item variant="outline">
+            <ItemContent>
+              <ItemTitle>{t('settings.sync.localStorage.title')}</ItemTitle>
+              <ItemDescription>{t('settings.sync.localStorage.description')}</ItemDescription>
+            </ItemContent>
+          </Item>
+        )
       case 'github':
         return <GithubSync />
       case 'gitee':
@@ -281,10 +293,10 @@ export default function SyncPage() {
               }))}
             />
           </div>
-          {selectedSyncPlatform || tab === 'noteGenServer' ? (
+          {selectedSyncPlatform || tab === 'local' || tab === 'noteGenServer' ? (
             <div className="shrink-0 [&>button]:h-11">
               <UsePlatformButton
-                platform={tab === 'noteGenServer' ? 'noteGenServer' : selectedSyncPlatform!}
+                platform={tab === 'noteGenServer' || tab === 'local' ? tab : selectedSyncPlatform!}
                 disabled={tab === 'noteGenServer'
                   ? noteGenConnectionState !== 'connected'
                   : currentSyncState !== SyncStateEnum.success}

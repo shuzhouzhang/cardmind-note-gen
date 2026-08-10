@@ -72,7 +72,9 @@ export function FileFooter() {
     || defaultWorkspacePath
     || defaultWorkspaceName
   const syncStatusText = sync.status === 'available'
-    ? tContext('syncAvailable', { platform: sync.platform })
+    ? sync.platform === 'local'
+      ? tContext('localStorage')
+      : tContext('syncAvailable', { platform: sync.platform })
     : sync.status === 'checking'
       ? tContext('syncChecking', { platform: sync.platform })
       : sync.status === 'unavailable'

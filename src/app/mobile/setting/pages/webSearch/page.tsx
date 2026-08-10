@@ -1,5 +1,5 @@
-import WebSearchSettingPage from '@/app/core/setting/webSearch/page'
+import { WebSearchSettings } from '@/app/core/setting/webSearch/web-search-settings'
 
 export default function MobileWebSearchSettingPage() {
-  return <WebSearchSettingPage mobile />
+  return <WebSearchSettings mobile />
 }

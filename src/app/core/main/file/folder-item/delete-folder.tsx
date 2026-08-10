@@ -24,6 +24,9 @@ interface DeleteFolderProps {
 export function DeleteFolder({ item, shortcut }: DeleteFolderProps) {
   const t = useTranslations('article.file');
   const primaryBackupMethod = useSettingStore(state => state.primaryBackupMethod)
+  const deleteFolderLabel = primaryBackupMethod === 'noteGenServer'
+    ? t('context.delete')
+    : t('context.deleteLocalFolder')
   const {
     fileTree,
     setFileTree,
@@ -108,14 +111,14 @@ export function DeleteFolder({ item, shortcut }: DeleteFolderProps) {
         menuType="file"
       >
         <Trash2 className="mr-2 h-4 w-4" />
-        {t('context.deleteLocalFolder')}
+        {deleteFolderLabel}
         {shortcut && (
           <ContextMenuShortcut menuType="file">
             <Kbd>{shortcut}</Kbd>
           </ContextMenuShortcut>
         )}
       </ContextMenuItem>
-      {primaryBackupMethod !== 'cloudFolder' && primaryBackupMethod !== 'noteGenServer' ? (
+      {primaryBackupMethod !== 'local' && primaryBackupMethod !== 'cloudFolder' && primaryBackupMethod !== 'noteGenServer' ? (
         <ContextMenuItem
           inset
           disabled={!hasRemoteFolderData(item)}

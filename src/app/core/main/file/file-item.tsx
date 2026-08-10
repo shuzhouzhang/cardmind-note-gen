@@ -49,6 +49,7 @@ import {
   prepareActiveEditorDeactivationDurably,
   prepareActiveEditorPathMutationDurably,
 } from '@/lib/editor-deactivation'
+import { recordNoteGenServerV2PathMove } from '@/lib/sync/note-gen-server-outbox'
 
 type Platform = 'macos' | 'windows' | 'linux' | 'unknown'
 
@@ -150,6 +151,9 @@ export function FileItem({
   const isMobile = useIsMobile()
   const [exportingFormat, setExportingFormat] = useState<MarkdownExportFormat | null>(null)
   const [isUploading, setIsUploading] = useState(false)
+  const deleteFileLabel = primaryBackupMethod === 'noteGenServer'
+    ? t('context.delete')
+    : t('context.deleteLocalFile')
 
   // 检查路径是否在 skills 文件夹下
   const isInSkillsFolder = (itemPath: string): boolean => {
@@ -329,7 +333,7 @@ export function FileItem({
       } catch (error) {
         console.error('Delete file failed:', error)
         toast({
-          title: t('context.deleteLocalFile'),
+          title: deleteFileLabel,
           description: '删除文件失败: ' + error,
           variant: 'destructive'
         })
@@ -350,8 +354,8 @@ export function FileItem({
       try {
         // 获取当前主要备份方式
         const store = await Store.load('store.json');
-        const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder' | 'noteGenServer'>('primaryBackupMethod') || 'github';
-        if (backupMethod === 'cloudFolder' || backupMethod === 'noteGenServer') {
+        const backupMethod = await store.get<'local' | 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder' | 'noteGenServer'>('primaryBackupMethod') || 'local';
+        if (backupMethod === 'local' || backupMethod === 'cloudFolder' || backupMethod === 'noteGenServer') {
           setEntryLoading(currentPath, false)
           return
         }
@@ -557,6 +561,7 @@ export function FileItem({
         }
         const { renameVectorDocumentsByFilename } = await import('@/db/vector')
         await renameVectorDocumentsByFilename(path, targetRelativePath)
+        await recordNoteGenServerV2PathMove(path, targetRelativePath)
       } else {
         // 创建新文件
         const pathOptions = await getFilePathOptions(targetRelativePath)
@@ -916,6 +921,7 @@ export function FileItem({
                   <span className={`text-${fileManagerTextSize} min-w-0 flex-1 truncate`}>{item.name}</span>
                 </div>
                 <FileTreeDecorations
+                  relativePath={path}
                   iconSize={iconSize}
                   knowledge={renderVectorIcon()}
                   syncStatus={syncStatus}
@@ -944,13 +950,13 @@ export function FileItem({
                     <MobileMenuItem disabled={!item.isLocale} onClick={handleStartRename}>
                       {t('context.rename')}
                     </MobileMenuItem>
-                    {primaryBackupMethod !== 'cloudFolder' && primaryBackupMethod !== 'noteGenServer' ? (
+                    {primaryBackupMethod !== 'local' && primaryBackupMethod !== 'cloudFolder' && primaryBackupMethod !== 'noteGenServer' ? (
                       <MobileMenuItem disabled={!item.sha} className="text-red-600" onClick={handleDeleteSyncFile}>
                         {t('context.deleteSyncFile')}
                       </MobileMenuItem>
                     ) : null}
                     <MobileMenuItem disabled={!item.isLocale || item.name === ''} className="text-red-600" onClick={handleDeleteFile}>
-                      {t('context.deleteLocalFile')}
+                      {deleteFileLabel}
                     </MobileMenuItem>
                   </MobileActionMenu>
                 )}
@@ -968,6 +974,7 @@ export function FileItem({
                   <span className={`text-${fileManagerTextSize} min-w-0 flex-1 truncate`}>{item.name}</span>
                 </div>
                 <FileTreeDecorations
+                  relativePath={path}
                   iconSize={iconSize}
                   knowledge={renderVectorIcon()}
                   syncStatus={syncStatus}
@@ -996,13 +1003,13 @@ export function FileItem({
                     <MobileMenuItem disabled={!item.isLocale} onClick={handleStartRename}>
                       {t('context.rename')}
                     </MobileMenuItem>
-                    {primaryBackupMethod !== 'cloudFolder' && primaryBackupMethod !== 'noteGenServer' ? (
+                    {primaryBackupMethod !== 'local' && primaryBackupMethod !== 'cloudFolder' && primaryBackupMethod !== 'noteGenServer' ? (
                       <MobileMenuItem disabled={!item.sha} className="text-red-600" onClick={handleDeleteSyncFile}>
                         {t('context.deleteSyncFile')}
                       </MobileMenuItem>
                     ) : null}
                     <MobileMenuItem disabled={!item.isLocale || item.name === ''} className="text-red-600" onClick={handleDeleteFile}>
-                      {t('context.deleteLocalFile')}
+                      {deleteFileLabel}
                     </MobileMenuItem>
                   </MobileActionMenu>
                 )}
@@ -1111,7 +1118,7 @@ export function FileItem({
                   <Kbd>{renameKey}</Kbd>
                 </ContextMenuShortcut>
               </ContextMenuItem>
-              {primaryBackupMethod !== 'cloudFolder' && primaryBackupMethod !== 'noteGenServer' ? (
+              {primaryBackupMethod !== 'local' && primaryBackupMethod !== 'cloudFolder' && primaryBackupMethod !== 'noteGenServer' ? (
                 <ContextMenuItem disabled={!item.sha} inset className="text-red-900" onClick={handleDeleteSyncFile} menuType="file">
                   <RefreshCwOff className="mr-2 h-4 w-4" />
                   {t('context.deleteSyncFile')}
@@ -1119,7 +1126,7 @@ export function FileItem({
               ) : null}
               <ContextMenuItem disabled={!item.isLocale || item.name === ''} inset className="text-red-900" onClick={handleDeleteFile} menuType="file">
                 <Trash2 className="mr-2 h-4 w-4" />
-                {t('context.deleteLocalFile')}
+                {deleteFileLabel}
                 <ContextMenuShortcut menuType="file">
                   <Kbd>{deleteKey}</Kbd>
                 </ContextMenuShortcut>

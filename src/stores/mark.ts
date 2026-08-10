@@ -374,7 +374,7 @@ const useMarkStore = create<MarkState>((set, get) => ({
     const filename = 'marks.json'
     const marks = await getAllMarks()
     const store = await Store.load('store.json');
-    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github';
+    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local';
     let result = false
     let files: any;
     let res;
@@ -507,7 +507,7 @@ const useMarkStore = create<MarkState>((set, get) => ({
     const path = '.data'
     const filename = 'marks.json'
     const store = await Store.load('store.json');
-    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github';
+    const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local';
     let result: Mark[] = []
     let hasRemoteData = false
     let files;

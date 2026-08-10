@@ -124,7 +124,10 @@ process.on('SIGTERM', () => shutdown(143))
 
 try {
   const devServerAlreadyRunning = await devServerIsReady()
-  const desktopArgs = ['tauri', 'dev']
+  // iOS generation updates files under src-tauri/. Without this flag the
+  // desktop watcher treats those generated files as Rust source changes and
+  // repeatedly rebuilds while Xcode holds the same Cargo target lock.
+  const desktopArgs = ['tauri', 'dev', '--no-watch']
 
   if (devServerAlreadyRunning) {
     console.log(`[dev:pc-ios] Reusing the dev server at ${devServerUrl}.`)

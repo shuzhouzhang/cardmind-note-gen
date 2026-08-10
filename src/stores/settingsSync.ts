@@ -74,8 +74,8 @@ const useSettingsSyncStore = create<SettingsSyncState>((set) => ({
   uploadSettings: async () => {
     try {
       const store = await Store.load('store.json')
-      const storedPrimaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github'
-      if (storedPrimaryBackupMethod === 'noteGenServer') return false
+      const storedPrimaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local'
+      if (storedPrimaryBackupMethod === 'local' || storedPrimaryBackupMethod === 'noteGenServer') return false
       const primaryBackupMethod = storedPrimaryBackupMethod as SettingsSyncProvider
       const excludeSensitiveConfig = await store.get<boolean>('excludeSensitiveConfig') !== false
       debugSettingsSync('upload started', {
@@ -218,8 +218,8 @@ const useSettingsSyncStore = create<SettingsSyncState>((set) => ({
   downloadSettings: async (options: SettingsDownloadOptions = {}) => {
     try {
       const store = await Store.load('store.json')
-      const storedPrimaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github'
-      if (storedPrimaryBackupMethod === 'noteGenServer') return false
+      const storedPrimaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'local'
+      if (storedPrimaryBackupMethod === 'local' || storedPrimaryBackupMethod === 'noteGenServer') return false
       const primaryBackupMethod = storedPrimaryBackupMethod as SettingsSyncProvider
       const excludeSensitiveConfig = await store.get<boolean>('excludeSensitiveConfig') !== false
       debugSettingsSync('download started', {

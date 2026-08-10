@@ -62,6 +62,7 @@ interface PushTask {
   timestamp: number
   workspacePath: string
   generation: number
+  provider: string
 }
 
 function getPerfNow() {
@@ -170,7 +171,7 @@ class SyncPushQueue {
    */
   addTask(path: string) {
     if (this.workspaceSwitchPauseDepth > 0) return
-    if (useSettingStore.getState().primaryBackupMethod === 'noteGenServer') return
+    if (useSettingStore.getState().primaryBackupMethod === 'local' || useSettingStore.getState().primaryBackupMethod === 'noteGenServer') return
 
     const now = Date.now()
     const task: PushTask = {
@@ -178,6 +179,7 @@ class SyncPushQueue {
       timestamp: now,
       workspacePath: useSettingStore.getState().workspacePath,
       generation: this.generation,
+      provider: useSettingStore.getState().primaryBackupMethod,
     }
 
     // 重置 lastInputTime，确保从现在开始计算 10 秒
@@ -289,6 +291,7 @@ class SyncPushQueue {
   private isTaskCurrent(task: PushTask) {
     return task.generation === this.generation
       && task.workspacePath === useSettingStore.getState().workspacePath
+      && task.provider === useSettingStore.getState().primaryBackupMethod
       && this.workspaceSwitchPauseDepth === 0
   }
 
@@ -324,10 +327,12 @@ class SyncPushQueue {
           maxRetries,
         })
         const store = await Store.load('store.json')
-        const provider = (await store.get<string>('primaryBackupMethod') || 'github') as SyncProvider
+        const provider = (await store.get<string>('primaryBackupMethod') || 'local') as SyncProvider | 'local' | 'noteGenServer'
+        if (provider !== task.provider) return { success: false }
+        if (provider === 'local' || provider === 'noteGenServer') return { success: false }
         providerForLog = provider
         const repo = (provider !== 's3' && provider !== 'webdav' && provider !== 'cloudFolder')
-          ? await getSyncRepoName(provider)
+          ? await getSyncRepoName(provider as 'github' | 'gitee' | 'gitlab' | 'gitea')
           : undefined
         logPerf('loadConfig', {
           attempt,
@@ -836,9 +841,10 @@ class SyncPushQueue {
       }
 
       const store = await Store.load('store.json')
-      const provider = (await store.get<string>('primaryBackupMethod') || 'github') as SyncProvider
+      const provider = (await store.get<string>('primaryBackupMethod') || 'local') as SyncProvider | 'local' | 'noteGenServer'
+      if (provider === 'local' || provider === 'noteGenServer') return { success: false }
       const repo = (provider !== 's3' && provider !== 'webdav' && provider !== 'cloudFolder')
-        ? await getSyncRepoName(provider)
+        ? await getSyncRepoName(provider as 'github' | 'gitee' | 'gitlab' | 'gitea')
         : undefined
 
       // 从磁盘读取最新内容

@@ -9,6 +9,10 @@ const withNextIntl = createNextIntlPlugin();
 const nextConfig: NextConfig = {
   /* config options here */
   output: "export",
+  // Production builds prune source maps from `.next`; sharing that directory
+  // with an active Turbopack dev server corrupts HMR manifests and the error
+  // overlay. Keep both caches independent.
+  distDir: isProd ? '.next' : '.next-dev',
   images: {
     unoptimized: true,
   },

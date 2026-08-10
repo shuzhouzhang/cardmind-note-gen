@@ -39,7 +39,7 @@ export function SyncTools({ editor, markdown, getMarkdown, prepareExternalAction
     openSettings('sync')
   }
 
-  if (syncContext.primaryBackupMethod === 'noteGenServer') return null
+  if (syncContext.primaryBackupMethod === 'local' || syncContext.primaryBackupMethod === 'noteGenServer') return null
 
   if (configured) {
     return (

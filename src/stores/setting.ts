@@ -22,7 +22,7 @@ import {
 import { APP_FONT_SYSTEM_VALUE, applyAppFontFamily } from '@/lib/font-settings'
 import { prepareActiveEditorDeactivation } from '@/lib/editor-deactivation'
 import type { AgentPermissionMode } from '@/lib/agent/types'
-import type { PrimarySyncPlatform } from '@/types/sync'
+import { normalizePrimarySyncPlatform, type PrimarySyncPlatform } from '@/types/sync'
 import { getWorkspaceSyncRepos, setWorkspaceSyncRepo } from '@/lib/sync/workspace-repos'
 import {
   DEFAULT_EDITOR_CONTENT_WIDTH,
@@ -81,6 +81,25 @@ import {
   type CanvasManagerViewMode,
   type CanvasWheelBehavior,
 } from '@/lib/canvas/preferences'
+
+const OPTIONAL_REMOTE_SETTINGS_TIMEOUT_MS = 5_000
+
+async function withOptionalRemoteSettingsTimeout<T>(request: Promise<T>): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+  try {
+    return await Promise.race([
+      request,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(`Optional settings request timed out after ${OPTIONAL_REMOTE_SETTINGS_TIMEOUT_MS}ms`)),
+          OPTIONAL_REMOTE_SETTINGS_TIMEOUT_MS,
+        )
+      }),
+    ])
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId)
+  }
+}
 
 export enum GenTemplateRange {
   All = 'all',
@@ -536,6 +555,14 @@ const useSettingStore = create<SettingState>((set, get) => ({
     const store = await Store.load('store.json');
     await get().setVersion()
 
+    const storedPrimaryBackupMethod = await store.get<string>('primaryBackupMethod')
+    const normalizedPrimaryBackupMethod = normalizePrimarySyncPlatform(storedPrimaryBackupMethod)
+    if (storedPrimaryBackupMethod !== normalizedPrimaryBackupMethod) {
+      await store.set('primaryBackupMethod', normalizedPrimaryBackupMethod)
+      await store.save()
+    }
+    set({ primaryBackupMethod: normalizedPrimaryBackupMethod })
+
     const legacyAutoDataSyncEnabled = await store.get<boolean>('autoDataSyncEnabled')
     if (await store.get<boolean>('autoRecordSyncEnabled') === undefined) {
       await store.set('autoRecordSyncEnabled', legacyAutoDataSyncEnabled !== false)
@@ -846,10 +873,12 @@ const useSettingStore = create<SettingState>((set, get) => ({
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       }
-      const res = await fetch('https://api.notegen.top/v1/models', {
-        method: 'GET',
-        headers
-      })
+      const res = await withOptionalRemoteSettingsTimeout(
+        fetch('https://api.notegen.top/v1/models', {
+          method: 'GET',
+          headers,
+        }),
+      )
 
       // 检查响应状态
       if (!res.ok) {
@@ -1436,8 +1465,8 @@ const useSettingStore = create<SettingState>((set, get) => ({
     if (workspacePath === get().workspacePath) set({ giteaCustomSyncRepo: repo })
   },
 
-  // 默认使用 GitHub 作为主要备份方式
-  primaryBackupMethod: 'github',
+  // 默认仅使用本地存储
+  primaryBackupMethod: 'local',
   setPrimaryBackupMethod: async (method: PrimarySyncPlatform) => {
     if (method === get().primaryBackupMethod) return
 

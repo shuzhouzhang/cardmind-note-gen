@@ -4,6 +4,7 @@ import { locale as getSystemLocale, platform as getPlatform } from '@tauri-apps/
 import type { AiConfig } from '@/app/core/setting/config'
 
 const CHINA_MAINLAND_STOREFRONT = 'CHN'
+const STOREFRONT_LOOKUP_TIMEOUT_MS = 2_000
 const OPENAI_TEMPLATE_KEYS = new Set(['chatgpt', 'openai'])
 
 let cachedStorefrontCountryCode: string | null = null
@@ -37,7 +38,17 @@ export async function getAppStorefrontCountryCode(): Promise<string | null> {
   }
 
   if (!storefrontCountryCodePromise) {
-    storefrontCountryCodePromise = invoke<string | null>('get_app_storefront_country_code')
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error(`Storefront lookup timed out after ${STOREFRONT_LOOKUP_TIMEOUT_MS}ms`)),
+        STOREFRONT_LOOKUP_TIMEOUT_MS,
+      )
+    })
+    storefrontCountryCodePromise = Promise.race([
+      invoke<string | null>('get_app_storefront_country_code'),
+      timeout,
+    ])
       .then(countryCode => {
         const normalizedCountryCode = countryCode?.trim().toUpperCase() || null
         if (normalizedCountryCode) {
@@ -50,6 +61,7 @@ export async function getAppStorefrontCountryCode(): Promise<string | null> {
         return null
       })
       .finally(() => {
+        if (timeoutId !== null) clearTimeout(timeoutId)
         // StoreKit may not expose a storefront during early app startup. Do not
         // permanently cache that empty result; later callers should retry.
         storefrontCountryCodePromise = null

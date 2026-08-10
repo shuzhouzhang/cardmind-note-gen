@@ -32,7 +32,7 @@ function isRemoteContentEntry(value: unknown): value is RemoteContentEntry {
   return typeof value === "object" && value !== null;
 }
 
-function isGitPlatform(platform: SyncPlatform): platform is GitSyncPlatform {
+function isGitPlatform(platform: PrimarySyncPlatform): platform is GitSyncPlatform {
   return platform === "github" || platform === "gitee" || platform === "gitlab" || platform === "gitea";
 }
 
@@ -403,7 +403,7 @@ async function deleteWebDAVRemoteFolder(config: WebDAVConfig, folderPath: string
 
 export async function deleteRemoteFolder(item: DirTree, localDeleted: boolean) {
   const store = await Store.load("store.json");
-  const platform = await store.get<PrimarySyncPlatform>("primaryBackupMethod") || "github";
+  const platform = await store.get<PrimarySyncPlatform>("primaryBackupMethod") || "local";
   const folderPath = computedParentPath(item);
   const loadedFileEntries = collectFolderFileEntries(item);
   const loadedFilePaths = loadedFileEntries.map(entry => entry.path).filter(isStringPath);

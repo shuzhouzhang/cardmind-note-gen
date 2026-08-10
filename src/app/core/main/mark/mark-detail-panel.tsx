@@ -378,20 +378,22 @@ function MarkDetailToolbar({
     collaborationSessionRef.current = null
     previous?.destroy()
     const connection = getNoteGenServerBackgroundConnection()
-    if (!connection?.profile.workspaceId) return
+    if (!connection?.profile.workspaceId || !mark.syncId) return
+    const syncFields = Object.fromEntries(
+      Object.entries(mark).filter(([key]) => key !== 'id' && key !== 'tagId'),
+    )
     void getNoteGenServerStructuredSession({
       workspaceId: connection.profile.workspaceId,
-      documentId: `record:${mark.id}`,
-      initialFields: mark as unknown as Record<string, unknown>,
+      documentId: `record:${mark.syncId}`,
+      initialFields: syncFields as unknown as Record<string, unknown>,
     }).then(session => {
       if (disposed || !session) return
       collaborationSessionRef.current = session
       session.subscribeFields(fields => {
-        if (disposed || fields.id === undefined) return
-        const nextMark = fields as unknown as Mark
-        if (JSON.stringify(nextMark) === JSON.stringify(mark)) return
+        if (disposed || fields.syncId !== mark.syncId) return
         const state = useMarkStore.getState()
-        state.setMarks(state.marks.map(item => item.id === nextMark.id ? nextMark : item))
+        state.setMarks(state.marks.map(item => item.syncId === mark.syncId
+          ? { ...item, ...fields, id: item.id, tagId: item.tagId } as Mark : item))
       })
     })
     return () => {

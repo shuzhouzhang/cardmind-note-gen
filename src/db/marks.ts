@@ -161,10 +161,11 @@ export async function updateMarkTag(id: number, tagId: number) {
 
 export async function insertMark(mark: Partial<Mark>) {
   const db = await getDb();
+  const recordTag = await import('./tags').then(module => module.ensureRecordTag(mark.tagId))
   const createdAt = Date.now();
   const result = await db.execute(
     "insert into marks (tagId, type, content, url, desc, createdAt, deleted, sourceId) values ($1, $2, $3, $4, $5, $6, $7, $8)",
-    [mark.tagId, mark.type, mark.content, mark.url, mark.desc, createdAt, 0, mark.sourceId ?? null]
+    [recordTag.id, mark.type, mark.content, mark.url, mark.desc, createdAt, 0, mark.sourceId ?? null]
   )
 
   const localImagePath = mark.type && mark.url
@@ -180,13 +181,21 @@ export async function insertMark(mark: Partial<Mark>) {
     source: 'record',
     title: preview || mark.type || 'record',
     description: preview || mark.type || '',
-    tagId: mark.tagId ?? null,
+    tagId: recordTag.id,
     dedupeKey: result.lastInsertId ? `record:${result.lastInsertId}` : `record:${createdAt}:${mark.type || 'record'}`,
     createdAt,
   })
 
   enqueueRecordsAutoSync('mark:insert')
   enqueueMarkKnowledgeIndex(result.lastInsertId)
+
+  if (recordTag.id !== mark.tagId) {
+    await import('@/stores/tag').then(async module => {
+      await module.default.getState().setCurrentTagId(recordTag.id)
+      await module.default.getState().fetchTags()
+      module.default.getState().getCurrentTag()
+    })
+  }
 
   return result
 }
@@ -323,28 +332,35 @@ export async function deleteAllMarks() {
 
 export async function insertMarks(marks: Partial<Mark>[]) {
   const db = await getDb();
+  const { ensureRecordTag } = await import('./tags')
+  const resolvedTagIds = new Map<number | undefined, number>()
   try {
     for (const mark of marks) {
+      let tagId = resolvedTagIds.get(mark.tagId)
+      if (tagId === undefined) {
+        tagId = (await ensureRecordTag(mark.tagId)).id
+        resolvedTagIds.set(mark.tagId, tagId)
+      }
       if (mark.id) {
         const exists = await db.select<Mark[]>(`select ${MARK_COLUMNS} from marks where id = $1`, [mark.id])
         if (exists.length > 0) {
           await db.execute(
             "update marks set tagId = $1, type = $2, content = $3, url = $4, desc = $5, createdAt = $6, deleted = $7, sourceId = $8 where id = $9",
-            [mark.tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, mark.sourceId ?? null, mark.id]
+            [tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, mark.sourceId ?? null, mark.id]
           );
           continue
         }
 
         await db.execute(
           "insert into marks (id, tagId, type, content, url, desc, createdAt, deleted, sourceId) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-          [mark.id, mark.tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, mark.sourceId ?? null]
+          [mark.id, tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, mark.sourceId ?? null]
         );
         continue
       }
 
       await db.execute(
         "insert into marks (tagId, type, content, url, desc, createdAt, deleted, sourceId) values ($1, $2, $3, $4, $5, $6, $7, $8)",
-        [mark.tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, mark.sourceId ?? null]
+        [tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, mark.sourceId ?? null]
       );
     }
     enqueueRecordsAutoSync('mark:bulk-insert')

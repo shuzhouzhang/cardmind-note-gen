@@ -270,7 +270,7 @@ export function OneDriveCloudFolderSync({ onActiveProviderChange }: OneDriveClou
     await autoDataSyncQueue.prepareAutoDataSyncForRepositoryChange()
     const store = await Store.load('store.json')
     const previousConfig = await store.get<CloudFolderConfig>('cloudFolderSyncConfig')
-    const previousMethod = await store.get<PrimarySyncPlatform>('primaryBackupMethod') || 'github'
+    const previousMethod = await store.get<PrimarySyncPlatform>('primaryBackupMethod') || 'local'
     try {
       await store.set('cloudFolderSyncConfig', configured)
       await store.save()

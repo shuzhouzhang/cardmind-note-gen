@@ -2,7 +2,7 @@
 
 import { NextIntlClientProvider } from 'next-intl';
 import type { AbstractIntlMessages } from 'next-intl';
-import { useEffect, useState } from 'react';
+import { Children, useEffect, useMemo, useState } from 'react';
 import {
   DEFAULT_LOCALE,
   LANGUAGE_STORAGE_KEY,
@@ -14,6 +14,7 @@ import {
 export function NextIntlProvider({ children }: { children: React.ReactNode }) {
   const [messages, setMessages] = useState<AbstractIntlMessages | null>(null);
   const [locale, setLocale] = useState<SupportedLocale>(DEFAULT_LOCALE);
+  const keyedChildren = useMemo(() => Children.toArray(children), [children]);
 
   useEffect(() => {
     const savedLocale = normalizeLocale(localStorage.getItem(LANGUAGE_STORAGE_KEY));
@@ -37,7 +38,7 @@ export function NextIntlProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <NextIntlClientProvider locale={locale} messages={messages}>
-      {children}
+      {keyedChildren}
     </NextIntlClientProvider>
   );
 }

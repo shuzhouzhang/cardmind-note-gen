@@ -58,6 +58,11 @@ export function useSyncAvailability() {
     setConfigurationChecking(true)
     try {
       const next = await getSyncConfiguration()
+      if (next.platform === 'local') {
+        const localState = { configured: true, platform: next.platform }
+        if (configurationRequestRef.current === requestId) setState(localState)
+        return localState
+      }
       if (next.platform === 'noteGenServer') {
         const [
           { loadServerProfile },
@@ -120,6 +125,8 @@ export function useSyncAvailability() {
     status = 'checking'
   } else if (!state.configured) {
     status = 'not-configured'
+  } else if (state.platform === 'local') {
+    status = 'available'
   } else if (state.platform === 'noteGenServer') {
     status = state.noteGenReady ? 'available' : 'unavailable'
   } else if (state.platform === 's3' || state.platform === 'webdav' || state.platform === 'cloudFolder') {

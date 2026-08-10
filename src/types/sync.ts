@@ -1,5 +1,21 @@
 export type SyncPlatform = 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'
-export type PrimarySyncPlatform = SyncPlatform | 'noteGenServer'
+export type PrimarySyncPlatform = SyncPlatform | 'local' | 'noteGenServer'
+
+export const PRIMARY_SYNC_PLATFORMS: readonly PrimarySyncPlatform[] = [
+  'local', 'noteGenServer', 'github', 'gitee', 'gitlab', 'gitea', 's3', 'webdav', 'cloudFolder',
+]
+
+export function normalizePrimarySyncPlatform(value: unknown): PrimarySyncPlatform {
+  return typeof value === 'string' && PRIMARY_SYNC_PLATFORMS.includes(value as PrimarySyncPlatform)
+    ? value as PrimarySyncPlatform
+    : 'local'
+}
+
+export function isRemotePrimarySyncPlatform(
+  value: PrimarySyncPlatform,
+): value is Exclude<PrimarySyncPlatform, 'local'> {
+  return value !== 'local'
+}
 
 export type SyncPlatformType = {
   platform: SyncPlatform

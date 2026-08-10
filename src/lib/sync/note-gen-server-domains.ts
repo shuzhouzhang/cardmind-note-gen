@@ -3,6 +3,7 @@
 import { Store } from '@tauri-apps/plugin-store'
 
 import { filterSyncData, shouldExcludeFromSync } from '@/config/sync-exclusions'
+import emitter from '@/lib/emitter'
 import {
   enqueueNoteGenServerOutbox,
   deleteNoteGenServerSyncObject,
@@ -14,6 +15,13 @@ import {
 import type { Mark } from '@/db/marks'
 import type { Tag } from '@/db/tags'
 import type { CanvasProject } from '@/types/canvas'
+import type { Memory } from '@/db/memories'
+import {
+  applySyncV2AtomicBatch, getOrCreateSyncV2Entity, getSyncV2Entity,
+  hasUnresolvedSyncV2ConflictForObject,
+  markSyncV2MutationQueued, recordSyncV2Mutation, type SyncV2Entity,
+  type SyncV2AtomicStatement,
+} from '@/db/note-gen-server-sync-index'
 import { getMarkLocalAssetPaths } from './record-assets'
 import type { ConversationSyncItem, NoteGenServerConversationSnapshot } from './conversation-sync'
 import { setAutoDataSyncApplyingRemote } from './auto-data-sync-bridge'
@@ -28,8 +36,20 @@ import {
   loadServerProfile,
 } from './note-gen-server'
 
-export type NoteGenServerDataDomain = 'records' | 'settings' | 'conversations'
-type NoteGenServerDataKind = 'tag' | 'mark' | 'canvas' | 'setting' | 'conversation'
+export type NoteGenServerDataDomain = 'records' | 'settings' | 'conversations' | 'memories'
+type NoteGenServerDataKind = 'tag' | 'mark' | 'canvas' | 'setting' | 'conversation' | 'memory'
+
+export class NoteGenServerMissingReferenceError extends Error {
+  readonly code = 'note_gen_server_missing_reference'
+
+  constructor(readonly references: Array<{ kind: 'tag' | 'mark', id: string }>) {
+    const reference = references[0]
+    super(reference?.kind === 'tag'
+      ? `记录引用的标签尚未同步：${reference.id}`
+      : `同步对象引用的记录尚未同步：${reference?.id ?? ''}`)
+    this.name = 'NoteGenServerMissingReferenceError'
+  }
+}
 
 type SyncedTag = Omit<Tag, 'id' | 'total' | 'syncId'> & { syncId: string, legacyId?: number }
 type SyncedMark = Omit<Mark, 'id' | 'tagId' | 'syncId'> & {
@@ -59,6 +79,12 @@ interface ConversationPayload {
   value: ConversationSyncItem
   assets?: NoteGenServerAssetReference[]
 }
+interface MemoryPayload {
+  schemaVersion: 1
+  type: 'memory'
+  value: Omit<Memory, 'embedding' | 'embeddingModel' | 'embeddingDimensions' | 'indexingStatus'
+    | 'accessCount' | 'lastAccessedAt' | 'lastRecallReason'>
+}
 interface DeletePayload {
   schemaVersion: 1
   type: 'delete'
@@ -66,7 +92,7 @@ interface DeletePayload {
   logicalKey: string
   deletedAt: number
 }
-type AppDataPayload = TagPayload | MarkPayload | CanvasPayload | SettingPayload | LegacySettingsPayload | ConversationPayload | DeletePayload
+type AppDataPayload = TagPayload | MarkPayload | CanvasPayload | SettingPayload | LegacySettingsPayload | ConversationPayload | MemoryPayload | DeletePayload
 
 interface LocalObject {
   kind: NoteGenServerDataKind
@@ -78,10 +104,14 @@ const DOMAIN_KINDS: Record<NoteGenServerDataDomain, NoteGenServerDataKind[]> = {
   records: ['tag', 'mark', 'canvas'],
   settings: ['setting'],
   conversations: ['conversation'],
+  memories: ['memory'],
 }
 
 const SUPPORTED_DATA_KINDS = new Set<NoteGenServerDataKind>(Object.values(DOMAIN_KINDS).flat())
 const domainQueue = new Map<NoteGenServerDataDomain, Promise<boolean>>()
+let preferencesSession: import('./note-gen-server-collab').NoteGenServerTextSession | null = null
+let bootstrapSettingsStore: Awaited<ReturnType<typeof Store.load>> | null = null
+const structuredSubscriptions = new Map<string, Array<() => void>>()
 
 export async function queueNoteGenServerDomainChange(domain: NoteGenServerDataDomain): Promise<boolean> {
   const previous = domainQueue.get(domain) ?? Promise.resolve(false)
@@ -99,7 +129,7 @@ async function queueNoteGenServerDomainChangeNow(domain: NoteGenServerDataDomain
   if (!profile?.enabled || !profile.workspaceId || !profile.localWorkspaceKey) return false
   const syncScopeId = await getNoteGenServerSyncScopeId(profile)
   const [localObjects, trackedObjects] = await Promise.all([
-    collectLocalObjects(domain),
+    collectLocalObjects(domain, syncScopeId),
     listNoteGenServerSyncObjects(syncScopeId),
   ])
   const trackedById = new Map(trackedObjects.map(object => [object.objectId, object]))
@@ -107,12 +137,24 @@ async function queueNoteGenServerDomainChangeNow(domain: NoteGenServerDataDomain
   let queued = false
 
   for (const object of localObjects) {
-    const objectId = await createDeterministicServerObjectId(profile.workspaceId, object.kind, object.logicalKey)
+    const entity = await getOrCreateSyncV2Entity({
+      scopeId: syncScopeId, kind: object.kind, localKey: object.logicalKey,
+      stableWorkspaceId: profile.workspaceId,
+    })
+    const objectId = entity.objectId
     localIds.add(objectId)
+    // A durable conflict already owns reconciliation for this object. Starting
+    // CRDT collaboration or staging another local mutation here turns every
+    // background scan into a new retry and can create an endless sync echo.
+    if (await hasUnresolvedSyncV2ConflictForObject(syncScopeId, objectId)) continue
+    await ensureStructuredObjectCollaboration({
+      workspaceId: profile.workspaceId, syncScopeId, objectId, object,
+    })
     queued = await queueObject({
       syncScopeId,
       objectId,
       object,
+      entity,
       tracked: trackedById.get(objectId) ?? null,
     }) || queued
   }
@@ -124,9 +166,172 @@ async function queueNoteGenServerDomainChangeNow(domain: NoteGenServerDataDomain
   return queued
 }
 
+export async function ensureNoteGenServerStructuredObjectFromPayload(input: {
+  workspaceId: string
+  syncScopeId: string
+  objectId: string
+  kind: string
+  payload: unknown
+}): Promise<void> {
+  if (!SUPPORTED_DATA_KINDS.has(input.kind as NoteGenServerDataKind)) return
+  const parsed = parsePayload(input.payload, input.kind, false)
+  await ensureStructuredObjectCollaboration({
+    workspaceId: input.workspaceId, syncScopeId: input.syncScopeId, objectId: input.objectId,
+    object: { kind: input.kind as NoteGenServerDataKind,
+      logicalKey: logicalKeyForPayload(parsed as Exclude<AppDataPayload, DeletePayload>), payload: parsed },
+  })
+}
+
+async function ensureStructuredObjectCollaboration(input: {
+  workspaceId: string
+  syncScopeId: string
+  objectId: string
+  object: LocalObject
+}): Promise<void> {
+  const subscriptionKey = `${input.workspaceId}:${input.objectId}`
+  const entity = await getSyncV2Entity(input.syncScopeId, input.objectId)
+  if (!entity || entity.lifecycleRevision === '0') return
+  if (await hasUnresolvedSyncV2ConflictForObject(input.syncScopeId, input.objectId)) return
+  const collab = await import('./note-gen-server-collab')
+  const initialFields = fieldsForCrdtPayload(input.object.payload)
+  const session = input.object.payload.type === 'conversation'
+    ? await collab.getNoteGenServerConversationSession({
+        workspaceId: input.workspaceId,
+        conversationSyncId: input.object.payload.value.syncId,
+        initialMessages: input.object.payload.value.messages,
+      })
+    : await collab.getNoteGenServerStructuredSession({
+        workspaceId: input.workspaceId, documentId: input.object.logicalKey, initialFields,
+      })
+  if (!session) return
+  session.setFields(initialFields, {
+    preserveUnknown: input.object.payload.type === 'settings',
+  })
+  if (input.object.payload.type === 'conversation') session.setMessages(input.object.payload.value.messages)
+  if (input.object.payload.type === 'canvas') {
+    session.setCanvasGraph(input.object.payload.value.document.nodes, input.object.payload.value.document.edges)
+  }
+  if (structuredSubscriptions.has(subscriptionKey)) return
+  let latestFields = session.getFields()
+  let latestMessages = session.getMessages()
+  let latestCanvas = session.getCanvasGraph()
+  let applyQueue = Promise.resolve()
+  const apply = () => {
+    const fields = structuredClone(latestFields)
+    const messages = structuredClone(latestMessages)
+    const canvas = structuredClone(latestCanvas)
+    applyQueue = applyQueue.then(async () => {
+      const payload = payloadFromCrdtFields(fields, messages, canvas)
+      if (!payload) return
+      await applyNoteGenServerDomainChange({
+        syncScopeId: input.syncScopeId, workspaceId: input.workspaceId, objectId: input.objectId,
+        kind: input.object.kind, revision: entity.lifecycleRevision, payload, deleted: false,
+        stableIdentity: true,
+      })
+    }).catch(() => undefined)
+  }
+  const unsubscribers = [session.subscribeFields(fields => {
+    latestFields = fields
+    apply()
+  })]
+  if (input.object.payload.type === 'conversation') {
+    unsubscribers.push(session.subscribeMessages(messages => {
+      latestMessages = messages
+      apply()
+    }))
+  }
+  if (input.object.payload.type === 'canvas') {
+    unsubscribers.push(session.subscribeCanvas(canvas => {
+      latestCanvas = canvas
+      apply()
+    }))
+  }
+  structuredSubscriptions.set(subscriptionKey, unsubscribers)
+}
+
+function fieldsForCrdtPayload(payload: AppDataPayload): Record<string, unknown> {
+  if (payload.type === 'delete') return {}
+  if (payload.type === 'setting') return { $schemaVersion: payload.schemaVersion, $type: payload.type,
+    key: payload.key, value: payload.value }
+  if (payload.type === 'settings') return { $schemaVersion: payload.schemaVersion, $type: payload.type, ...payload.value }
+  const value = { ...payload.value } as Record<string, unknown>
+  if (payload.type === 'conversation') delete value.messages
+  if (payload.type === 'canvas') {
+    const document = payload.value.document
+    value.document = { schemaVersion: document.schemaVersion, viewport: document.viewport, settings: document.settings }
+  }
+  return { $schemaVersion: payload.schemaVersion, $type: payload.type, ...value }
+}
+
+function payloadFromCrdtFields(
+  fields: Record<string, unknown>, messages: unknown[], canvas: { nodes: unknown[], edges: unknown[] },
+): AppDataPayload | null {
+  const type = fields.$type
+  const schemaVersion = fields.$schemaVersion
+  if (typeof type !== 'string' || (schemaVersion !== 1 && schemaVersion !== 2)) return null
+  const value = { ...fields }
+  delete value.$type
+  delete value.$schemaVersion
+  if (type === 'setting') return { schemaVersion: 1, type, key: String(value.key ?? ''), value: value.value }
+  if (type === 'settings') return { schemaVersion: 1, type, value }
+  if (type === 'conversation') value.messages = messages
+  if (type === 'canvas') {
+    const document = value.document && typeof value.document === 'object'
+      ? value.document as Record<string, unknown> : {}
+    value.document = { ...document, nodes: canvas.nodes, edges: canvas.edges }
+  }
+  return { schemaVersion, type, value } as AppDataPayload
+}
+
+export async function materializeNoteGenServerCrdtEntity(input: {
+  syncScopeId: string
+  workspaceId: string
+  entity: SyncV2Entity
+  refreshView?: boolean
+}): Promise<boolean> {
+  const snapshot = await import('./note-gen-server-collab').then(module => (
+    module.loadNoteGenServerStructuredSnapshot({
+      workspaceId: input.workspaceId, entity: input.entity,
+    })
+  ))
+  if (!snapshot) return false
+  const payload = payloadFromCrdtFields(snapshot.fields, snapshot.messages, snapshot.canvas)
+  // A newly created document can expose an earlier Yjs update before the
+  // update carrying its type metadata arrives. Keep the entity pending so a
+  // later document event (or the next reconciliation cycle) can retry it.
+  if (!payload) return false
+  if (input.entity.kind === 'mark' && input.entity.localKey === 'mark:settings'
+    && payload.type === 'settings') {
+    // Older v2 clients inferred the legacy `settings` logical key as a mark
+    // document. Retire that polluted server object instead of applying its
+    // preference fields to the records table.
+    await queueDeletedObject(input.syncScopeId, {
+      workspaceId: input.syncScopeId,
+      objectId: input.entity.objectId,
+      kind: input.entity.kind,
+      relativePath: input.entity.localKey,
+      revision: input.entity.lifecycleRevision,
+      contentHash: null,
+    })
+    return true
+  }
+  await applyNoteGenServerDomainChange({
+    syncScopeId: input.syncScopeId,
+    workspaceId: input.workspaceId,
+    objectId: input.entity.objectId,
+    kind: input.entity.kind,
+    revision: input.entity.lifecycleRevision,
+    payload,
+    deleted: false,
+    stableIdentity: true,
+    refreshView: input.refreshView,
+  })
+  return true
+}
+
 export async function queueCurrentNoteGenServerAppData(): Promise<number> {
   let queued = 0
-  for (const domain of ['records', 'settings', 'conversations'] as const) {
+  for (const domain of ['records', 'settings', 'conversations', 'memories'] as const) {
     if (await queueNoteGenServerDomainChange(domain)) queued += 1
   }
   return queued
@@ -140,21 +345,30 @@ export async function applyNoteGenServerDomainChange(input: {
   revision: string
   payload: unknown
   deleted: boolean
+  stableIdentity?: boolean
+  refreshView?: boolean
 }): Promise<void> {
   if (input.kind === 'setting' && isConnectionTestPayload(input.payload)) return
   if (!SUPPORTED_DATA_KINDS.has(input.kind as NoteGenServerDataKind)) return
   const { payload, logicalKey } = await resolveIncomingPayload(input)
-  const expectedObjectId = await createDeterministicServerObjectId(input.workspaceId, input.kind, logicalKey)
-  if (expectedObjectId !== input.objectId) throw new Error('服务器应用数据对象的身份与内容不匹配')
+  if (!input.stableIdentity) {
+    const expectedObjectId = await createDeterministicServerObjectId(input.workspaceId, input.kind, logicalKey)
+    if (expectedObjectId !== input.objectId) throw new Error('服务器应用数据对象的身份与内容不匹配')
+  }
   setAutoDataSyncApplyingRemote(true)
   try {
     if (payload.type === 'delete') await applyDeletion(payload)
     else if (payload.type === 'tag') await applyTag(payload.value)
     else if (payload.type === 'mark') await applyMark(payload.value)
     else if (payload.type === 'canvas') await applyCanvas(payload.value)
-    else if (payload.type === 'setting') await applySetting(payload.key, payload.value)
-    else if (payload.type === 'settings') await applyLegacySettings(payload.value)
+    else if (payload.type === 'setting') await applySetting(
+      payload.key, payload.value, input.refreshView !== false,
+    )
+    else if (payload.type === 'settings') await applyLegacySettings(
+      payload.value, input.refreshView !== false,
+    )
     else if (payload.type === 'conversation') await applyConversation(payload.value)
+    else if (payload.type === 'memory') await import('@/db/memories').then(module => module.upsertMemoryFromSync(payload.value))
   } finally {
     setAutoDataSyncApplyingRemote(false)
   }
@@ -170,6 +384,209 @@ export async function applyNoteGenServerDomainChange(input: {
       revision: input.revision,
       contentHash: await hashPayload(JSON.stringify(input.payload)),
     })
+  }
+}
+
+/**
+ * Applies lifecycle snapshots whose stable references can be expressed in one
+ * SQL batch. CRDT sessions and file/store-backed domains keep their durable
+ * journal path because they cannot participate in the SQLite transaction.
+ */
+export async function applyNoteGenServerDomainChangeAtomic(input: {
+  syncScopeId: string
+  eventId: string
+  entity: SyncV2Entity
+  revision: string
+  payload: unknown
+  deleted: boolean
+  resourceRefs?: Array<{ resourceObjectId: string, localPath: string }>
+}): Promise<boolean> {
+  if (!['tag', 'mark', 'memory'].includes(input.entity.kind)) return false
+  const resolved = await resolveIncomingPayload({
+    kind: input.entity.kind, payload: input.payload, deleted: input.deleted,
+  })
+  let deletedMarkId: number | null = null
+  const operations: SyncV2AtomicStatement[] = []
+  if (resolved.payload.type === 'delete') {
+    const stableId = resolved.payload.logicalKey.slice(resolved.payload.logicalKey.indexOf(':') + 1)
+    if (resolved.payload.kind === 'tag') {
+      operations.push({
+        statement: `delete from tags where syncId = $1 and isLocked = false
+          and not exists (select 1 from marks where marks.tagId = tags.id)`, values: [stableId],
+      })
+      operations.push({
+        statement: 'delete from tag_sync_aliases where syncId = $1', values: [stableId],
+      })
+    } else if (resolved.payload.kind === 'mark') {
+      deletedMarkId = await import('@/db/marks').then(module => (
+        module.getMarkBySyncId(stableId).then(mark => mark?.id ?? null)
+      ))
+      operations.push({ statement: 'delete from marks where syncId = $1', values: [stableId] })
+    } else if (resolved.payload.kind === 'memory') {
+      operations.push({ statement: 'delete from memories where id = $1', values: [stableId] })
+    }
+    operations.push({
+      statement: 'delete from note_gen_server_sync_objects where workspaceId = $1 and objectId = $2',
+      values: [input.syncScopeId, input.entity.objectId],
+    })
+  } else if (resolved.payload.type === 'tag' && resolved.payload.schemaVersion === 2) {
+    const tag = resolved.payload.value as SyncedTag
+    operations.push({
+      statement: `insert into tags(name,isLocked,isPin,sortOrder,syncId)
+        select $1,$2,$3,$4,$5 where not exists (
+          select 1 from tags where syncId=$5 or ($2=true and isLocked=true and name=$1)
+        )`,
+      values: [tag.name, tag.isLocked ?? false, tag.isPin ?? false, tag.sortOrder ?? 0, tag.syncId],
+    }, {
+      statement: `update tags set name=$1,isLocked=$2,isPin=$3,sortOrder=$4,
+        syncId=coalesce(syncId,$5)
+        where syncId=$5 or ($2=true and isLocked=true and name=$1)`,
+      values: [tag.name, tag.isLocked ?? false, tag.isPin ?? false, tag.sortOrder ?? 0, tag.syncId],
+    }, {
+      statement: `insert into tag_sync_aliases(syncId,tagId)
+        select $1,id from tags where syncId=$1 or ($2=true and isLocked=true and name=$3) limit 1
+        on conflict(syncId) do update set tagId=excluded.tagId`,
+      values: [tag.syncId, tag.isLocked ?? false, tag.name],
+    })
+  } else if (resolved.payload.type === 'mark' && resolved.payload.schemaVersion === 2) {
+    const mark = resolved.payload.value as SyncedMark
+    operations.push({
+      statement: `insert into marks(tagId,type,content,url,desc,deleted,createdAt,sourceId,syncId)
+        values(coalesce(
+          (select id from tags where syncId=$1 limit 1),
+          (select tagId from tag_sync_aliases where syncId=$1 limit 1)
+        ),$2,$3,$4,$5,$6,$7,$8,$9)
+        on conflict do update set tagId=excluded.tagId,type=excluded.type,content=excluded.content,
+          url=excluded.url,desc=excluded.desc,deleted=excluded.deleted,createdAt=excluded.createdAt,
+          sourceId=excluded.sourceId,syncId=excluded.syncId`,
+      values: [mark.tagSyncId, mark.type, mark.content ?? null, mark.url ?? '', mark.desc ?? null,
+        mark.deleted ?? 0, mark.createdAt, mark.sourceId ?? null, mark.syncId],
+    })
+  } else if (resolved.payload.type === 'memory') {
+    const memory = resolved.payload.value
+    operations.push({
+      statement: `insert into memories(id,content,embedding,category,replaced_id,access_count,
+        last_accessed_at,created_at,updated_at,kind,scope_type,scope_id,apply_mode,status,
+        origin,confidence,conflict_key,embedding_model,embedding_dimensions,indexing_status,
+        sensitivity,last_recall_reason,archived_at)
+        values($1,$2,'',$3,$4,0,0,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,null,null,'pending',$15,null,$16)
+        on conflict(id) do update set content=excluded.content,category=excluded.category,
+          replaced_id=excluded.replaced_id,updated_at=excluded.updated_at,kind=excluded.kind,
+          scope_type=excluded.scope_type,scope_id=excluded.scope_id,apply_mode=excluded.apply_mode,
+          status=excluded.status,origin=excluded.origin,confidence=excluded.confidence,
+          conflict_key=excluded.conflict_key,sensitivity=excluded.sensitivity,
+          archived_at=excluded.archived_at,embedding='',embedding_model=null,
+          embedding_dimensions=null,indexing_status='pending'`,
+      values: [memory.id, memory.content, memory.category, memory.replacedId ?? null,
+        memory.createdAt, memory.updatedAt, memory.kind, memory.scopeType, memory.scopeId ?? null,
+        memory.applyMode, memory.status, memory.origin, memory.confidence,
+        memory.conflictKey ?? null, memory.sensitivity, memory.archivedAt ?? null],
+    })
+  } else {
+    return false
+  }
+
+  const now = Date.now()
+  const payloadJson = JSON.stringify(input.payload)
+  const payloadHash = await hashPayload(payloadJson)
+  // Stable identity can replace a provisional/bootstrap identity for the same
+  // logical key. Retire that stale row inside this transaction before either
+  // unique index is touched; the runtime has already turned a genuinely
+  // pending local edit into a conflict before reaching this path.
+  operations.push({
+    statement: `update sync_v2_entities set localKey='__sync_replaced__/' || objectId,
+      deleted=1,updatedAt=$4 where scopeId=$1 and localKey=$2 and objectId!=$3`,
+    values: [input.syncScopeId, resolved.logicalKey, input.entity.objectId, now],
+  }, {
+    statement: `delete from note_gen_server_sync_objects
+      where workspaceId=$1 and relativePath=$2 and objectId!=$3`,
+    values: [input.syncScopeId, resolved.logicalKey, input.entity.objectId],
+  })
+  if (!input.deleted) {
+    operations.push({
+      statement: `insert into note_gen_server_sync_objects
+        (workspaceId,objectId,kind,relativePath,revision,contentHash,updatedAt)
+        values($1,$2,$3,$4,$5,$6,$7)
+        on conflict(workspaceId,objectId) do update set kind=excluded.kind,
+          relativePath=excluded.relativePath,revision=excluded.revision,
+          contentHash=excluded.contentHash,updatedAt=excluded.updatedAt`,
+      values: [input.syncScopeId, input.entity.objectId, input.entity.kind, resolved.logicalKey,
+        input.revision, payloadHash, now],
+    })
+  }
+  operations.push({
+    statement: 'delete from sync_v2_resource_refs where scopeId=$1 and ownerObjectId=$2',
+    values: [input.syncScopeId, input.entity.objectId],
+  })
+  if (!input.deleted) {
+    for (const resource of input.resourceRefs ?? []) {
+      operations.push({
+        statement: `insert into sync_v2_resource_refs
+          (scopeId,ownerObjectId,resourceObjectId,localPath,updatedAt)
+          values($1,$2,$3,$4,$5)`,
+        values: [input.syncScopeId, input.entity.objectId, resource.resourceObjectId,
+          resource.localPath, now],
+      })
+    }
+  }
+  operations.push({
+    statement: `insert into sync_v2_entities(scopeId,objectId,kind,localKey,parentObjectId,name,
+      lifecycleRevision,documentId,documentSequence,materializedHash,basePayloadJson,deleted,updatedAt)
+      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      on conflict(scopeId,objectId) do update set kind=excluded.kind,localKey=excluded.localKey,
+        parentObjectId=excluded.parentObjectId,name=excluded.name,
+        lifecycleRevision=excluded.lifecycleRevision,documentId=excluded.documentId,
+        documentSequence=excluded.documentSequence,materializedHash=excluded.materializedHash,
+        basePayloadJson=excluded.basePayloadJson,deleted=excluded.deleted,updatedAt=excluded.updatedAt`,
+    values: [input.syncScopeId, input.entity.objectId, input.entity.kind, resolved.logicalKey,
+      input.entity.parentObjectId, resolved.logicalKey.split('/').at(-1) ?? resolved.logicalKey,
+      input.revision, input.entity.documentId, input.entity.documentSequence,
+      payloadHash, payloadJson, input.deleted ? 1 : 0, now],
+  })
+  operations.push({
+    statement: `update sync_v2_inbox set status='applied',lastError=null,appliedAt=$3
+      where scopeId=$1 and eventId=$2`,
+    values: [input.syncScopeId, input.eventId, now],
+  }, {
+    statement: 'delete from sync_v2_apply_journal where scopeId=$1 and eventId=$2',
+    values: [input.syncScopeId, input.eventId],
+  })
+  await applySyncV2AtomicBatch(operations)
+  if (deletedMarkId !== null) {
+    await import('@/stores/article').then(module => (
+      module.default.getState().cleanTabsByDeletedFile(`record://mark/${deletedMarkId}`)
+    ))
+    emitter.emit('sync-object-deleted', { kind: 'mark', localId: deletedMarkId })
+  }
+  return true
+}
+
+export async function refreshNoteGenServerAtomicDomainView(kind: string): Promise<void> {
+  if (kind === 'tag') {
+    await import('@/stores/tag').then(async module => {
+      await module.default.getState().fetchTags()
+      module.default.getState().getCurrentTag()
+    })
+  } else if (kind === 'mark') {
+    await import('@/stores/mark').then(async module => {
+      await Promise.all([module.default.getState().fetchMarks(), module.default.getState().fetchAllMarks()])
+    })
+  } else if (kind === 'memory') {
+    await import('@/lib/memory/cache-version').then(module => module.invalidateMemoryCache())
+    void import('@/db/memories').then(module => module.reindexPendingMemories())
+  }
+}
+
+export async function refreshNoteGenServerBootstrapViews(kinds: ReadonlySet<string>): Promise<void> {
+  for (const kind of ['tag', 'mark', 'memory']) {
+    if (kinds.has(kind)) await refreshNoteGenServerAtomicDomainView(kind)
+  }
+  if (kinds.has('setting')) {
+    if (bootstrapSettingsStore) {
+      await bootstrapSettingsStore.save()
+      bootstrapSettingsStore = null
+    }
+    await import('@/stores/setting').then(module => module.default.getState().initSettingData())
   }
 }
 
@@ -243,8 +660,9 @@ function isDeletePayload(value: unknown, kind: string): value is DeletePayload {
     && typeof payload.deletedAt === 'number'
 }
 
-async function collectLocalObjects(domain: NoteGenServerDataDomain): Promise<LocalObject[]> {
+async function collectLocalObjects(domain: NoteGenServerDataDomain, syncScopeId: string): Promise<LocalObject[]> {
   if (domain === 'records') {
+    await import('@/db/tags').then(module => module.repairOrphanedMarkTags(syncScopeId))
     const [tags, allMarks, canvases] = await Promise.all([
       import('@/db/tags').then(module => module.getTags()),
       import('@/db/marks').then(module => module.getAllMarks()),
@@ -269,12 +687,13 @@ async function collectLocalObjects(domain: NoteGenServerDataDomain): Promise<Loc
           payload: {
             schemaVersion: 2 as const,
             type: 'tag' as const,
-            value: { ...value, syncId: tag.syncId as string, legacyId: tag.id },
+            value: { ...value, syncId: tag.syncId as string },
           },
         }
       }),
       ...(await Promise.all(marks.map(async originalMark => {
-        const { id, tagId, syncId, ...mark } = originalMark
+        const { tagId, syncId } = originalMark
+        const mark = omitKeys(originalMark, ['id', 'tagId', 'syncId'] as const)
         const tagSyncId = tagSyncIds.get(tagId)
         if (!tagSyncId) throw new Error(`记录 ${syncId} 引用了不存在的标签 ${tagId}`)
         const syncedFilePath = await cacheFileRecordForSync(originalMark)
@@ -293,7 +712,6 @@ async function collectLocalObjects(domain: NoteGenServerDataDomain): Promise<Loc
               ...syncedMark,
               syncId: syncId as string,
               tagSyncId,
-              legacyId: id,
             },
             ...(assets.length > 0 ? { assets } : {}),
           },
@@ -357,32 +775,77 @@ async function collectLocalObjects(domain: NoteGenServerDataDomain): Promise<Loc
       }
     }))
   }
+  if (domain === 'memories') {
+    const memories = await import('@/db/memories').then(module => module.getAllMemories({ includeInactive: true }))
+    return memories.map(memory => {
+      const value = omitKeys(memory, [
+        'embedding', 'embeddingModel', 'embeddingDimensions', 'indexingStatus',
+        'accessCount', 'lastAccessedAt', 'lastRecallReason',
+      ] as const)
+      return { kind: 'memory' as const, logicalKey: `memory:${memory.id}`,
+        payload: { schemaVersion: 1 as const, type: 'memory' as const, value } }
+    })
+  }
   const store = await Store.load('store.json')
   const entries = await store.entries()
   const settings = filterSyncData(Object.fromEntries(entries), {
     excludeSensitiveConfig: await store.get<boolean>('excludeSensitiveConfig') !== false,
   })
-  return Object.entries(settings).map(([key, value]) => ({
+  return [{
     kind: 'setting',
-    logicalKey: `setting:${key}`,
-    payload: { schemaVersion: 1, type: 'setting', key, value },
+    logicalKey: 'workspace-preferences',
+    payload: { schemaVersion: 1, type: 'settings', value: settings },
+  }]
+}
+
+export async function startNoteGenServerPreferencesCollaboration(workspaceId: string): Promise<void> {
+  preferencesSession?.destroy()
+  preferencesSession = null
+  const store = await Store.load('store.json')
+  const entries = await store.entries()
+  const values = filterSyncData(Object.fromEntries(entries), {
+    excludeSensitiveConfig: await store.get<boolean>('excludeSensitiveConfig') !== false,
+  })
+  const fields = { $schemaVersion: 1, $type: 'settings', ...values }
+  const session = await import('./note-gen-server-collab').then(module => module.getNoteGenServerStructuredSession({
+    workspaceId, documentId: 'workspace-preferences', initialFields: fields,
   }))
+  if (!session) return
+  preferencesSession = session
+  session.setFields(fields, { preserveUnknown: true })
+  session.subscribeFields(async next => {
+    setAutoDataSyncApplyingRemote(true)
+    try { await applyLegacySettings(next, true) } finally { setAutoDataSyncApplyingRemote(false) }
+  })
+}
+
+export function stopNoteGenServerPreferencesCollaboration(): void {
+  preferencesSession?.destroy()
+  preferencesSession = null
 }
 
 async function queueObject(input: {
   syncScopeId: string
   objectId: string
   object: LocalObject
+  entity: SyncV2Entity
   tracked: NoteGenServerSyncObject | null
 }): Promise<boolean> {
   const payloadJson = JSON.stringify(input.object.payload)
   const contentHash = await hashPayload(payloadJson)
   const pending = await getNoteGenServerOutboxForObject(input.syncScopeId, input.objectId)
   if (pending?.action === 'upsert' && pending.contentHash === contentHash) return false
-  if (!pending && input.tracked?.contentHash === contentHash) return false
+  const lifecyclePayload = parseJsonObject(input.entity.basePayloadJson)
+  if (!pending && input.tracked?.contentHash === contentHash
+    && lifecyclePayload && lifecyclePayload.type !== 'crdt-object') return false
+  const operationId = crypto.randomUUID()
+  await recordSyncV2Mutation({
+    scopeId: input.syncScopeId, mutationId: operationId, objectId: input.objectId,
+    kind: input.object.kind, payload: input.object.payload,
+  })
   await enqueueNoteGenServerOutbox({
     workspaceId: input.syncScopeId,
-    operationId: crypto.randomUUID(),
+    operationId,
     objectId: input.objectId,
     kind: input.object.kind,
     relativePath: input.object.logicalKey,
@@ -391,10 +854,12 @@ async function queueObject(input: {
     payloadJson,
     contentHash,
   })
+  await markSyncV2MutationQueued(input.syncScopeId, operationId)
   return true
 }
 
 async function queueDeletedObject(syncScopeId: string, tracked: NoteGenServerSyncObject): Promise<boolean> {
+  if (await hasUnresolvedSyncV2ConflictForObject(syncScopeId, tracked.objectId)) return false
   const pending = await getNoteGenServerOutboxForObject(syncScopeId, tracked.objectId)
   if (pending?.action === 'delete') return false
   const payload: DeletePayload = {
@@ -404,9 +869,14 @@ async function queueDeletedObject(syncScopeId: string, tracked: NoteGenServerSyn
     logicalKey: tracked.relativePath,
     deletedAt: Date.now(),
   }
+  const operationId = crypto.randomUUID()
+  await recordSyncV2Mutation({
+    scopeId: syncScopeId, mutationId: operationId, objectId: tracked.objectId,
+    kind: tracked.kind, payload,
+  })
   await enqueueNoteGenServerOutbox({
     workspaceId: syncScopeId,
-    operationId: crypto.randomUUID(),
+    operationId,
     objectId: tracked.objectId,
     kind: tracked.kind,
     relativePath: tracked.relativePath,
@@ -415,6 +885,7 @@ async function queueDeletedObject(syncScopeId: string, tracked: NoteGenServerSyn
     payloadJson: JSON.stringify(payload),
     contentHash: null,
   })
+  await markSyncV2MutationQueued(syncScopeId, operationId)
   return true
 }
 
@@ -476,7 +947,12 @@ async function applyMark(mark: Mark | SyncedMark): Promise<void> {
   if (mark.syncId && 'tagSyncId' in mark && mark.tagSyncId) {
     const syncedMark = mark as SyncedMark
     const tag = await import('@/db/tags').then(module => module.getTagBySyncId(syncedMark.tagSyncId))
-    if (!tag) throw new Error(`记录引用的标签尚未同步：${syncedMark.tagSyncId}`)
+    if (!tag) {
+      throw new NoteGenServerMissingReferenceError([{
+        kind: 'tag',
+        id: syncedMark.tagSyncId,
+      }])
+    }
     await import('@/db/marks').then(module => module.upsertMarkFromNoteGenServerSync(
       { ...syncedMark, id: syncedMark.legacyId },
       tag.id,
@@ -490,10 +966,22 @@ async function applyMark(mark: Mark | SyncedMark): Promise<void> {
 }
 
 async function applyCanvas(canvas: CanvasProject): Promise<void> {
+  const recordSyncIds = new Set(canvas.document.nodes.flatMap(node => (
+    typeof node.data.recordSyncId === 'string' ? [node.data.recordSyncId] : []
+  )))
+  const syncedMarks = new Map<string, Mark>()
+  for (const syncId of recordSyncIds) {
+    const mark = await import('@/db/marks').then(module => module.getMarkBySyncId(syncId))
+    if (!mark) {
+      throw new NoteGenServerMissingReferenceError([{ kind: 'mark', id: syncId }])
+    }
+    syncedMarks.set(syncId, mark)
+  }
+  await import('@/stores/canvas').then(module => module.acceptCanvasProjectFromSync(canvas.id))
   const nodes = await Promise.all(canvas.document.nodes.map(async node => {
     const data = { ...node.data }
     if (typeof data.recordSyncId === 'string') {
-      const mark = await import('@/db/marks').then(module => module.getMarkBySyncId(data.recordSyncId as string))
+      const mark = syncedMarks.get(data.recordSyncId)
       if (mark) data.recordId = mark.id
       delete data.recordSyncId
     }
@@ -506,22 +994,33 @@ async function applyCanvas(canvas: CanvasProject): Promise<void> {
   await import('@/stores/canvas').then(module => module.default.getState().loadProjects())
 }
 
-async function applySetting(key: string, value: unknown): Promise<void> {
-  const store = await Store.load('store.json')
+async function applySetting(key: string, value: unknown, refreshView: boolean): Promise<void> {
+  const store = refreshView
+    ? await Store.load('store.json')
+    : bootstrapSettingsStore ??= await Store.load('store.json')
   const excludeSensitiveConfig = await store.get<boolean>('excludeSensitiveConfig') !== false
   if (!shouldExcludeFromSync(key, { excludeSensitiveConfig })) await store.set(key, value)
-  await store.save()
-  await import('@/stores/setting').then(module => module.default.getState().initSettingData())
+  if (refreshView) {
+    await store.save()
+    await import('@/stores/setting').then(module => module.default.getState().initSettingData())
+  }
 }
 
-async function applyLegacySettings(settings: Record<string, unknown>): Promise<void> {
-  const store = await Store.load('store.json')
+async function applyLegacySettings(settings: Record<string, unknown>, refreshView: boolean): Promise<void> {
+  const store = refreshView
+    ? await Store.load('store.json')
+    : bootstrapSettingsStore ??= await Store.load('store.json')
   const excludeSensitiveConfig = await store.get<boolean>('excludeSensitiveConfig') !== false
+  await store.delete('$type')
+  await store.delete('$schemaVersion')
   for (const [key, item] of Object.entries(settings)) {
+    if (key.startsWith('$')) continue
     if (!shouldExcludeFromSync(key, { excludeSensitiveConfig })) await store.set(key, item)
   }
-  await store.save()
-  await import('@/stores/setting').then(module => module.default.getState().initSettingData())
+  if (refreshView) {
+    await store.save()
+    await import('@/stores/setting').then(module => module.default.getState().initSettingData())
+  }
 }
 
 async function applyConversation(item: ConversationSyncItem): Promise<void> {
@@ -549,12 +1048,23 @@ async function applyDeletion(payload: DeletePayload): Promise<void> {
     const markId = Number.isFinite(Number(id))
       ? null
       : await import('@/db/marks').then(module => module.getMarkBySyncId(id).then(mark => mark?.id ?? null))
-    if (markId !== null) await import('@/db/marks').then(module => module.delMarkForever(markId))
+    if (markId !== null) {
+      await import('@/stores/article').then(module => (
+        module.default.getState().cleanTabsByDeletedFile(`record://mark/${markId}`)
+      ))
+      await import('@/db/marks').then(module => module.delMarkForever(markId))
+      emitter.emit('sync-object-deleted', { kind: 'mark', localId: markId })
+    }
     await import('@/stores/mark').then(async module => {
       await Promise.all([module.default.getState().fetchMarks(), module.default.getState().fetchAllMarks()])
     })
   } else if (payload.kind === 'canvas') {
+    await import('@/stores/canvas').then(module => module.discardCanvasProjectFromSync(id))
+    await import('@/stores/article').then(module => (
+      module.default.getState().cleanTabsByDeletedFile(`canvas://project/${id}`)
+    ))
     await import('@/db/canvases').then(module => module.permanentlyDeleteCanvasProject(id))
+    emitter.emit('sync-object-deleted', { kind: 'canvas', localId: id })
     await import('@/stores/canvas').then(module => module.default.getState().loadProjects())
   }
   else if (payload.kind === 'setting') {
@@ -583,12 +1093,16 @@ async function applyDeletion(payload: DeletePayload): Promise<void> {
     }
     await import('./conversation-sync').then(module => module.applyNoteGenServerConversationSnapshot(snapshot))
   }
+  else if (payload.kind === 'memory') {
+    await import('@/db/memories').then(module => module.permanentlyDeleteMemory(id))
+  }
 }
 
 function logicalKeyForPayload(payload: Exclude<AppDataPayload, DeletePayload>): string {
   if (payload.type === 'setting') return `setting:${payload.key}`
-  if (payload.type === 'settings') return 'settings'
+  if (payload.type === 'settings') return 'workspace-preferences'
   if (payload.type === 'conversation') return `conversation:${payload.value.syncId}`
+  if (payload.type === 'memory') return `memory:${payload.value.id}`
   if (payload.type === 'tag' || payload.type === 'mark') {
     const value = payload.value
     const identity = value.syncId ?? ('id' in value ? value.id : null)
@@ -631,4 +1145,21 @@ function stableSerialize(value: unknown): string {
     )).join(',')}}`
   }
   return JSON.stringify(value) ?? 'null'
+}
+
+function parseJsonObject(value: string | null): Record<string, unknown> | null {
+  if (!value) return null
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown> : null
+  } catch {
+    return null
+  }
+}
+
+function omitKeys<T extends object, K extends keyof T>(value: T, keys: readonly K[]): Omit<T, K> {
+  const result = { ...value }
+  for (const key of keys) Reflect.deleteProperty(result, key)
+  return result
 }

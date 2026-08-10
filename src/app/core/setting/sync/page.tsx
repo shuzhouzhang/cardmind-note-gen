@@ -12,6 +12,7 @@ import {
   GitBranch,
   GitFork,
   Loader2,
+  HardDrive,
   Network,
   RefreshCcw,
   Server,
@@ -89,7 +90,7 @@ const PLATFORM_LOGOS: Partial<Record<SyncPlatform, string>> = {
 
 type DisplaySyncPlatform = PrimarySyncPlatform
 
-const DISPLAY_SYNC_PLATFORMS: DisplaySyncPlatform[] = ['noteGenServer', ...SYNC_PLATFORMS]
+const DISPLAY_SYNC_PLATFORMS: DisplaySyncPlatform[] = ['local', 'noteGenServer', ...SYNC_PLATFORMS]
 
 export default function SyncPage() {
   const t = useTranslations()
@@ -207,7 +208,7 @@ export default function SyncPage() {
 
   useEffect(() => {
     if (isLoading) return
-    if (platform === 'noteGenServer') return
+    if (platform === 'local' || platform === 'noteGenServer') return
     void checkPlatformStatus(platform)
   }, [checkPlatformStatus, isLoading, platform, workspacePath])
 
@@ -238,11 +239,15 @@ export default function SyncPage() {
       : noteGenConnectionState === 'connected'
         ? SyncStateEnum.success
         : SyncStateEnum.fail
+    : platform === 'local'
+      ? SyncStateEnum.success
     : getSyncState(platform)
-  const isAutoSyncDisabled = currentSyncState !== SyncStateEnum.success
-  const currentPlatformInfo = platform === 'noteGenServer' ? null : SYNC_PLATFORM_INFO[platform]
+  const isAutoSyncDisabled = platform === 'local' || currentSyncState !== SyncStateEnum.success
+  const currentPlatformInfo = platform === 'local' || platform === 'noteGenServer' ? null : SYNC_PLATFORM_INFO[platform]
   const currentPlatformName = platform === 'noteGenServer'
     ? t('settings.sync.noteGenServer.title')
+    : platform === 'local'
+    ? t('settings.sync.localStorage.title')
     : platform === 'cloudFolder'
     ? t('settings.sync.cloudFolder.title')
     : currentPlatformInfo?.name
@@ -331,7 +336,7 @@ export default function SyncPage() {
           <CardContent>
             <ItemGroup className="gap-1">
               {DISPLAY_SYNC_PLATFORMS.map((itemPlatform) => {
-                const platformInfo = itemPlatform === 'noteGenServer' ? null : SYNC_PLATFORM_INFO[itemPlatform]
+                const platformInfo = itemPlatform === 'local' || itemPlatform === 'noteGenServer' ? null : SYNC_PLATFORM_INFO[itemPlatform]
                 const isCurrentPlatform = primaryBackupMethod === itemPlatform
                 const isSelectedPlatform = platform === itemPlatform
                 return (
@@ -349,13 +354,17 @@ export default function SyncPage() {
                       onClick={() => void handlePlatformChange(itemPlatform)}
                     >
                       <ItemMedia>
-                        {itemPlatform === 'noteGenServer'
+                        {itemPlatform === 'local'
+                          ? <HardDrive />
+                          : itemPlatform === 'noteGenServer'
                           ? <Server />
                           : <SyncPlatformIcon platform={itemPlatform} small />}
                       </ItemMedia>
                       <ItemContent>
                         <ItemTitle>
-                          {itemPlatform === 'noteGenServer'
+                          {itemPlatform === 'local'
+                            ? t('settings.sync.localStorage.title')
+                            : itemPlatform === 'noteGenServer'
                             ? t('settings.sync.noteGenServer.title')
                             : itemPlatform === 'cloudFolder'
                             ? t('settings.sync.cloudFolder.title')
@@ -379,7 +388,7 @@ export default function SyncPage() {
           <Card>
             <CardHeader>
               <div className="flex min-w-0 items-center gap-3">
-                {platform === 'noteGenServer' ? <Server /> : <SyncPlatformIcon platform={platform} />}
+                {platform === 'local' ? <HardDrive /> : platform === 'noteGenServer' ? <Server /> : <SyncPlatformIcon platform={platform} />}
                 <div className="min-w-0 flex-1">
                   <CardTitle>{currentPlatformName}</CardTitle>
                   <CardDescription>{t('settings.sync.platformDesc')}</CardDescription>
@@ -399,6 +408,13 @@ export default function SyncPage() {
 
           {platform === 'noteGenServer' ? (
             <NoteGenServerSync onConnectionStateChange={setNoteGenConnectionState} />
+          ) : platform === 'local' ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('settings.sync.localStorage.title')}</CardTitle>
+                <CardDescription>{t('settings.sync.localStorage.description')}</CardDescription>
+              </CardHeader>
+            </Card>
           ) : (
               <Tabs orientation="horizontal" value={activeTab} onValueChange={setActiveTab}>
                 <TabsList className="grid h-9 w-full grid-cols-2">

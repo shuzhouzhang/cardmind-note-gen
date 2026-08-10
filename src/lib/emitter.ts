@@ -13,6 +13,7 @@ interface Events {
   'external-content-update': string;
   'editor-content-from-remote': { content: string };
   'article-saved': { path: string; content: string };
+  'article-deleted': { path: string };
   'toolbar-text-number': number;
   'toolbar-reset-selected-text': unknown;
   'quickRecordText': unknown;
@@ -50,6 +51,11 @@ interface Events {
   };
   'sync-success': unknown;
   'sync-content-updated': { path: string; content: string };
+  'sync-object-deleted': {
+    kind: 'note' | 'folder' | 'mark' | 'canvas';
+    path?: string;
+    localId?: string | number;
+  };
   'sync-push-started': { path: string };
   'sync-push-completed': { path: string; success: boolean; sha?: string };
   'sync-sha-mismatch': {

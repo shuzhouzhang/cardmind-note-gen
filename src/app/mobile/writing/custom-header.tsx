@@ -42,6 +42,7 @@ import { cn } from '@/lib/utils'
 import { CloudLibraryMenu } from '@/app/core/main/file/cloud-library-menu'
 import { pullRemoteLibraryFolder, uploadLocalLibraryFile, uploadLocalLibraryFolder } from '@/lib/sync/remote-library'
 import useClipboardStore from '@/stores/clipboard'
+import useSettingStore from '@/stores/setting'
 import { generateCopyFilename, generateCopyFoldername } from '@/lib/default-filename'
 import { getFileTreeSyncStatus, getSyncConfiguration } from '@/app/core/main/file/file-tree-action-policy'
 import { clearFolderLocalState, deleteRemoteFolder, hasRemoteFolderData } from '@/app/core/main/file/folder-item/delete-folder-utils'
@@ -79,6 +80,13 @@ export function WritingHeader() {
   const tEditor = useTranslations('article.editor')
   const tOutline = useTranslations('editor.outline')
   const tSync = useTranslations('settings.sync')
+  const primaryBackupMethod = useSettingStore(state => state.primaryBackupMethod)
+  const deleteFileLabel = primaryBackupMethod === 'noteGenServer'
+    ? tContext('delete')
+    : tContext('deleteLocalFile')
+  const deleteFolderLabel = primaryBackupMethod === 'noteGenServer'
+    ? tContext('delete')
+    : tContext('deleteLocalFolder')
   const {
     activeFilePath,
     setActiveFilePath,
@@ -992,7 +1000,7 @@ export function WritingHeader() {
     const ok = await confirm(
       entry.type === 'folder'
         ? tContext('confirmDelete', { name: entry.name })
-        : `${tContext('deleteLocalFile')}?`,
+        : `${deleteFileLabel}?`,
       {
       title: entry.name,
       kind: 'warning',
@@ -1026,6 +1034,7 @@ export function WritingHeader() {
       }
       await cleanTabsByDeletedFile(entry.relativePath)
       reconcileLocalFile(entry.relativePath, false)
+      await cleanTabsByDeletedFile(entry.relativePath)
       void import('@/db/vector').then(({ deleteVectorDocumentsByFilename }) => (
         deleteVectorDocumentsByFilename(entry.relativePath)
       )).catch(error => {
@@ -1055,8 +1064,8 @@ export function WritingHeader() {
     if (!ok) return
 
     const store = await Store.load('store.json')
-    const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder' | 'noteGenServer'>('primaryBackupMethod') || 'github'
-    if (backupMethod === 'noteGenServer') return
+    const backupMethod = await store.get<'local' | 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder' | 'noteGenServer'>('primaryBackupMethod') || 'local'
+    if (backupMethod === 'local' || backupMethod === 'noteGenServer') return
 
     if (entry.type === 'folder') {
       const node = getNodeByPath(fileTree, entry.relativePath)
@@ -1414,8 +1423,8 @@ export function WritingHeader() {
                           {
                             key: 'delete',
                             label: entry.type === 'file'
-                              ? tContext('deleteLocalFile')
-                              : tContext('deleteLocalFolder'),
+                              ? deleteFileLabel
+                              : deleteFolderLabel,
                             icon: <Trash2 className="size-4" />,
                             onClick: () => handleDelete(entry),
                             disabled: !entry.isLocale,

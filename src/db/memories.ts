@@ -343,6 +343,7 @@ export async function upsertMemory(
   )
   invalidateMemoryCache()
   void reindexPendingMemories()
+  queueMemoryServerSync()
   return { id, replaced: false, indexingStatus: indexed.status }
 }
 
@@ -491,6 +492,7 @@ export async function updateMemory(id: string, updates: MemoryUpdateInput): Prom
   )
   invalidateMemoryCache()
   if (indexed.status !== 'ready') void reindexPendingMemories()
+  queueMemoryServerSync()
 }
 
 export async function archiveMemory(id: string): Promise<void> {
@@ -538,12 +540,50 @@ export async function permanentlyDeleteMemory(id: string): Promise<void> {
   const db = await getDb()
   await db.execute('delete from memories where id = $1', [id])
   invalidateMemoryCache()
+  queueMemoryServerSync()
+}
+
+export async function upsertMemoryFromSync(memory: Omit<Memory,
+  'embedding' | 'embeddingModel' | 'embeddingDimensions' | 'indexingStatus'
+  | 'accessCount' | 'lastAccessedAt' | 'lastRecallReason'>): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    `insert into memories(id, content, embedding, category, replaced_id, access_count,
+       last_accessed_at, created_at, updated_at, kind, scope_type, scope_id, apply_mode,
+       status, origin, confidence, conflict_key, embedding_model, embedding_dimensions,
+       indexing_status, sensitivity, last_recall_reason, archived_at)
+     values($1,$2,'',$3,$4,0,0,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,null,null,'pending',$15,null,$16)
+     on conflict(id) do update set content=excluded.content, category=excluded.category,
+       replaced_id=excluded.replaced_id, updated_at=excluded.updated_at, kind=excluded.kind,
+       scope_type=excluded.scope_type, scope_id=excluded.scope_id, apply_mode=excluded.apply_mode,
+       status=excluded.status, origin=excluded.origin, confidence=excluded.confidence,
+       conflict_key=excluded.conflict_key, sensitivity=excluded.sensitivity, archived_at=excluded.archived_at,
+       embedding='', embedding_model=null, embedding_dimensions=null, indexing_status='pending'`,
+    [memory.id, memory.content, memory.category, memory.replacedId, memory.createdAt, memory.updatedAt,
+      memory.kind, memory.scopeType, memory.scopeId, memory.applyMode, memory.status, memory.origin,
+      memory.confidence, memory.conflictKey, memory.sensitivity, memory.archivedAt],
+  )
+  invalidateMemoryCache()
+  void reindexPendingMemories()
+}
+
+function queueMemoryServerSync(): void {
+  void Promise.all([
+    import('@/lib/sync/auto-data-sync-bridge'),
+    import('@/lib/sync/note-gen-server-background'),
+  ]).then(async ([bridge, background]) => {
+    if (bridge.isAutoDataSyncApplyingRemote() || !background.isNoteGenServerPrimaryEnabled()) return
+    const queued = await import('@/lib/sync/note-gen-server-domains')
+      .then(module => module.queueNoteGenServerDomainChange('memories'))
+    if (queued) void background.triggerNoteGenServerBackgroundSync()
+  }).catch(() => undefined)
 }
 
 export async function clearAllMemories(): Promise<void> {
   const db = await getDb()
   await db.execute('delete from memories')
   invalidateMemoryCache()
+  queueMemoryServerSync()
 }
 
 export async function getMemoryStats(): Promise<{

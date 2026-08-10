@@ -1343,9 +1343,13 @@
         "selfHostedDesc": "输入您的自建 Gitea 服务器地址（如：https://gitea.example.com）"
       },
       "giteaAccessTokenDesc": "在 {instanceDisplayName} 创建个人访问令牌，需要完整的 repository 权限",
+      "localStorage": {
+        "title": "本地存储",
+        "description": "仅将笔记和应用数据保存在本地，不进行跨设备同步。你可以随时切换到其他同步方式。"
+      },
       "noteGenServer": {
-        "title": "NoteGen",
-        "description": "连接 NoteGen 官方或自托管同步服务器，登录后自动实时同步笔记、记录、绘图、对话和可同步配置。",
+        "title": "自托管",
+        "description": "连接官方或自托管同步服务器，登录后自动实时同步笔记、记录、绘图、对话和可同步配置。",
         "status": "连接状态",
         "previewTitle": "自动实时同步",
         "previewDescription": "NoteGen 会自动记录笔记和应用数据的本地修改，实时增量同步其他设备的变化，并在离线后自动续传。无法安全覆盖的本地内容会保存为冲突副本。",
@@ -1355,6 +1359,14 @@
         "syncing": "正在同步",
         "synced": "已同步",
         "syncError": "同步需要处理",
+        "problemCategory": {
+          "outbox": "发送操作被阻塞",
+          "inbox": "接收数据应用失败",
+          "transfer": "附件传输失败"
+        },
+        "problemReason": {
+          "commandIdReused": "这是一条已经由冲突记录接管的旧操作，系统会自动清理，无需手动处理。"
+        },
         "syncSummary": "本轮发送 {pushed} 项、接收 {pulled} 项、冲突副本 {conflicts} 个。",
         "initialSyncTitle": "同步进行中",
         "initialSyncDescription": "正在从服务器同步笔记、记录、绘图、对话和可同步配置，请保持应用打开。",
@@ -1379,6 +1391,7 @@
         "enablingManaged": "正在迁移加密密钥",
         "serverUpgradeRequired": "服务器版本过旧，不支持自动实时同步。请升级 note-gen-server 并执行数据库迁移。",
         "syncNow": "立即同步",
+        "resolveConflicts": "处理 {count} 个冲突",
         "activateAndSync": "设为当前平台并同步",
         "syncingNow": "正在同步",
         "serverUrl": "服务器地址",
@@ -4005,6 +4018,7 @@
         "syncRepoRequired": "请先配置当前工作区的同步仓库名称",
         "syncNotConfigured": "同步尚未配置",
         "syncConfigured": "{platform} 同步已配置",
+        "localStorage": "使用本地存储",
         "syncAvailable": "{platform} 同步可用",
         "syncChecking": "正在检查 {platform} 同步",
         "syncUnavailable": "{platform} 同步不可用",

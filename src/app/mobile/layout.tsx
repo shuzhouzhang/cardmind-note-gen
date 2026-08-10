@@ -22,7 +22,6 @@ import { MobileViewport } from "@/components/mobile-viewport"
 import useArticleStore from "@/stores/article"
 import { MobileModeProvider } from "@/hooks/use-mobile"
 import { Skeleton } from "@/components/ui/skeleton"
-import AppStatus from "@/components/app-status"
 
 const WritingScreen = dynamic(
   () => import('./writing/writing-screen').then(module => module.WritingScreen),
@@ -123,10 +122,25 @@ export default function RootLayout({
           import('@/lib/sync/sync-push-queue'),
         ])
         const { platform } = await import('@tauri-apps/plugin-os')
-        if (platform() === 'ios') {
+        const { Store } = await import('@tauri-apps/plugin-store')
+        const primaryBackupMethod = await (await Store.load('store.json')).get<string>('primaryBackupMethod')
+        if (platform() === 'ios' && primaryBackupMethod === 'cloudFolder') {
           try {
             const { restoreSavedIOSFolderAccess } = await import('@/lib/sync/cloud-folder')
-            await restoreSavedIOSFolderAccess()
+            let folderAccessTimeoutId: ReturnType<typeof setTimeout> | null = null
+            try {
+              await Promise.race([
+                restoreSavedIOSFolderAccess(),
+                new Promise<never>((_, reject) => {
+                  folderAccessTimeoutId = setTimeout(
+                    () => reject(new Error('iOS cloud folder authorization restore timed out')),
+                    3_000,
+                  )
+                }),
+              ])
+            } finally {
+              if (folderAccessTimeoutId !== null) clearTimeout(folderAccessTimeoutId)
+            }
           } catch (error) {
             console.error('Failed to restore the iOS cloud folder authorization:', error)
           }
@@ -212,7 +226,6 @@ export default function RootLayout({
         <TextSizeProvider>
           <MobileViewport />
           <MobileStatusBar />
-          <AppStatus />
           <TooltipProvider>
             <div className="mobile-app-shell flex flex-col">
               <main className="mobile-app-main flex flex-1 w-full overflow-hidden">

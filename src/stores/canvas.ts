@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { initAllDatabases } from '@/db'
 import {
   getCanvasProject,
   getCanvasProjects,
@@ -32,6 +33,7 @@ const thumbnailRepairAttempts = new Set<string>()
 const historySaveChains = new Map<string, Promise<void>>()
 const canvasSaveInFlight = new Set<string>()
 const canvasSaveQueued = new Set<string>()
+const remotelyDeletedCanvasIds = new Set<string>()
 const MAX_THUMBNAIL_REPAIR_ATTEMPTS = 256
 
 function persistCanvasHistory(id: string, history: CanvasHistoryState) {
@@ -107,6 +109,8 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
 
   loadProjects: async () => {
     set({ loading: true })
+    // 子组件的 effect 可能早于布局初始化执行，查询画布前必须等待所有表和迁移就绪。
+    await initAllDatabases()
     const allProjects = await getCanvasProjects({ includeDeleted: true })
     const projects = allProjects.filter(project => !project.deletedAt)
     set({
@@ -199,6 +203,7 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
   setPendingFocus: (pendingFocus) => set({ pendingFocus }),
 
   updateDocument: (id, document) => {
+    if (remotelyDeletedCanvasIds.has(id)) return
     set(state => ({ documents: { ...state.documents, [id]: document } }))
     const previousTimer = saveTimers.get(id)
     if (previousTimer) clearTimeout(previousTimer)
@@ -222,6 +227,7 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   saveProject: async (id) => {
+    if (remotelyDeletedCanvasIds.has(id)) return
     if (canvasSaveInFlight.has(id)) {
       canvasSaveQueued.add(id)
       return
@@ -346,8 +352,13 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
       } catch {
         synced = false
       }
-      if (!synced) enqueueAutoDataSync('records', 'canvas-deleted')
     }
+    // NoteGen Server does not use the legacy canvas storage adapter, so it is
+    // intentionally not reported by isAutoDataSyncProviderConfigured(). The
+    // shared queue is still the authoritative route for its object tombstone.
+    // It also provides the retry path when a legacy provider's direct upload
+    // fails.
+    if (!synced) enqueueAutoDataSync('records', 'canvas-deleted')
     set(state => {
       const deletedProject = state.projects.find(project => project.id === id)
       const documents = { ...state.documents }
@@ -397,3 +408,30 @@ const useCanvasStore = create<CanvasState>((set, get) => ({
 }))
 
 export default useCanvasStore
+
+export function acceptCanvasProjectFromSync(id: string): void {
+  remotelyDeletedCanvasIds.delete(id)
+}
+
+export function discardCanvasProjectFromSync(id: string): void {
+  remotelyDeletedCanvasIds.add(id)
+  const saveTimer = saveTimers.get(id)
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimers.delete(id)
+  const thumbnailTimer = thumbnailTimers.get(id)
+  if (thumbnailTimer) clearTimeout(thumbnailTimer)
+  thumbnailTimers.delete(id)
+  canvasSaveQueued.delete(id)
+  useCanvasStore.setState(state => {
+    const documents = { ...state.documents }
+    delete documents[id]
+    return {
+      projects: state.projects.filter(project => project.id !== id),
+      deletedProjects: state.deletedProjects.filter(project => project.id !== id),
+      documents,
+      activeCanvasId: state.activeCanvasId === id ? null : state.activeCanvasId,
+      selectionContext: state.selectionContext?.canvasId === id ? null : state.selectionContext,
+      pendingFocus: state.pendingFocus?.canvasId === id ? null : state.pendingFocus,
+    }
+  })
+}

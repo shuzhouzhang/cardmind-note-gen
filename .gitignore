@@ -53,6 +53,7 @@ src-tauri/native-ocr/ios-vision/.tauri/
 
 # next.js
 /.next/
+/.next-dev/
 /out/
 
 # production

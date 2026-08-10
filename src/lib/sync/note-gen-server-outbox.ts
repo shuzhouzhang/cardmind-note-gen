@@ -7,13 +7,15 @@ import {
   getNoteGenServerSyncObject,
   listNoteGenServerSyncObjects,
 } from '@/db/note-gen-server-sync'
+import {
+  getOrCreateSyncV2Entity, getSyncV2EntityByLocalKey, markSyncV2MutationQueued,
+  listSyncV2SubtreeEntities, moveSyncV2EntityLocalKey, recordSyncV2Mutation,
+} from '@/db/note-gen-server-sync-index'
 import { shouldExclude } from '@/config/sync-exclusions'
 import { getAllMarkdownFiles } from '@/lib/files'
 import { resolveImagePathFromMarkdown } from '@/lib/markdown-image-path'
 import { getFilePathOptions, getWorkspacePath, normalizeWorkspaceRelativePath } from '@/lib/workspace'
 import {
-  createDeterministicNoteObjectId,
-  createDeterministicServerObjectId,
   getNoteGenServerSyncScopeId,
   loadServerProfile,
 } from './note-gen-server'
@@ -21,6 +23,7 @@ import {
   collectNoteGenServerAssetReferences,
   type NoteGenServerAssetReference,
 } from './note-gen-server-assets'
+import { hasActiveNoteGenServerMarkdownEditor } from './note-gen-server-active-editors'
 
 interface MarkdownNotePayload {
   schemaVersion: 1
@@ -53,42 +56,58 @@ export async function queueCurrentNoteGenServerMarkdownWorkspace(): Promise<numb
     }
   }
   for (const relativePath of folders) {
-    const objectId = await createDeterministicServerObjectId(profile.workspaceId, 'folder', relativePath)
+    const objectId = (await getOrCreateSyncV2Entity({
+      scopeId: syncScopeId, kind: 'folder', localKey: relativePath,
+      stableWorkspaceId: profile.workspaceId,
+    })).objectId
     localFolderIds.add(objectId)
     if (await suppressOrRemoveRemoteDeletedFolder(relativePath)) continue
     const tracked = trackedObjects.find(object => object.objectId === objectId)
-    const contentHash = await hashMarkdownContent(relativePath)
+    const folderPayload = { schemaVersion: 1, type: 'folder', relativePath }
+    const contentHash = await hashMarkdownContent(JSON.stringify(folderPayload))
     const pending = await getNoteGenServerOutboxForObject(syncScopeId, objectId)
     if (pending?.action === 'upsert' && pending.contentHash === contentHash) continue
     if (!pending && tracked?.contentHash === contentHash) continue
+    const operationId = crypto.randomUUID()
+    await recordSyncV2Mutation({
+      scopeId: syncScopeId, mutationId: operationId, objectId, kind: 'folder', payload: folderPayload,
+    })
     await enqueueNoteGenServerOutbox({
       workspaceId: syncScopeId,
-      operationId: crypto.randomUUID(),
+      operationId,
       objectId,
       kind: 'folder',
       relativePath,
       action: 'upsert',
       baseRevision: tracked?.revision ?? null,
-      payloadJson: JSON.stringify({ schemaVersion: 1, type: 'folder', relativePath }),
+      payloadJson: JSON.stringify(folderPayload),
       contentHash,
     })
+    await markSyncV2MutationQueued(syncScopeId, operationId)
     queued += 1
   }
   for (const tracked of trackedObjects) {
     if (tracked.kind !== 'folder' || localFolderIds.has(tracked.objectId)) continue
     const pending = await getNoteGenServerOutboxForObject(syncScopeId, tracked.objectId)
     if (pending?.action === 'delete') continue
+    const operationId = crypto.randomUUID()
+    const folderPayload = { schemaVersion: 1, type: 'folder', relativePath: tracked.relativePath }
+    await recordSyncV2Mutation({
+      scopeId: syncScopeId, mutationId: operationId, objectId: tracked.objectId,
+      kind: 'folder', payload: folderPayload,
+    })
     await enqueueNoteGenServerOutbox({
       workspaceId: syncScopeId,
-      operationId: crypto.randomUUID(),
+      operationId,
       objectId: tracked.objectId,
       kind: 'folder',
       relativePath: tracked.relativePath,
       action: 'delete',
       baseRevision: tracked.revision,
-      payloadJson: JSON.stringify({ schemaVersion: 1, type: 'folder', relativePath: tracked.relativePath }),
+      payloadJson: JSON.stringify(folderPayload),
       contentHash: null,
     })
+    await markSyncV2MutationQueued(syncScopeId, operationId)
     queued += 1
   }
   return queued
@@ -112,25 +131,66 @@ export function suppressNoteGenServerFileEvent(
 export async function queueNoteGenServerMarkdownChange(
   relativePath: string,
   expectedToExist: boolean,
+  options: { allowActiveEditor?: boolean } = {},
 ): Promise<boolean> {
   const normalizedPath = normalizeMarkdownPath(await normalizeWorkspaceRelativePath(relativePath))
   if (!isMarkdownPath(normalizedPath) || shouldExclude(normalizedPath) || isConflictPath(normalizedPath)) return false
-
-  const profile = await loadServerProfile()
-  if (!profile?.enabled || !profile.workspaceId || !profile.localWorkspaceKey) return false
-  const syncScopeId = await getNoteGenServerSyncScopeId(profile)
-
-  const objectId = await createDeterministicNoteObjectId(profile.workspaceId, normalizedPath)
-  const [tracked, pending] = await Promise.all([
-    getNoteGenServerSyncObject(syncScopeId, objectId),
-    getNoteGenServerOutboxForObject(syncScopeId, objectId),
-  ])
   const pathOptions = await getFilePathOptions(normalizedPath)
   const workspace = await getWorkspacePath()
   const fileExists = expectedToExist && (workspace.isCustom
     ? await exists(pathOptions.path)
     : await exists(pathOptions.path, { baseDir: pathOptions.baseDir }))
+  // An open Tiptap editor already transports this note as Yjs updates. Queuing
+  // a legacy whole-document snapshot here races those updates and can roll the
+  // editor back when the delayed object event is materialized. A deletion must
+  // still pass through even while the closing editor is in its release grace.
+  if (fileExists && !options.allowActiveEditor
+    && hasActiveNoteGenServerMarkdownEditor(normalizedPath)) return false
 
+  const profile = await loadServerProfile()
+  if (!profile?.enabled || !profile.workspaceId || !profile.localWorkspaceKey) return false
+  const syncScopeId = await getNoteGenServerSyncScopeId(profile)
+
+  const entity = await getOrCreateSyncV2Entity({
+    scopeId: syncScopeId, kind: 'note', localKey: normalizedPath,
+    stableWorkspaceId: profile.workspaceId,
+  })
+  const lifecyclePayload = (() => {
+    try {
+      return entity.basePayloadJson ? JSON.parse(entity.basePayloadJson) as { type?: string } : null
+    } catch {
+      return null
+    }
+  })()
+  // Once a Markdown note owns durable CRDT history, whole-file snapshots must
+  // never update the same object again. They replace the `crdt-object`
+  // lifecycle envelope with `markdown-note`, after which reopening the editor
+  // restores an older Yjs document over the freshly saved disk file.
+  if (fileExists && entity.documentId
+    && (entity.documentSequence !== '0' || lifecyclePayload?.type === 'crdt-object')) {
+    const content = workspace.isCustom
+      ? await readTextFile(pathOptions.path)
+      : await readTextFile(pathOptions.path, { baseDir: pathOptions.baseDir })
+    const contentHash = await hashMarkdownContent(content)
+    if (consumeSuppressedRemoteWrite(normalizedPath, contentHash)) return false
+    return await import('./note-gen-server-collab').then(module => (
+      module.importNoteGenServerMarkdownFile({
+        workspaceId: profile.workspaceId!,
+        relativePath: normalizedPath,
+        content,
+      })
+    ))
+  }
+  const objectId = entity.objectId
+  if (!fileExists && entity.documentId) {
+    await import('./note-gen-server-collab').then(module => (
+      module.closeNoteGenServerMarkdownSession(profile.workspaceId!, normalizedPath)
+    ))
+  }
+  const [tracked, pending] = await Promise.all([
+    getNoteGenServerSyncObject(syncScopeId, objectId),
+    getNoteGenServerOutboxForObject(syncScopeId, objectId),
+  ])
   let payload: MarkdownNotePayload | null = null
   let contentHash: string | null = null
   if (fileExists) {
@@ -157,30 +217,91 @@ export async function queueNoteGenServerMarkdownChange(
   if (consumeSuppressedRemoteWrite(normalizedPath, contentHash)) return false
   if (pending?.action === (fileExists ? 'upsert' : 'delete') && pending.contentHash === contentHash) return false
   if (tracked?.contentHash === contentHash && (fileExists || tracked.contentHash === null)) return false
-  if (!fileExists && !tracked && pending?.baseRevision === null) {
+  const hasDurableObject = entity.lifecycleRevision !== '0' || tracked !== null
+  if (!fileExists && !hasDurableObject && pending?.baseRevision === null) {
     await deleteNoteGenServerOutboxEntry(pending.id, pending.operationId)
     return false
   }
-  if (!fileExists && !tracked) return false
+  if (!fileExists && !hasDurableObject) return false
 
+  const operationId = crypto.randomUUID()
+  const journalPayload = payload ?? {
+    schemaVersion: 1, type: 'markdown-note', relativePath: normalizedPath,
+    content: '', modifiedAt: null,
+  } satisfies MarkdownNotePayload
+  await recordSyncV2Mutation({
+    scopeId: syncScopeId, mutationId: operationId, objectId, kind: 'note', payload: journalPayload,
+  })
   await enqueueNoteGenServerOutbox({
     workspaceId: syncScopeId,
-    operationId: crypto.randomUUID(),
+    operationId,
     objectId,
     kind: 'note',
     relativePath: normalizedPath,
     action: fileExists ? 'upsert' : 'delete',
     baseRevision: tracked?.revision ?? null,
-    payloadJson: JSON.stringify(payload ?? {
-      schemaVersion: 1,
-      type: 'markdown-note',
-      relativePath: normalizedPath,
-      content: '',
-      modifiedAt: null,
-    } satisfies MarkdownNotePayload),
+    payloadJson: JSON.stringify(journalPayload),
     contentHash,
   })
+  await markSyncV2MutationQueued(syncScopeId, operationId)
   return true
+}
+
+export async function recordNoteGenServerV2PathMove(oldPath: string, newPath: string): Promise<void> {
+  const profile = await loadServerProfile()
+  if (!profile?.enabled || !profile.workspaceId || !profile.localWorkspaceKey) return
+  const scopeId = await getNoteGenServerSyncScopeId(profile)
+  const oldKey = await normalizeWorkspaceRelativePath(oldPath)
+  const newKey = await normalizeWorkspaceRelativePath(newPath)
+  if (oldKey === newKey) return
+  await import('./note-gen-server-collab').then(module => (
+    module.moveNoteGenServerMarkdownDocs(profile.workspaceId!, oldKey, newKey)
+  ))
+  if (!await moveSyncV2EntityLocalKey(scopeId, oldKey, newKey)) return
+  const entity = await getSyncV2EntityByLocalKey(scopeId, newKey)
+  if (entity?.kind === 'note') {
+    await import('./note-gen-server-collab').then(module => (
+      module.refreshNoteGenServerMarkdownEntity(profile.workspaceId!, entity)
+    ))
+    await queueNoteGenServerMarkdownChange(newKey, true)
+  }
+  else if (entity?.kind === 'folder') {
+    const subtree = await listSyncV2SubtreeEntities(scopeId, entity.objectId)
+    await import('./note-gen-server-collab').then(async module => {
+      for (const child of subtree) {
+        if (child.kind === 'note') {
+          await module.refreshNoteGenServerMarkdownEntity(profile.workspaceId!, child)
+        }
+      }
+    })
+    await queueNoteGenServerFolderChange(scopeId, entity.objectId, newKey)
+  }
+}
+
+async function queueNoteGenServerFolderChange(
+  scopeId: string,
+  objectId: string,
+  relativePath: string,
+): Promise<void> {
+  const [tracked, pending] = await Promise.all([
+    getNoteGenServerSyncObject(scopeId, objectId),
+    getNoteGenServerOutboxForObject(scopeId, objectId),
+  ])
+  const payload = { schemaVersion: 1, type: 'folder', relativePath }
+  const payloadJson = JSON.stringify(payload)
+  const contentHash = await hashMarkdownContent(payloadJson)
+  if (pending?.action === 'upsert' && pending.contentHash === contentHash) return
+  if (!pending && tracked?.contentHash === contentHash) return
+  const operationId = crypto.randomUUID()
+  await recordSyncV2Mutation({
+    scopeId, mutationId: operationId, objectId, kind: 'folder', payload,
+  })
+  await enqueueNoteGenServerOutbox({
+    workspaceId: scopeId, operationId, objectId, kind: 'folder', relativePath,
+    action: 'upsert', baseRevision: tracked?.revision ?? null,
+    payloadJson, contentHash,
+  })
+  await markSyncV2MutationQueued(scopeId, operationId)
 }
 
 export async function hashMarkdownContent(content: string): Promise<string> {

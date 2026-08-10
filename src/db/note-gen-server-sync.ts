@@ -1,4 +1,5 @@
 import { getDb } from './index'
+import { applySyncV2AtomicBatch } from './note-gen-server-sync-index'
 
 export type NoteGenServerOutboxAction = 'upsert' | 'delete'
 
@@ -143,31 +144,6 @@ export async function initNoteGenServerSyncDb() {
     create index if not exists idx_note_gen_server_inbox_workspace_status_received
     on note_gen_server_sync_inbox(workspaceId, status, receivedAt)
   `)
-}
-
-export async function migrateNoteGenServerLegacyScope(
-  legacyWorkspaceId: string,
-  syncScopeId: string,
-): Promise<void> {
-  if (legacyWorkspaceId === syncScopeId) return
-  const db = await getDb()
-  const tables = [
-    'note_gen_server_sync_state',
-    'note_gen_server_sync_objects',
-    'note_gen_server_sync_outbox',
-    'note_gen_server_sync_inbox',
-  ] as const
-  for (const table of tables) {
-    const rows = await db.select<Array<{ count: number }>>(
-      `select count(*) as count from ${table} where workspaceId = $1`,
-      [syncScopeId],
-    )
-    if ((rows[0]?.count ?? 0) > 0) continue
-    await db.execute(
-      `update ${table} set workspaceId = $1 where workspaceId = $2`,
-      [syncScopeId, legacyWorkspaceId],
-    )
-  }
 }
 
 export async function enqueueNoteGenServerInbox(input: {
@@ -324,19 +300,48 @@ export async function listNoteGenServerSyncObjects(workspaceId: string): Promise
 }
 
 export async function upsertNoteGenServerSyncObject(object: NoteGenServerSyncObject): Promise<void> {
-  const db = await getDb()
-  await db.execute(
-    `insert into note_gen_server_sync_objects (
-       workspaceId, objectId, kind, relativePath, revision, contentHash, updatedAt
-     ) values ($1, $2, $3, $4, $5, $6, $7)
-     on conflict(workspaceId, objectId) do update set
-       kind = excluded.kind,
-       relativePath = excluded.relativePath,
-       revision = excluded.revision,
-       contentHash = excluded.contentHash,
-       updatedAt = excluded.updatedAt`,
-    [object.workspaceId, object.objectId, object.kind, object.relativePath, object.revision, object.contentHash, Date.now()],
-  )
+  const now = Date.now()
+  const collisionWhere = `workspaceId=$1 and relativePath=$2 and objectId!=$3`
+  await applySyncV2AtomicBatch([
+    {
+      statement: `delete from sync_v2_outbox where scopeId=$1 and objectId in (
+        select objectId from note_gen_server_sync_objects where ${collisionWhere})`,
+      values: [object.workspaceId, object.relativePath, object.objectId],
+    },
+    {
+      statement: `delete from sync_v2_mutation_journal where scopeId=$1 and objectId in (
+        select objectId from note_gen_server_sync_objects where ${collisionWhere})`,
+      values: [object.workspaceId, object.relativePath, object.objectId],
+    },
+    {
+      statement: `update sync_v2_entities set localKey='__sync_replaced__/' || objectId,
+        deleted=1, updatedAt=$4 where scopeId=$1 and objectId in (
+          select objectId from note_gen_server_sync_objects where ${collisionWhere})`,
+      values: [object.workspaceId, object.relativePath, object.objectId, now],
+    },
+    {
+      statement: `delete from note_gen_server_sync_outbox where workspaceId=$1 and objectId in (
+        select objectId from note_gen_server_sync_objects where ${collisionWhere})`,
+      values: [object.workspaceId, object.relativePath, object.objectId],
+    },
+    {
+      statement: `delete from note_gen_server_sync_objects where ${collisionWhere}`,
+      values: [object.workspaceId, object.relativePath, object.objectId],
+    },
+    {
+      statement: `insert into note_gen_server_sync_objects (
+         workspaceId, objectId, kind, relativePath, revision, contentHash, updatedAt
+       ) values ($1, $2, $3, $4, $5, $6, $7)
+       on conflict(workspaceId, objectId) do update set
+         kind = excluded.kind,
+         relativePath = excluded.relativePath,
+         revision = excluded.revision,
+         contentHash = excluded.contentHash,
+         updatedAt = excluded.updatedAt`,
+      values: [object.workspaceId, object.objectId, object.kind, object.relativePath,
+        object.revision, object.contentHash, now],
+    },
+  ])
 }
 
 export async function deleteNoteGenServerSyncObject(
@@ -361,26 +366,32 @@ export async function enqueueNoteGenServerOutbox(input: {
   payloadJson: string | null
   contentHash: string | null
 }): Promise<void> {
-  const db = await getDb()
   const now = Date.now()
-  await db.execute(
-    `insert into note_gen_server_sync_outbox (
-       workspaceId, operationId, objectId, kind, relativePath, action, baseRevision,
-       payloadJson, contentHash, attempts, lastError, blocked, createdAt, updatedAt
-     ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, null, 0, $10, $10)
-     on conflict(workspaceId, objectId) do update set
-       operationId = excluded.operationId,
-       kind = excluded.kind,
-       relativePath = excluded.relativePath,
-       action = excluded.action,
-       baseRevision = note_gen_server_sync_outbox.baseRevision,
-       payloadJson = excluded.payloadJson,
-       contentHash = excluded.contentHash,
-       attempts = 0,
-       lastError = null,
-       blocked = 0,
-       updatedAt = excluded.updatedAt`,
-    [
+  await applySyncV2AtomicBatch([{
+    statement: `delete from sync_v2_mutation_journal
+      where scopeId = $1 and mutationId != $3 and mutationId = (
+        select operationId from note_gen_server_sync_outbox
+        where workspaceId = $1 and objectId = $2 limit 1
+      )`,
+    values: [input.workspaceId, input.objectId, input.operationId],
+  }, {
+    statement: `insert into note_gen_server_sync_outbox (
+      workspaceId, operationId, objectId, kind, relativePath, action, baseRevision,
+      payloadJson, contentHash, attempts, lastError, blocked, createdAt, updatedAt
+    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, null, 0, $10, $10)
+    on conflict(workspaceId, objectId) do update set
+      operationId = excluded.operationId,
+      kind = excluded.kind,
+      relativePath = excluded.relativePath,
+      action = excluded.action,
+      baseRevision = note_gen_server_sync_outbox.baseRevision,
+      payloadJson = excluded.payloadJson,
+      contentHash = excluded.contentHash,
+      attempts = 0,
+      lastError = null,
+      blocked = 0,
+      updatedAt = excluded.updatedAt`,
+    values: [
       input.workspaceId,
       input.operationId,
       input.objectId,
@@ -392,7 +403,7 @@ export async function enqueueNoteGenServerOutbox(input: {
       input.contentHash,
       now,
     ],
-  )
+  }])
 }
 
 export async function listNoteGenServerOutbox(
@@ -560,4 +571,28 @@ export async function blockNoteGenServerOutboxEntry(
     [entryId, operationId, error.slice(0, 2_000), Date.now()],
   )
   return result.rowsAffected > 0
+}
+
+export async function retryBlockedNoteGenServerOutbox(workspaceId: string): Promise<void> {
+  const db = await getDb()
+  await retireStaleBlockedNoteGenServerOutbox(workspaceId)
+  await db.execute(
+    `update note_gen_server_sync_outbox
+     set blocked = 0, attempts = 0, lastError = null, updatedAt = $2
+     where workspaceId = $1 and blocked = 1`,
+    [workspaceId, Date.now()],
+  )
+}
+
+export async function retireStaleBlockedNoteGenServerOutbox(workspaceId: string): Promise<number> {
+  const db = await getDb()
+  const result = await db.execute(
+    `delete from note_gen_server_sync_outbox
+     where workspaceId = $1 and blocked = 1
+       and (lastError like '%command_id_reused%'
+         or lastError like '%revision_conflict%'
+         or lastError like '%conflict_changed%')`,
+    [workspaceId],
+  )
+  return result.rowsAffected
 }

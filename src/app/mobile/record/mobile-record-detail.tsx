@@ -145,17 +145,20 @@ export function MobileRecordDetail({ markId }: MobileRecordDetailProps) {
     collaborationSessionRef.current = null
     previous?.destroy()
     const connection = getNoteGenServerBackgroundConnection()
-    if (!mark || !connection?.profile.workspaceId) return
+    if (!mark || !mark.syncId || !connection?.profile.workspaceId) return
+    const syncFields = Object.fromEntries(
+      Object.entries(mark).filter(([key]) => key !== 'id' && key !== 'tagId'),
+    )
     void getNoteGenServerStructuredSession({
       workspaceId: connection.profile.workspaceId,
-      documentId: `record:${mark.id}`,
-      initialFields: mark as unknown as Record<string, unknown>,
+      documentId: `record:${mark.syncId}`,
+      initialFields: syncFields as unknown as Record<string, unknown>,
     }).then(session => {
       if (disposed || !session) return
       collaborationSessionRef.current = session
       session.subscribeFields(fields => {
-        if (disposed || fields.id === undefined) return
-        const nextMark = fields as unknown as Mark
+        if (disposed || fields.syncId !== mark.syncId) return
+        const nextMark = { ...mark, ...fields, id: mark.id, tagId: mark.tagId } as Mark
         if (JSON.stringify(nextMark) === JSON.stringify(useMarkStore.getState().marks.find(item => item.id === markId))) return
         setMark(nextMark)
         setDraft(createDraft(nextMark))

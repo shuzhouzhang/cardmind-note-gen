@@ -1322,9 +1322,13 @@
         "selfHostedDesc": "Enter your self-hosted Gitea server address (e.g., https://gitea.example.com)"
       },
       "giteaAccessTokenDesc": "Create a personal access token at {instanceDisplayName}, requires full repository permission",
+      "localStorage": {
+        "title": "Local storage",
+        "description": "Keep notes and app data on this device only. No cross-device sync is performed. You can switch to another sync provider at any time."
+      },
       "noteGenServer": {
-        "title": "NoteGen",
-      "description": "Connect to an official or self-hosted NoteGen Sync Server. After sign-in, notes, records, canvases, conversations, and syncable settings update automatically in real time.",
+        "title": "Self-hosted",
+      "description": "Connect to an official or self-hosted sync server. After sign-in, notes, records, canvases, conversations, and syncable settings update automatically in real time.",
         "status": "Connection Status",
         "previewTitle": "Automatic real-time sync",
       "previewDescription": "NoteGen durably records local changes to notes and app data, incrementally syncs changes from other devices in real time, and resumes automatically after going offline. Local content that cannot be safely overwritten is preserved as a conflict copy.",
@@ -1334,6 +1338,14 @@
         "syncing": "Syncing",
         "synced": "Synced",
         "syncError": "Sync needs attention",
+        "problemCategory": {
+          "outbox": "Blocked outgoing operation",
+          "inbox": "Incoming data failed to apply",
+          "transfer": "Attachment transfer failed"
+        },
+        "problemReason": {
+          "commandIdReused": "This command ID previously referred to different sync content. The client will preserve this operation and retry it safely with a new ID."
+        },
         "syncSummary": "This cycle sent {pushed}, received {pulled}, and created {conflicts} conflict copies.",
         "initialSyncTitle": "Sync in progress",
         "initialSyncDescription": "Syncing notes, records, canvases, conversations, and syncable settings from the server. Keep the app open.",
@@ -1358,6 +1370,7 @@
         "enablingManaged": "Migrating encryption keys",
         "serverUpgradeRequired": "This server is too old for automatic real-time sync. Upgrade note-gen-server and run the database migration.",
         "syncNow": "Sync now",
+        "resolveConflicts": "Resolve {count} conflicts",
         "activateAndSync": "Use as current platform and sync",
         "syncingNow": "Syncing",
         "serverUrl": "Server URL",
@@ -3985,6 +3998,7 @@
         "syncRepoRequired": "Configure a sync repository name for the current workspace first",
         "syncNotConfigured": "Sync is not configured",
         "syncConfigured": "{platform} sync is configured",
+        "localStorage": "Using local storage",
         "syncAvailable": "{platform} sync is available",
         "syncChecking": "Checking {platform} sync",
         "syncUnavailable": "{platform} sync is unavailable",

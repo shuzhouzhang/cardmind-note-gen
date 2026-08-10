@@ -51,6 +51,7 @@ import {
   activeEditorPathIsAffected,
   prepareActiveEditorPathMutationDurably,
 } from '@/lib/editor-deactivation'
+import { recordNoteGenServerV2PathMove } from '@/lib/sync/note-gen-server-outbox'
 
 export function FolderItem({
   item,
@@ -511,6 +512,7 @@ export function FolderItem({
       const nextActiveFilePath = getPathAfterMove(activeFilePath, path, targetRelativePath)
       const { renameVectorDocumentsByPrefix } = await import('@/db/vector')
       await renameVectorDocumentsByPrefix(path, targetRelativePath)
+      await recordNoteGenServerV2PathMove(path, targetRelativePath)
       if (nextActiveFilePath !== activeFilePath) {
         await setActiveFilePath(
           nextActiveFilePath,
@@ -1009,6 +1011,7 @@ export function FolderItem({
                     <span className={`text-${fileManagerTextSize} min-w-0 flex-1 truncate ${item.loading ? 'text-muted-foreground' : ''}`}>{item.name}</span>
                   </div>
                   <FileTreeDecorations
+                    relativePath={path}
                     iconSize={iconSize}
                     knowledge={renderFolderVectorIcon()}
                     syncStatus={syncStatus}
