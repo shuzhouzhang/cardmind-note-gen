@@ -382,6 +382,31 @@ export async function clearSyncV2BootstrapProgress(scopeId: string): Promise<voi
   )
 }
 
+/**
+ * Starts a new remote snapshot after an operator-confirmed server restore.
+ * Local entities, durable outbox commands, mutation journal and conflicts are
+ * deliberately retained: they are the device's evidence of edits that may
+ * not have made it into the restored server database.
+ */
+export async function resetSyncV2ForServerEpoch(scopeId: string): Promise<void> {
+  const now = Date.now()
+  await applySyncV2AtomicBatch([
+    { statement: 'delete from sync_v2_apply_journal where scopeId=$1', values: [scopeId] },
+    { statement: 'delete from sync_v2_inbox where scopeId=$1', values: [scopeId] },
+    {
+      statement: `insert into sync_v2_state(
+        scopeId, receivedCursor, latestServerSequence, updatedAt, bootstrapComplete,
+        bootstrapId, bootstrapSnapshotSequence, bootstrapAfterObjectId
+      ) values($1, '0', '0', $2, 0, null, null, null)
+      on conflict(scopeId) do update set receivedCursor='0', latestServerSequence='0',
+        lastSuccessfulSyncAt=null, lastServerConfirmedAt=null, lastFullyConvergedAt=null,
+        bootstrapComplete=0, bootstrapId=null, bootstrapSnapshotSequence=null,
+        bootstrapAfterObjectId=null, updatedAt=excluded.updatedAt`,
+      values: [scopeId, now],
+    },
+  ])
+}
+
 export async function markSyncV2BootstrapComplete(scopeId: string, snapshotSequence: string): Promise<void> {
   const db = await getDb()
   const now = Date.now()

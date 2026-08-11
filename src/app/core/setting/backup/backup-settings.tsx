@@ -166,16 +166,22 @@ export function BackupSettings() {
       const store = await Store.load('store.json')
       const currentWorkspacePath = (await store.get<string>('workspacePath')) ?? ''
       const { db } = await import('@/db')
+      const { disconnectNoteGenServerBackgroundRuntime } = await import('@/lib/sync/note-gen-server-background')
+      // Stop watcher, websocket and pending writes before swapping the local
+      // restore tree. The restored store is deliberately scrubbed of session
+      // bearers, so this runtime cannot safely remain connected afterwards.
+      await disconnectNoteGenServerBackgroundRuntime()
       await db.close()
       try {
         await restoreManagedBackup(restoreTarget, currentWorkspacePath)
+        await relaunch()
       } catch (error) {
         await message(t('restore.failedDescription', { error: String(error) }), {
           title: t('restore.failedTitle'),
           kind: 'error',
         })
+        setRestoring(false)
       }
-      await relaunch()
     } catch (error) {
       toast.error(t('restore.safetyBackupError'), { description: String(error) })
       setRestoring(false)

@@ -95,6 +95,7 @@ export function HistorySheet({ editor, prepareExternalAction, onMarkdownChange }
           accessToken: connection.session.accessToken,
           workspaceId: context.workspaceId,
           objectId: entity.objectId,
+          ...(context.syncEpoch === undefined ? {} : { expectedSyncEpoch: context.syncEpoch }),
           limit: 20,
         })
         setHistory(result.versions.map(version => ({
@@ -231,6 +232,7 @@ export function HistorySheet({ editor, prepareExternalAction, onMarkdownChange }
           syncScopeId: context.syncScopeId,
           objectId: entity.objectId,
           revision: commitSha,
+          ...(context.syncEpoch === undefined ? {} : { expectedSyncEpoch: context.syncEpoch }),
           workspaceKeys: context.workspaceKeys,
           workspaceKey: context.workspaceKey,
           keyVersion: context.keyVersion,

@@ -69,6 +69,7 @@ import { checkSyncProviderStatus } from '@/lib/sync/provider-status'
 import type { SyncRepoPlatform, WorkspaceSyncRepos } from '@/lib/sync/workspace-repos'
 import useSettingStore from '@/stores/setting'
 import useSyncStore from '@/stores/sync'
+import { useNoteGenServerPairingStore } from '@/stores/note-gen-server-pairing'
 import { SYNC_PLATFORMS, SYNC_PLATFORM_INFO, type PrimarySyncPlatform, type SyncPlatform } from '@/types/sync'
 
 const PLATFORM_ICONS: Record<SyncPlatform, LucideIcon> = {
@@ -133,11 +134,19 @@ export default function SyncPage() {
   const [checkingPlatforms, setCheckingPlatforms] = useState<Set<SyncPlatform>>(new Set())
   const checkingPlatformsRef = useRef<Set<SyncPlatform>>(new Set())
   const [workspaceRepos, setWorkspaceRepos] = useState<Record<string, WorkspaceSyncRepos>>({})
+  const pendingNoteGenServerPairingUri = useNoteGenServerPairingStore(state => state.pendingUri)
 
   const workspaceOptions = useMemo(
     () => Array.from(new Set([workspacePath, '', ...workspaceHistory])),
     [workspaceHistory, workspacePath],
   )
+
+  useEffect(() => {
+    if (pendingNoteGenServerPairingUri) {
+      setPlatform('noteGenServer')
+      setNoteGenConnectionState('checking')
+    }
+  }, [pendingNoteGenServerPairingUri])
 
   useEffect(() => {
     let cancelled = false
@@ -179,7 +188,7 @@ export default function SyncPage() {
       try {
         const store = await Store.load('store.json')
         const savedMethod = await store.get<PrimarySyncPlatform>('primaryBackupMethod')
-        if (savedMethod) {
+        if (savedMethod && !useNoteGenServerPairingStore.getState().pendingUri) {
           await setPrimaryBackupMethod(savedMethod)
           setPlatform(savedMethod)
         }
@@ -292,6 +301,10 @@ export default function SyncPage() {
   }
 
   function renderStatusBadge(state: SyncStateEnum) {
+    if (platform === 'noteGenServer' && noteGenConnectionState === 'action-required') {
+      return <Badge variant="secondary">{t('settings.sync.status.actionRequired')}</Badge>
+    }
+
     const isChecking = state === SyncStateEnum.checking || state === SyncStateEnum.creating
 
     if (state === SyncStateEnum.success) {

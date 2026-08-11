@@ -17,7 +17,10 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   authenticateServer,
   cancelServerDeviceAuthorization,
+  clearPendingServerWorkspaceRecoverySecret,
   clearServerProfile,
+  createServerWorkspaceRecoveryKey,
+  createServerWorkspace,
   createServerDeviceAuthorization,
   discoverServer,
   enableServerWorkspaceEndToEndEncryption,
@@ -27,25 +30,34 @@ import {
   getOrCreateManagedServerWorkspace,
   getOrCreateServerDeviceId,
   getServerAccount,
+  getServerAccountContext,
+  findServerWorkspaceCreation,
   listServerWorkspaces,
+  loadPendingServerWorkspaceRecoverySecret,
   loadServerProfile,
   logoutServerSession,
   NoteGenServerRequestError,
   normalizeServerOrigin,
+  replaceServerWorkspaceRecoveryKey,
   saveServerProfile,
+  savePendingServerWorkspaceRecoverySecret,
   unlockServerWorkspace,
   type NoteGenServerProfile,
   type ServerCapabilities,
+  type ResolvedServerCapabilities,
+  type ServerAccountContext,
   type ServerSession,
   type ServerWorkspace,
   type UnlockedWorkspaceKey,
 } from '@/lib/sync/note-gen-server'
 import {
   configureNoteGenServerBackgroundSession,
+  acceptNoteGenServerRestoreEpoch,
   disconnectNoteGenServerBackgroundRuntime,
   getNoteGenServerBackgroundConnection,
   getNoteGenServerLocalWorkspaceKey,
   initNoteGenServerBackgroundRuntime,
+  pauseNoteGenServerForRestoreEpoch,
   retryNoteGenServerBackgroundSync,
   subscribeNoteGenServerBackgroundStatus,
   subscribeNoteGenServerSession,
@@ -54,8 +66,9 @@ import {
   unlockNoteGenServerBackgroundWorkspace,
   type NoteGenServerBackgroundStatus,
 } from '@/lib/sync/note-gen-server-background'
+import { useNoteGenServerPairingStore } from '@/stores/note-gen-server-pairing'
 
-type BusyAction = 'authenticate' | 'browser-authorize' | 'scan-pairing' | 'restore' | 'unlock' | 'enable-e2ee' | 'enable-managed' | 'retry-sync' | null
+type BusyAction = 'authenticate' | 'browser-authorize' | 'open-account-portal' | 'scan-pairing' | 'pairing-link' | 'discover' | 'restore' | 'unlock' | 'create-e2ee' | 'enable-e2ee' | 'enable-managed' | 'retry-sync' | 'accept-restore-epoch' | null
 type ConnectionMethod = 'browser' | 'password'
 type WorkspaceUnlockMethod = 'passphrase' | 'recovery'
 type RestoreStage = 'local' | 'server' | 'workspace'
@@ -68,7 +81,7 @@ interface PendingAuthorization {
   expiresAt: number
 }
 
-export type NoteGenServerConnectionState = 'checking' | 'connected' | 'disconnected'
+export type NoteGenServerConnectionState = 'checking' | 'connected' | 'action-required' | 'disconnected'
 
 interface NoteGenServerSyncProps {
   onConnectionStateChange?: (state: NoteGenServerConnectionState) => void
@@ -83,19 +96,25 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
   const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:3789')
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
+  const [totpCode, setTotpCode] = useState('')
+  const [totpRequired, setTotpRequired] = useState(false)
   const [setupToken, setSetupToken] = useState('')
   const [syncPassphrase, setSyncPassphrase] = useState('')
   const [syncPassphraseConfirm, setSyncPassphraseConfirm] = useState('')
+  const [workspaceName, setWorkspaceName] = useState('NoteGen')
   const [workspaceUnlockMethod, setWorkspaceUnlockMethod] = useState<WorkspaceUnlockMethod>('passphrase')
   const [workspaceRecoveryKey, setWorkspaceRecoveryKey] = useState('')
   const [workspaceId, setWorkspaceId] = useState('')
   const [profile, setProfile] = useState<NoteGenServerProfile | null>(null)
   const [capabilities, setCapabilities] = useState<ServerCapabilities | null>(null)
+  const [discoveredCapabilities, setDiscoveredCapabilities] = useState<ResolvedServerCapabilities | null>(null)
   const [session, setSession] = useState<ServerSession | null>(null)
+  const [accountContext, setAccountContext] = useState<ServerAccountContext | null>(null)
   const [workspaces, setWorkspaces] = useState<ServerWorkspace[]>([])
   const [workspaceKey, setWorkspaceKey] = useState<UnlockedWorkspaceKey | null>(null)
   const [recoveryKey, setRecoveryKey] = useState('')
   const [recoveryCopied, setRecoveryCopied] = useState(false)
+  const [recoveryConfirmation, setRecoveryConfirmation] = useState('')
   const [busy, setBusy] = useState<BusyAction>(null)
   const [error, setError] = useState('')
   const [pendingAuthorization, setPendingAuthorization] = useState<PendingAuthorization | null>(null)
@@ -106,6 +125,8 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
     updatedAt: Date.now(),
   })
   const [conflictsOpen, setConflictsOpen] = useState(false)
+  const pendingPairingUri = useNoteGenServerPairingStore(state => state.pendingUri)
+  const consumePairingUri = useNoteGenServerPairingStore(state => state.consume)
 
   useEffect(() => {
     const attempt = ++authorizationAttempt.current
@@ -128,28 +149,60 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
         if (!connection || connection.profile.instanceId !== saved.instanceId) return
         setRestoreStage('server')
         const nextSession = connection.session
-        const [nextCapabilities, account, nextWorkspaces] = await Promise.all([
+        const [nextCapabilities, account, nextWorkspaces, nextAccountContext] = await Promise.all([
           discoverServer(saved.baseUrl),
           getServerAccount(saved.baseUrl, nextSession.accessToken),
           listServerWorkspaces(saved.baseUrl, nextSession.accessToken),
+          loadAccountContext(saved.baseUrl, nextSession.accessToken),
         ])
         if (nextCapabilities.instanceId !== saved.instanceId) throw new Error(t('instanceChanged'))
         setRestoreStage('workspace')
         if (authorizationAttempt.current !== attempt) return
-        const selected = nextWorkspaces.find(workspace => (
-          workspace.id === (connection.profile.workspaceId ?? saved.workspaceId)
-        ))
+        let selectedWorkspaceId = connection.profile.workspaceId ?? saved.workspaceId
+        if (!selectedWorkspaceId && saved.onboarding) {
+          const recovered = await findServerWorkspaceCreation({
+            baseUrl: saved.baseUrl,
+            accessToken: nextSession.accessToken,
+            creationIdempotencyKey: saved.onboarding.creationIdempotencyKey,
+          })
+          selectedWorkspaceId = recovered?.id ?? ''
+        }
+        const selected = nextWorkspaces.find(workspace => workspace.id === selectedWorkspaceId)
         if (selected?.encryptionMode === 'e2ee' && connection.profile.encryptionMode === 'e2ee') {
-          const nextProfile = { ...connection.profile, login: account.login, workspaceId: selected.id }
+          const nextProfile = { ...connection.profile, login: account.login, workspaceId: selected.id, onboarding: saved.onboarding }
           await saveServerProfile(nextProfile)
-          await configureNoteGenServerBackgroundSession(nextProfile, nextSession)
+          if (nextProfile.onboarding === undefined) {
+            await configureNoteGenServerBackgroundSession(nextProfile, nextSession)
+          }
           setProfile(nextProfile)
           setLogin(account.login)
           setCapabilities(nextCapabilities)
           setSession(nextSession)
+          setAccountContext(nextAccountContext)
           setWorkspaces(nextWorkspaces)
           setWorkspaceId(selected.id)
-        } else {
+          if (nextProfile.onboarding) {
+            const pendingRecoveryKey = await loadPendingServerWorkspaceRecoverySecret({ profile: nextProfile, accountId: nextSession.accountId })
+            if (pendingRecoveryKey !== null) {
+              try {
+                const pendingWorkspaceKey = await unlockServerWorkspace({
+                  baseUrl: nextProfile.baseUrl, accessToken: nextSession.accessToken,
+                  workspaceId: selected.id, recoveryKey: pendingRecoveryKey,
+                })
+                setWorkspaceKey(pendingWorkspaceKey)
+                setRecoveryKey(pendingRecoveryKey)
+                setRecoveryCopied(false)
+                setRecoveryConfirmation('')
+              } catch {
+                // A lost/revoked record is handled by the existing passphrase
+                // unlock + recovery-envelope replacement flow below.
+                await clearPendingServerWorkspaceRecoverySecret({
+                  instanceId: nextProfile.instanceId, accountId: nextSession.accountId, deviceId: nextProfile.deviceId,
+                }).catch(() => undefined)
+              }
+            }
+          }
+        } else if (nextCapabilities.features?.managedDefaultWorkspace === true) {
           await activateAutomaticSync(
             saved.baseUrl,
             nextCapabilities,
@@ -157,6 +210,15 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
             saved.deviceId,
             account.login,
           )
+          setAccountContext(nextAccountContext)
+        } else {
+          setProfile({ ...connection.profile, login: account.login, onboarding: saved.onboarding })
+          setLogin(account.login)
+          setCapabilities(nextCapabilities)
+          setSession(nextSession)
+          setAccountContext(nextAccountContext)
+          setWorkspaces(nextWorkspaces)
+          setWorkspaceId(selectedWorkspaceId)
         }
       } catch (cause) {
         if (authorizationAttempt.current === attempt) {
@@ -188,6 +250,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
       setSession(nextSession)
       if (!nextSession) {
         setCapabilities(null)
+        setAccountContext(null)
         setWorkspaceKey(null)
       }
     })
@@ -199,17 +262,39 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
   )
   const authenticated = session !== null && capabilities !== null
   const unlocked = authenticated && workspaceKey !== null && workspaceId.length > 0
+  const syncPushDecision = accountContext?.actions['sync.push']
+  const discoveredRegistration = discoveredCapabilities?.registration
+  const passwordRegistrationAvailable = discoveredRegistration === undefined
+    || discoveredRegistration.methods.includes('password')
+  const setupRequired = discoveredRegistration?.methods.includes('setup') === true
+  const browserRegistrationRequired = discoveredRegistration?.methods.includes('email-password') === true
+    || discoveredRegistration?.methods.includes('invitation') === true
+  const browserAuthorizationAvailable = discoveredCapabilities?.features?.deviceAuthorization !== false
+  const storageBytes = accountContext === null ? null : sumAccountMetrics(
+    accountContext.usage.metrics,
+    ['activeObjectBytes', 'activeCrdtBytes', 'activeBlobBytes'],
+  )
+  const storageLimit = accountContext?.entitlements.limits.storage_bytes
+  const monthlyIngressBytes = accountContext?.usage.metrics.monthlyIngressBytes
+  const monthlyEgressBytes = accountContext?.usage.metrics.monthlyEgressBytes
   const mobile = isMobileRuntime()
 
   useEffect(() => {
+    const checkingConnection = !connectionInitialized
+      || busy === 'restore'
+      || busy === 'authenticate'
+      || busy === 'browser-authorize'
+      || busy === 'pairing-link'
     onConnectionStateChange?.(
-      !connectionInitialized || busy === 'restore'
+      checkingConnection
         ? 'checking'
         : unlocked
           ? 'connected'
-          : 'disconnected',
+          : authenticated
+            ? 'action-required'
+            : 'disconnected',
     )
-  }, [busy, connectionInitialized, onConnectionStateChange, unlocked])
+  }, [authenticated, busy, connectionInitialized, onConnectionStateChange, unlocked])
 
   async function completeAuthentication(
     normalizedBaseUrl: string,
@@ -218,6 +303,10 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
     deviceId: string,
   ) {
     const account = await getServerAccount(normalizedBaseUrl, nextSession.accessToken)
+    const nextAccountContext = await loadAccountContext(normalizedBaseUrl, nextSession.accessToken)
+    const awaitingRestoreEpochAcceptance = profile?.instanceId === nextCapabilities.instanceId
+      && profile.syncEpoch !== undefined && nextCapabilities.syncEpoch !== undefined
+      && profile.syncEpoch !== nextCapabilities.syncEpoch
     const provisionalProfile: NoteGenServerProfile = profile?.instanceId === nextCapabilities.instanceId
       ? { ...profile, login: account.login, deviceId, enabled: true }
       : {
@@ -233,6 +322,30 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
     setProfile(provisionalProfile)
     setSession(nextSession)
     setCapabilities(nextCapabilities)
+    setAccountContext(nextAccountContext)
+    if (awaitingRestoreEpochAcceptance) {
+      // Preserve the last accepted epoch and durable local evidence. A new
+      // credential alone must not unlock watchers or replay old commands.
+      pauseNoteGenServerForRestoreEpoch()
+      setBaseUrl(normalizedBaseUrl)
+      setLogin(account.login)
+      setPassword('')
+      setSetupToken('')
+      return
+    }
+    if (nextCapabilities.features?.managedDefaultWorkspace !== true) {
+      // Hosted internal-test can deliberately require foreground E2EE setup.
+      // Do not reinterpret that policy as a server-version failure or call the
+      // managed-default endpoint as a fallback.
+      const existing = await listServerWorkspaces(normalizedBaseUrl, nextSession.accessToken)
+      setBaseUrl(normalizedBaseUrl)
+      setLogin(account.login)
+      setWorkspaces(existing)
+      setWorkspaceId(existing.length === 1 ? existing[0]!.id : '')
+      setPassword('')
+      setSetupToken('')
+      return
+    }
     await activateAutomaticSync(
       normalizedBaseUrl,
       nextCapabilities,
@@ -306,7 +419,10 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
       if (nextCapabilities.features?.deviceAuthorization !== true) {
         throw new Error(t('browserAuthorizationUnsupported'))
       }
-      const deviceId = await getOrCreateServerDeviceId()
+      const deviceId = await getOrCreateServerDeviceId(
+        nextCapabilities.instanceId,
+        profile?.instanceId === nextCapabilities.instanceId ? profile.deviceId : undefined,
+      )
       const authorization = await createServerDeviceAuthorization({
         baseUrl: normalizedBaseUrl,
         deviceId,
@@ -385,21 +501,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
 
       const result = await scanner.scan({ cameraDirection: 'back', formats: [scanner.Format.QRCode] })
       if (authorizationAttempt.current !== attempt) return
-      const pairing = parseDevicePairingUri(result.content, t('scanInvalidCode'))
-      const nextCapabilities = await discoverServer(pairing.baseUrl)
-      if (nextCapabilities.instanceId !== pairing.instanceId) throw new Error(t('scanServerMismatch'))
-      if (profile?.baseUrl === pairing.baseUrl && profile.instanceId !== nextCapabilities.instanceId) {
-        throw new Error(t('instanceChanged'))
-      }
-      const deviceId = await getOrCreateServerDeviceId()
-      const nextSession = await exchangeServerDevicePairing({
-        baseUrl: pairing.baseUrl,
-        pairingToken: pairing.pairingToken,
-        deviceId,
-        deviceName: getServerDeviceName(),
-      })
-      if (authorizationAttempt.current !== attempt) return
-      await completeAuthentication(pairing.baseUrl, nextCapabilities, nextSession, deviceId)
+      await completeDevicePairing(result.content, attempt)
     } catch (cause) {
       if (authorizationAttempt.current !== attempt) return
       if (isScannerCancellation(cause)) return
@@ -413,6 +515,54 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
     }
   }
 
+  async function completeDevicePairing(value: string, attempt: number) {
+    const pairing = parseDevicePairingUri(value, t('scanInvalidCode'))
+    const nextCapabilities = await discoverServer(pairing.baseUrl)
+    if (nextCapabilities.instanceId !== pairing.instanceId) throw new Error(t('scanServerMismatch'))
+    if (profile?.baseUrl === pairing.baseUrl && profile.instanceId !== nextCapabilities.instanceId) {
+      throw new Error(t('instanceChanged'))
+    }
+    const deviceId = await getOrCreateServerDeviceId(
+      nextCapabilities.instanceId,
+      profile?.instanceId === nextCapabilities.instanceId ? profile.deviceId : undefined,
+    )
+    const nextSession = await exchangeServerDevicePairing({
+      baseUrl: pairing.baseUrl,
+      pairingToken: pairing.pairingToken,
+      deviceId,
+      deviceName: getServerDeviceName(),
+    })
+    if (authorizationAttempt.current !== attempt) return
+    await completeAuthentication(pairing.baseUrl, nextCapabilities, nextSession, deviceId)
+  }
+
+  async function handlePairingLink(value: string) {
+    const attempt = ++authorizationAttempt.current
+    setBusy('pairing-link')
+    setError('')
+    resetConnectionResults()
+    try {
+      await completeDevicePairing(value, attempt)
+    } catch (cause) {
+      if (authorizationAttempt.current !== attempt) return
+      if (cause instanceof NoteGenServerRequestError && cause.code === 'pairing_expired') {
+        setError(t('scanPairingExpired'))
+      } else {
+        setError(errorMessage(cause))
+      }
+    } finally {
+      if (authorizationAttempt.current === attempt) setBusy(null)
+    }
+  }
+
+  useEffect(() => {
+    if (!pendingPairingUri) return
+    const pairingUri = consumePairingUri()
+    if (pairingUri) void handlePairingLink(pairingUri)
+    // Pairing links are one-shot bearer credentials. Consume each received URI once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [consumePairingUri, pendingPairingUri])
+
   async function handleAuthenticate() {
     setBusy('authenticate')
     setError('')
@@ -423,17 +573,76 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
       if (profile?.baseUrl === normalizedBaseUrl && profile.instanceId !== nextCapabilities.instanceId) {
         throw new Error(t('instanceChanged'))
       }
-      const deviceId = await getOrCreateServerDeviceId()
+      setDiscoveredCapabilities(nextCapabilities)
+      if (mode === 'register' && nextCapabilities.registration.methods.includes('email-password')) {
+        throw new Error(t('hostedRegistrationInBrowser'))
+      }
+      if (mode === 'register' && nextCapabilities.registration.methods.includes('setup')) {
+        throw new Error(t('setupInControlPlane'))
+      }
+      if (mode === 'register' && !nextCapabilities.registration.methods.includes('password')) {
+        throw new Error(t('registrationUnavailable'))
+      }
+      const deviceId = await getOrCreateServerDeviceId(
+        nextCapabilities.instanceId,
+        profile?.instanceId === nextCapabilities.instanceId ? profile.deviceId : undefined,
+      )
       const nextSession = await authenticateServer({
         baseUrl: normalizedBaseUrl,
         action: mode,
         login,
         password,
+        ...(totpRequired ? { totpCode: totpCode.trim() } : {}),
         ...(setupToken.trim() ? { setupToken: setupToken.trim() } : {}),
         deviceId,
         deviceName: getServerDeviceName(),
       })
       await completeAuthentication(normalizedBaseUrl, nextCapabilities, nextSession, deviceId)
+      setTotpCode('')
+      setTotpRequired(false)
+    } catch (cause) {
+      if (cause instanceof NoteGenServerRequestError && cause.code === 'totp_required') {
+        setTotpRequired(true)
+        setError(t('totpRequired'))
+      } else {
+        setError(errorMessage(cause))
+      }
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function handleDiscover() {
+    setBusy('discover')
+    setError('')
+    try {
+      const normalizedBaseUrl = normalizeServerOrigin(baseUrl)
+      const nextCapabilities = await discoverServer(normalizedBaseUrl)
+      if (profile?.baseUrl === normalizedBaseUrl && profile.instanceId !== nextCapabilities.instanceId) {
+        throw new Error(t('instanceChanged'))
+      }
+      setDiscoveredCapabilities(nextCapabilities)
+      if (nextCapabilities.features?.deviceAuthorization === false) setConnectionMethod('password')
+      if (!nextCapabilities.registration.methods.includes('password')) setMode('login')
+    } catch (cause) {
+      setDiscoveredCapabilities(null)
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function handleOpenAccountPortal() {
+    setBusy('open-account-portal')
+    setError('')
+    try {
+      const nextCapabilities = discoveredCapabilities ?? await discoverServer(normalizeServerOrigin(baseUrl))
+      setDiscoveredCapabilities(nextCapabilities)
+      const accountUrl = nextCapabilities.web?.accountUrl
+      const requiresBrowser = nextCapabilities.registration.methods.includes('email-password')
+        || nextCapabilities.registration.methods.includes('invitation')
+      if (!requiresBrowser || accountUrl === undefined) throw new Error(t('registrationUnavailable'))
+      await openAuthorizationPage(accountUrl)
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -454,6 +663,44 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
           ? { recoveryKey: workspaceRecoveryKey.trim() }
           : { syncPassphrase }),
       })
+      if (profile?.onboarding) {
+        // A process may have exited after the server created the workspace but
+        // before its original recovery key was confirmed. Prove possession of
+        // the passphrase first, then invalidate that unknown recovery route.
+        const recoveryReplacementIdempotencyKey = profile.onboarding.recoveryReplacementIdempotencyKey ?? crypto.randomUUID()
+        const pendingProfile: NoteGenServerProfile = {
+          ...profile,
+          onboarding: { ...profile.onboarding, recoveryReplacementIdempotencyKey },
+        }
+        // The opaque request key is durable before the request. On Android/iOS
+        // the candidate secret is also journaled before send, so a crash can
+        // retry the identical envelope rather than creating another route.
+        await saveServerProfile(pendingProfile)
+        setProfile(pendingProfile)
+        const pendingRecoveryKey = await loadPendingServerWorkspaceRecoverySecret({
+          profile: pendingProfile, accountId: session.accountId,
+        }) ?? createServerWorkspaceRecoveryKey()
+        await savePendingServerWorkspaceRecoverySecret({
+          profile: pendingProfile, accountId: session.accountId, recoveryKey: pendingRecoveryKey,
+        })
+        const replacement = await replaceServerWorkspaceRecoveryKey({
+          baseUrl,
+          accessToken: session.accessToken,
+          workspaceId,
+          keyVersion: key.keyVersion,
+          workspaceKey: key.key,
+          idempotencyKey: recoveryReplacementIdempotencyKey,
+          recoveryKey: pendingRecoveryKey,
+        })
+        setWorkspaceKey(key)
+        setRecoveryKey(replacement.recoveryKey)
+        await savePendingServerWorkspaceRecoverySecret({ profile: pendingProfile, accountId: session.accountId, recoveryKey: replacement.recoveryKey })
+        setRecoveryCopied(false)
+        setRecoveryConfirmation('')
+        setSyncPassphrase('')
+        setWorkspaceRecoveryKey('')
+        return
+      }
       const nextProfile = {
         ...profile!,
         workspaceId,
@@ -472,6 +719,55 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
       await syncNoteGenServerNow()
       setSyncPassphrase('')
       setWorkspaceRecoveryKey('')
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function handleCreateEndToEndWorkspace() {
+    if (!session || !profile || syncPassphrase.length < 12 || syncPassphrase !== syncPassphraseConfirm) return
+    const name = workspaceName.trim()
+    if (!name) return
+    setBusy('create-e2ee')
+    setError('')
+    try {
+      const creationIdempotencyKey = crypto.randomUUID()
+      // Only the opaque creation key is durable. The passphrase, recovery key
+      // and workspace key remain in memory until recovery-key confirmation.
+      const pendingProfile: NoteGenServerProfile = {
+        ...profile,
+        workspaceId: undefined,
+        encryptionMode: undefined,
+        onboarding: { creationIdempotencyKey },
+      }
+      await saveServerProfile(pendingProfile)
+      setProfile(pendingProfile)
+      const created = await createServerWorkspace({
+        baseUrl,
+        accessToken: session.accessToken,
+        name,
+        syncPassphrase,
+        creationIdempotencyKey,
+      })
+      const nextProfile: NoteGenServerProfile = {
+        ...pendingProfile,
+        workspaceId: created.workspace.id,
+        encryptionMode: 'e2ee',
+      }
+      await saveServerProfile(nextProfile)
+      const nextWorkspaces = await listServerWorkspaces(baseUrl, session.accessToken)
+      setProfile(nextProfile)
+      setWorkspaces(nextWorkspaces)
+      setWorkspaceId(created.workspace.id)
+      setWorkspaceKey({ key: created.workspaceKey, keys: created.workspaceKeys, keyVersion: 1 })
+      setRecoveryKey(created.recoveryKey)
+      await savePendingServerWorkspaceRecoverySecret({ profile: nextProfile, accountId: session.accountId, recoveryKey: created.recoveryKey })
+      setRecoveryCopied(false)
+      setRecoveryConfirmation('')
+      setSyncPassphrase('')
+      setSyncPassphraseConfirm('')
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -502,6 +798,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
       }
       setRecoveryKey(nextRecoveryKey)
       setRecoveryCopied(false)
+      setRecoveryConfirmation('')
       setSyncPassphrase('')
       setSyncPassphraseConfirm('')
     } catch (cause) {
@@ -548,6 +845,32 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
     }
   }
 
+  async function handleConfirmRecoveryKey() {
+    if (!session || !profile || !workspaceKey || !recoveryKey || !recoveryCopied
+      || recoveryConfirmation.trim() !== recoveryKey.slice(-6)) return
+    setError('')
+    try {
+      const nextProfile = { ...profile, onboarding: undefined }
+      await clearPendingServerWorkspaceRecoverySecret({
+        instanceId: profile.instanceId, accountId: session.accountId, deviceId: profile.deviceId,
+      })
+      await saveServerProfile(nextProfile)
+      await configureNoteGenServerBackgroundSession(nextProfile, session)
+      unlockNoteGenServerBackgroundWorkspace({
+        workspaceKey: workspaceKey.key,
+        workspaceKeys: workspaceKey.keys,
+        keyVersion: workspaceKey.keyVersion,
+      })
+      setProfile(nextProfile)
+      setRecoveryKey('')
+      setRecoveryCopied(false)
+      setRecoveryConfirmation('')
+      await syncNoteGenServerNow()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    }
+  }
+
   async function handleRetrySync() {
     if (busy !== null) return
     setBusy('retry-sync')
@@ -561,9 +884,35 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
     }
   }
 
+  async function handleAcceptRestoreEpoch() {
+    if (busy !== null) return
+    setBusy('accept-restore-epoch')
+    setError('')
+    try {
+      if (!await acceptNoteGenServerRestoreEpoch()) throw new Error(t('restoreEpochUnavailable'))
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
   function resetConnectionResults() {
     setRecoveryKey('')
     setRecoveryCopied(false)
+    setRecoveryConfirmation('')
+  }
+
+  async function loadAccountContext(nextBaseUrl: string, accessToken: string): Promise<ServerAccountContext | null> {
+    try {
+      return await getServerAccountContext(nextBaseUrl, accessToken)
+    } catch (cause) {
+      // Context is an additive UI projection. A temporary outage must never
+      // turn a valid authorization or existing sync session into a failed
+      // connection; server-side operation enforcement remains authoritative.
+      console.warn('Failed to load NoteGen Server account context:', cause)
+      return null
+    }
   }
 
   async function handleReset() {
@@ -582,19 +931,28 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
         console.error('Failed to revoke NoteGen server session:', cause)
       }
     }
+    if (logoutSession && logoutProfile) {
+      await clearPendingServerWorkspaceRecoverySecret({
+        instanceId: logoutProfile.instanceId, accountId: logoutSession.accountId, deviceId: logoutProfile.deviceId,
+      }).catch(() => undefined)
+    }
     await clearServerProfile()
     setProfile(null)
     setCapabilities(null)
     setSession(null)
+    setAccountContext(null)
     setWorkspaces([])
     setWorkspaceId('')
     setWorkspaceKey(null)
     setRecoveryKey('')
     setRecoveryCopied(false)
+    setRecoveryConfirmation('')
     setSyncPassphrase('')
     setSyncPassphraseConfirm('')
     setWorkspaceRecoveryKey('')
     setWorkspaceUnlockMethod('passphrase')
+    setTotpCode('')
+    setTotpRequired(false)
     setPendingAuthorization(null)
     setBusy(null)
     setError('')
@@ -637,6 +995,32 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
           </Alert>
         ) : null}
 
+        {syncPushDecision?.effect === 'deny' ? (
+          <Alert variant="warning">
+            <AlertCircle />
+            <AlertTitle>{t('syncError')}</AlertTitle>
+            <AlertDescription>{`${t('syncPausedDescription')} (${syncPushDecision.reasonCode})`}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {authenticated && accountContext && storageBytes !== null ? (
+          <Alert>
+            <Server />
+            <AlertTitle>{t('accountUsage')}</AlertTitle>
+            <AlertDescription className="flex flex-col gap-1">
+              <span>{storageLimit === undefined || storageLimit === null
+                ? t('storageUsageUnlimited', { used: formatAccountBytes(storageBytes) })
+                : t('storageUsage', { used: formatAccountBytes(storageBytes), limit: formatAccountBytes(storageLimit) })}</span>
+              {monthlyIngressBytes !== undefined || monthlyEgressBytes !== undefined ? (
+                <span>{t('monthlyTransfer', {
+                  ingress: formatAccountBytes(monthlyIngressBytes ?? '0'),
+                  egress: formatAccountBytes(monthlyEgressBytes ?? '0'),
+                })}</span>
+              ) : null}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         {!authenticated ? (
           <FieldGroup>
             <Field>
@@ -644,13 +1028,37 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
               <Input
                 id="note-gen-server-url"
                 value={baseUrl}
-                onChange={event => setBaseUrl(event.target.value)}
+                onChange={event => {
+                  setBaseUrl(event.target.value)
+                  setDiscoveredCapabilities(null)
+                }}
                 disabled={pendingAuthorization !== null || busy === 'restore'}
                 placeholder="https://sync.example.com"
                 autoCapitalize="none"
                 autoCorrect="off"
               />
               <FieldDescription>{t('serverUrlDescription')}</FieldDescription>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2 self-start"
+                onClick={() => void handleDiscover()}
+                disabled={busy !== null || !baseUrl.trim()}
+              >
+                {busy === 'discover' ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Server data-icon="inline-start" />}
+                {busy === 'discover' ? t('discoveringServer') : t('discoverServer')}
+              </Button>
+              {discoveredCapabilities ? (
+                <FieldDescription>
+                  {discoveredCapabilities.readiness === 'ready'
+                    ? t('discoveryReady', {
+                        server: discoveredCapabilities.serverName,
+                        policy: discoveredCapabilities.registration.policy,
+                      })
+                    : t('discoveryUnavailable', { server: discoveredCapabilities.serverName })}
+                </FieldDescription>
+              ) : null}
             </Field>
             <Field>
               <FieldLabel>{t('connectionMethod')}</FieldLabel>
@@ -663,7 +1071,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
                   if (value === 'browser' || value === 'password') setConnectionMethod(value)
                 }}
               >
-                <ToggleGroupItem value="browser">
+                <ToggleGroupItem value="browser" disabled={!browserAuthorizationAvailable}>
                   <Globe data-icon="inline-start" />
                   {t('browserConnect')}
                 </ToggleGroupItem>
@@ -705,13 +1113,30 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
                     variant="outline"
                     value={mode}
                     onValueChange={value => {
-                      if (value === 'login' || value === 'register') setMode(value)
+                      if (value === 'login' || value === 'register') {
+                        setMode(value)
+                        setTotpCode('')
+                        setTotpRequired(false)
+                      }
                     }}
                   >
                     <ToggleGroupItem value="login">{t('login')}</ToggleGroupItem>
-                    <ToggleGroupItem value="register">{t('register')}</ToggleGroupItem>
+                    {passwordRegistrationAvailable ? <ToggleGroupItem value="register">{t('register')}</ToggleGroupItem> : null}
                   </ToggleGroup>
                 </Field>
+                {mode === 'login' && totpRequired ? (
+                  <Field>
+                    <FieldLabel htmlFor="note-gen-server-totp">{t('totpCode')}</FieldLabel>
+                    <Input
+                      id="note-gen-server-totp"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={totpCode}
+                      onChange={event => setTotpCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                    />
+                  </Field>
+                ) : null}
                 <Field>
                   <FieldLabel htmlFor="note-gen-server-login">{t('account')}</FieldLabel>
                   <Input
@@ -732,7 +1157,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
                   />
                   <FieldDescription>{t('passwordDescription')}</FieldDescription>
                 </Field>
-                {mode === 'register' ? (
+                {mode === 'register' && setupRequired ? (
                   <Field>
                     <FieldLabel htmlFor="note-gen-server-setup-token">{t('setupToken')}</FieldLabel>
                     <Input
@@ -749,6 +1174,79 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
           </FieldGroup>
         ) : (
           <div className="flex flex-col gap-4">
+            {workspaces.length > 1 ? (
+              <Field>
+                <FieldLabel htmlFor="note-gen-workspace-select">{t('selectWorkspace')}</FieldLabel>
+                <select
+                  id="note-gen-workspace-select"
+                  className="h-9 rounded-md border bg-background px-3 text-sm"
+                  value={workspaceId}
+                  onChange={event => {
+                    setWorkspaceId(event.target.value)
+                    setWorkspaceKey(null)
+                    setRecoveryKey('')
+                    setRecoveryConfirmation('')
+                  }}
+                >
+                  <option value="">{t('selectWorkspace')}</option>
+                  {workspaces.map((workspace, index) => (
+                    <option key={workspace.id} value={workspace.id}>
+                      {t('workspaceOption', { index: index + 1, id: workspace.id })}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : null}
+
+            {workspaces.length === 0 && profile?.onboarding === undefined ? (
+              <details open className="rounded-lg border p-4">
+                <summary className="cursor-pointer font-medium">{t('createWorkspace')}</summary>
+                <div className="mt-4 flex flex-col gap-4">
+                  <FieldDescription>{t('syncPassphraseDescription')}</FieldDescription>
+                  <FieldGroup>
+                    <Field>
+                      <FieldLabel htmlFor="note-gen-first-workspace-name">{t('workspaceName')}</FieldLabel>
+                      <Input
+                        id="note-gen-first-workspace-name"
+                        value={workspaceName}
+                        onChange={event => setWorkspaceName(event.target.value)}
+                        autoComplete="off"
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="note-gen-first-workspace-passphrase">{t('syncPassphrase')}</FieldLabel>
+                      <Input
+                        id="note-gen-first-workspace-passphrase"
+                        type="password"
+                        value={syncPassphrase}
+                        onChange={event => setSyncPassphrase(event.target.value)}
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="note-gen-first-workspace-passphrase-confirm">{t('syncPassphraseConfirm')}</FieldLabel>
+                      <Input
+                        id="note-gen-first-workspace-passphrase-confirm"
+                        type="password"
+                        value={syncPassphraseConfirm}
+                        onChange={event => setSyncPassphraseConfirm(event.target.value)}
+                      />
+                      {syncPassphraseConfirm && syncPassphrase !== syncPassphraseConfirm ? (
+                        <FieldDescription className="text-destructive">{t('syncPassphraseMismatch')}</FieldDescription>
+                      ) : null}
+                    </Field>
+                  </FieldGroup>
+                  <Button
+                    className="self-start"
+                    onClick={() => void handleCreateEndToEndWorkspace()}
+                    disabled={busy !== null || !workspaceName.trim() || syncPassphrase.length < 12 || syncPassphrase !== syncPassphraseConfirm}
+                  >
+                    {busy === 'create-e2ee' ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
+                    {t('createWorkspace')}
+                  </Button>
+                </div>
+              </details>
+            ) : null}
+
             {selectedWorkspace?.encryptionMode === 'e2ee' && !unlocked ? (
               <details open className="rounded-lg border p-4">
                 <summary className="cursor-pointer font-medium">{t('advancedEncryption')}</summary>
@@ -869,6 +1367,30 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
                 {recoveryCopied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
                 {recoveryCopied ? t('recoveryCopied') : t('copyRecoveryKey')}
               </Button>
+              {profile?.onboarding ? (
+                <>
+                  <Field className="w-full">
+                    <FieldLabel htmlFor="note-gen-recovery-confirmation">
+                      {t('recoveryConfirmLabel', { suffix: recoveryKey.slice(-6) })}
+                    </FieldLabel>
+                    <Input
+                      id="note-gen-recovery-confirmation"
+                      value={recoveryConfirmation}
+                      onChange={event => setRecoveryConfirmation(event.target.value)}
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      autoComplete="off"
+                    />
+                  </Field>
+                  <Button
+                    size="sm"
+                    onClick={() => void handleConfirmRecoveryKey()}
+                    disabled={!recoveryCopied || recoveryConfirmation.trim() !== recoveryKey.slice(-6)}
+                  >
+                    {t('activateAndSync')}
+                  </Button>
+                </>
+              ) : null}
             </AlertDescription>
           </Alert>
         ) : null}
@@ -885,7 +1407,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
             <AlertCircle />
             <AlertTitle>{t('syncError')}</AlertTitle>
             <AlertDescription className="flex flex-col items-start gap-3">
-              <span>{backgroundStatus.error}</span>
+              {backgroundStatus.reason === undefined ? <span>{backgroundStatus.error}</span> : null}
               {backgroundStatus.problems?.length ? (
                 <ul className="flex w-full flex-col gap-2 text-sm">
                   {backgroundStatus.problems.map(problem => (
@@ -954,6 +1476,53 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
             </AlertDescription>
           </Alert>
         ) : null}
+        {backgroundStatus.phase === 'paused' && backgroundStatus.error ? (
+          <Alert variant="warning">
+            <AlertCircle />
+            <AlertTitle>{t('syncError')}</AlertTitle>
+            <AlertDescription className="flex flex-col items-start gap-3">
+              <span>{backgroundStatus.error}</span>
+              <span>{t(pausedReasonTranslationKey(backgroundStatus.reason))}</span>
+              {backgroundStatus.reason === 'sync_epoch_changed' ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleAcceptRestoreEpoch()}
+                  disabled={busy !== null}
+                >
+                  {busy === 'accept-restore-epoch'
+                    ? <Loader2 data-icon="inline-start" className="animate-spin" />
+                    : <RefreshCw data-icon="inline-start" />}
+                  {busy === 'accept-restore-epoch' ? t('syncingNow') : t('restoreEpochAccept')}
+                </Button>
+              ) : null}
+              {backgroundStatus.reason === 'restore_reauthorization_required' ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleBrowserConnect()}
+                  disabled={busy !== null || !baseUrl.trim()}
+                >
+                  {busy === 'browser-authorize'
+                    ? <Loader2 data-icon="inline-start" className="animate-spin" />
+                    : <Globe data-icon="inline-start" />}
+                  {busy === 'browser-authorize' ? t('openingBrowser') : t('browserConnect')}
+                </Button>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleRetrySync()}
+                disabled={busy !== null}
+              >
+                {busy === 'retry-sync'
+                  ? <Loader2 data-icon="inline-start" className="animate-spin" />
+                  : <RefreshCw data-icon="inline-start" />}
+                {busy === 'retry-sync' ? t('syncingNow') : t('syncNow')}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {backgroundStatus.phase === 'workspace-mismatch' ? (
           <Alert variant="warning">
             <AlertCircle />
@@ -1002,12 +1571,25 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
           ) : (
             <Button
               onClick={() => void handleAuthenticate()}
-              disabled={busy !== null || !baseUrl.trim() || !login.trim() || password.length < 12}
+              disabled={busy !== null || !baseUrl.trim() || !login.trim() || password.length < 12
+                || (mode === 'login' && totpRequired && totpCode.length !== 6)}
             >
               {busy === 'authenticate' ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Server data-icon="inline-start" />}
               {busy === 'authenticate' ? t('connecting') : t('connect')}
             </Button>
           )}
+          {browserRegistrationRequired ? (
+            <Button
+              variant="outline"
+              onClick={() => void handleOpenAccountPortal()}
+              disabled={busy !== null || !baseUrl.trim()}
+            >
+              {busy === 'open-account-portal'
+                ? <Loader2 data-icon="inline-start" className="animate-spin" />
+                : <ExternalLink data-icon="inline-start" />}
+              {busy === 'open-account-portal' ? t('openingAccountPortal') : t('openAccountPortal')}
+            </Button>
+          ) : null}
           </>
         ) : null}
         {profile ? (
@@ -1032,6 +1614,49 @@ function isTransientConnectionError(error: unknown): boolean {
   }
   if (error instanceof TypeError) return true
   return /fetch|network|connection|timed? out|offline|无法连接|网络|连接失败/i.test(errorMessage(error))
+}
+
+function pausedReasonTranslationKey(reason: string | undefined): string {
+  switch (reason) {
+    case 'email_verification_required': return 'pauseReason.emailVerification'
+    case 'policy_acceptance_required':
+    case 'policy_reacceptance_required': return 'pauseReason.policyAcceptance'
+    case 'risk_challenge_required':
+    case 'risk_temporarily_locked':
+    case 'risk_review_required':
+    case 'risk_denied': return 'pauseReason.securityReview'
+    case 'quota_exceeded': return 'pauseReason.quota'
+    case 'device_limit_exceeded': return 'pauseReason.deviceLimit'
+    case 'workspace_limit_exceeded': return 'pauseReason.workspaceLimit'
+    case 'account_read_only': return 'pauseReason.readOnly'
+    case 'credential_review_required': return 'pauseReason.credentialReview'
+    case 'server_maintenance': return 'pauseReason.maintenance'
+    case 'cursor_expired': return 'pauseReason.cursorExpired'
+    case 'sync_epoch_changed': return 'pauseReason.syncEpochChanged'
+    case 'instance_auth_epoch_invalid': return 'pauseReason.reauthorize'
+    case 'restore_reauthorization_required': return 'pauseReason.reauthorize'
+    default: return 'syncPausedDescription'
+  }
+}
+
+function sumAccountMetrics(metrics: Record<string, string>, keys: readonly string[]): string {
+  return keys.reduce((sum, key) => sum + parseAccountBytes(metrics[key]), 0n).toString()
+}
+
+function formatAccountBytes(value: string | number): string {
+  let bytes = parseAccountBytes(value)
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  let unit = 0
+  while (bytes >= 1024n && unit < units.length - 1) {
+    bytes /= 1024n
+    unit += 1
+  }
+  return `${bytes.toString()} ${units[unit]}`
+}
+
+function parseAccountBytes(value: string | number | undefined): bigint {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? BigInt(value) : 0n
+  return value !== undefined && /^(?:0|[1-9][0-9]*)$/.test(value) ? BigInt(value) : 0n
 }
 
 async function openAuthorizationPage(url: string): Promise<void> {

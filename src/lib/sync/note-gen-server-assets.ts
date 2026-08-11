@@ -133,6 +133,7 @@ export async function prepareNoteGenServerPayloadAssets(input: {
   baseUrl: string
   accessToken: string
   workspaceId: string
+  expectedSyncEpoch?: string
   workspaceKey: CryptoKey
   keyVersion?: number
   resolveResourceId?: (reference: NoteGenServerAssetReference) => Promise<{
@@ -189,6 +190,7 @@ export async function prepareNoteGenServerPayloadAssets(input: {
       baseUrl: input.baseUrl,
       accessToken: input.accessToken,
       workspaceId: input.workspaceId,
+      ...(input.expectedSyncEpoch === undefined ? {} : { expectedSyncEpoch: input.expectedSyncEpoch }),
       blob,
       onProgress: input.onTransferProgress,
     })

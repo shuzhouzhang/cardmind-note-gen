@@ -42,6 +42,7 @@ import { SettingsDialog } from "./setting/components/settings-dialog"
 import { settingSections, type SettingSection, useSettingsDialogStore } from "@/stores/settings-dialog"
 import { MemoryAutoNotifications } from "@/components/memories/memory-auto-notifications"
 import { WebClipperBridge } from "@/components/web-clipper-bridge"
+import { NoteGenServerDeepLinkBridge } from "@/components/note-gen-server-deep-link-bridge"
 
 export default function RootLayout({
   children,
@@ -468,6 +469,7 @@ export default function RootLayout({
         <SyncConfirmDialog />
         <MemoryAutoNotifications />
         <WebClipperBridge />
+        <NoteGenServerDeepLinkBridge />
         <CloseBehaviorGuard />
       </TextSizeProvider>
     </ThemeProvider>

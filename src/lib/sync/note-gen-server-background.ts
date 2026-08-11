@@ -10,6 +10,7 @@ import {
   initNoteGenServerSyncV2Db,
   getSyncV2HealthSnapshot,
   listSyncV2ProblemDetails,
+  resetSyncV2ForServerEpoch,
   retrySyncV2Problems,
   type SyncV2ProblemDetail,
 } from '@/db/note-gen-server-sync-index'
@@ -20,11 +21,15 @@ import {
   discoverServer,
   getOrCreateManagedServerWorkspace,
   getNoteGenServerSyncScopeId,
+  getOrCreateServerDeviceId,
+  isSyncActionRequiredServerError,
+  isTerminalServerSessionError,
   loadServerProfile,
   loadServerSession,
   NoteGenServerRequestError,
   refreshServerSession,
   saveServerProfile,
+  saveServerRefreshJournal,
   saveServerSession,
   unlockServerWorkspace,
   type NoteGenServerProfile,
@@ -57,7 +62,18 @@ export interface NoteGenServerBackgroundStatus {
   result?: NoteGenServerSyncV2CycleResult
   problems?: SyncV2ProblemDetail[]
   error?: string
+  reason?: string
   updatedAt: number
+}
+
+/** Safe-to-preview diagnostic summary. Deliberately excludes bearer material,
+ * IDs, paths, object names, message bodies and Workspace keys. */
+export interface NoteGenServerDiagnosticSummary {
+  formatVersion: 1
+  phase: NoteGenServerBackgroundStatus['phase']
+  pauseReason: string | null
+  server: { configured: boolean, deploymentMode: 'hosted' | 'self-hosted' | null, serverVersion: string | null, syncEpochKnown: boolean }
+  queue: { pendingMutations: number, pendingOutbox: number, blockedOutbox: number, pendingInbox: number, failedInbox: number, unresolvedConflicts: number, pendingTransfers: number, failedTransfers: number }
 }
 
 type SessionListener = (session: ServerSession | null) => void
@@ -98,6 +114,7 @@ let syncRequestedShowProgress = false
 let syncStartsInFlight = 0
 let syncIdleWaiters: Array<() => void> = []
 let syncDelayMs = 60_000
+let syncPausedReason: string | null = null
 let runtimeGeneration = 0
 let initialization: Promise<void> | null = null
 let unwatchWorkspace: (() => void) | null = null
@@ -157,19 +174,37 @@ async function initializeRuntime(): Promise<void> {
   const storedProfile = await loadServerProfile()
   if (!storedProfile?.enabled) return
   const localWorkspaceKey = await getNoteGenServerLocalWorkspaceKey()
-  const profile = storedProfile.localWorkspaceKey
+  let profile = storedProfile.localWorkspaceKey
     ? storedProfile
     : { ...storedProfile, localWorkspaceKey }
-  if (!storedProfile.localWorkspaceKey) await saveServerProfile(profile)
-  const stored = await loadServerSession(profile.instanceId)
+  const currentDeviceId = await getOrCreateServerDeviceId(profile.instanceId, profile.deviceId)
+  if (!storedProfile.localWorkspaceKey || profile.deviceId !== currentDeviceId) {
+    profile = { ...profile, deviceId: currentDeviceId }
+    await saveServerProfile(profile)
+  }
+  const stored = await loadServerSession(profile.instanceId, profile.deviceId)
   if (!stored) return
   try {
     const capabilities = await discoverServer(profile.baseUrl)
     if (capabilities.instanceId !== profile.instanceId) throw new Error('Server instance identity changed')
+    if (capabilities.syncEpoch !== undefined) {
+      if (profile.syncEpoch !== undefined && profile.syncEpoch !== capabilities.syncEpoch) {
+        // Never silently rewrite the persisted epoch: keeping the last
+        // accepted value preserves evidence for the staged re-bootstrap flow.
+        syncPausedReason = 'sync_epoch_changed'
+        notifyStatus({ phase: 'paused', reason: 'sync_epoch_changed', error: '服务器恢复后需要重新同步，已保留本地待同步数据', updatedAt: Date.now() })
+        return
+      }
+      if (profile.syncEpoch === undefined) {
+        profile = { ...profile, syncEpoch: capabilities.syncEpoch }
+        await saveServerProfile(profile)
+      }
+    }
     const session = await refreshServerSession({
       baseUrl: profile.baseUrl,
       refreshToken: stored.refreshToken,
       deviceId: profile.deviceId,
+      ...(stored.refreshRequestId === undefined ? {} : { refreshRequestId: stored.refreshRequestId }),
     })
     if (profile.encryptionMode !== 'e2ee'
       && capabilities.features?.managedDefaultWorkspace === true) {
@@ -211,8 +246,7 @@ async function initializeRuntime(): Promise<void> {
       }
     }
   } catch (error) {
-    if (error instanceof NoteGenServerRequestError
-      && (error.status === 401 || error.status === 403 || error.status === 404)) {
+    if (isTerminalServerSessionError(error)) {
       await clearServerSession()
       notifySession(null)
       notifyStatus({ phase: 'paused', error: errorMessage(error), updatedAt: Date.now() })
@@ -362,6 +396,7 @@ export function getNoteGenServerBackgroundWorkspaceKey(): CryptoKey | null {
 export function getNoteGenServerBackgroundV2Context(): {
   workspaceId: string
   syncScopeId: string
+  syncEpoch?: string
   workspaceKey: CryptoKey
   workspaceKeys: ReadonlyMap<number, CryptoKey>
   keyVersion: number
@@ -369,6 +404,7 @@ export function getNoteGenServerBackgroundV2Context(): {
   if (!state?.profile.workspaceId || !state.syncScopeId || !state.workspaceKey || !state.workspaceKeys || !state.keyVersion) return null
   return {
     workspaceId: state.profile.workspaceId, syncScopeId: state.syncScopeId,
+    ...(state.profile.syncEpoch === undefined ? {} : { syncEpoch: state.profile.syncEpoch }),
     workspaceKey: state.workspaceKey, workspaceKeys: state.workspaceKeys, keyVersion: state.keyVersion,
   }
 }
@@ -388,6 +424,31 @@ export function getNoteGenServerBackgroundReadiness(): {
       && state.workspaceKeys
       && state.keyVersion,
     ),
+  }
+}
+
+/** Builds local-only support context; callers must still show a preview and
+ * obtain user consent before any future upload endpoint is introduced. */
+export async function getNoteGenServerDiagnosticSummary(): Promise<NoteGenServerDiagnosticSummary> {
+  const profile = state?.profile ?? await loadServerProfile()
+  const health = state?.syncScopeId ? await getSyncV2HealthSnapshot(state.syncScopeId) : null
+  return {
+    formatVersion: 1,
+    phase: currentStatus.phase,
+    pauseReason: syncPausedReason,
+    server: {
+      configured: profile !== null,
+      deploymentMode: null,
+      serverVersion: null,
+      syncEpochKnown: profile?.syncEpoch !== undefined,
+    },
+    queue: health === null
+      ? { pendingMutations: 0, pendingOutbox: 0, blockedOutbox: 0, pendingInbox: 0, failedInbox: 0, unresolvedConflicts: 0, pendingTransfers: 0, failedTransfers: 0 }
+      : {
+          pendingMutations: health.pendingMutations, pendingOutbox: health.pendingOutbox, blockedOutbox: health.blockedOutbox,
+          pendingInbox: health.pendingInbox, failedInbox: health.failedInbox, unresolvedConflicts: health.unresolvedConflicts,
+          pendingTransfers: health.pendingTransfers, failedTransfers: health.failedTransfers,
+        },
   }
 }
 
@@ -453,6 +514,7 @@ export function lockNoteGenServerBackgroundWorkspace(): void {
 export async function triggerNoteGenServerBackgroundSync(options: {
   showProgress?: boolean
 } = {}): Promise<NoteGenServerSyncV2CycleResult | null> {
+  if (syncPausedReason !== null) return null
   const showProgress = options.showProgress !== false
   if (!primaryEnabled) return null
   if (!state?.profile.workspaceId || !state.syncScopeId || !state.workspaceKey || !state.workspaceKeys || !state.keyVersion) return null
@@ -477,7 +539,7 @@ export async function triggerNoteGenServerBackgroundSync(options: {
     try {
       result = await runCurrentSyncCycle()
     } catch (error) {
-      if (!(error instanceof NoteGenServerRequestError) || error.status !== 401) throw error
+      if (!(error instanceof NoteGenServerRequestError) || error.status !== 401 || isTerminalServerSessionError(error)) throw error
       await refreshSession()
       result = await runCurrentSyncCycle()
     }
@@ -508,7 +570,7 @@ export async function triggerNoteGenServerBackgroundSync(options: {
     return result
   } catch (error) {
     console.error('NoteGen Server background sync failed:', error)
-    if (error instanceof NoteGenServerRequestError && error.status === 401) {
+    if (isTerminalServerSessionError(error)) {
       await clearServerSession()
       stopNoteGenServerBackgroundRuntime()
       notifyStatus({ phase: 'paused', error: errorMessage(error), updatedAt: Date.now() })
@@ -516,6 +578,11 @@ export async function triggerNoteGenServerBackgroundSync(options: {
     }
     if (error instanceof SyncV2KeyMissingError) {
       notifyStatus({ phase: 'paused', error: error.message, updatedAt: Date.now() })
+      return null
+    }
+    if (isSyncActionRequiredServerError(error)) {
+      syncPausedReason = error.code ?? 'account_action_required'
+      notifyStatus({ phase: 'paused', reason: syncPausedReason, error: error.message, updatedAt: Date.now() })
       return null
     }
     if (error instanceof NoteGenServerRequestError
@@ -540,7 +607,10 @@ export async function triggerNoteGenServerBackgroundSync(options: {
     const waiters = syncIdleWaiters
     syncIdleWaiters = []
     waiters.forEach(resolve => resolve())
-    if (syncRequested) {
+    if (syncPausedReason !== null) {
+      syncRequested = false
+      syncRequestedShowProgress = false
+    } else if (syncRequested) {
       const followUpShowProgress = syncRequestedShowProgress
       syncRequested = false
       syncRequestedShowProgress = false
@@ -557,6 +627,7 @@ export async function triggerNoteGenServerBackgroundSync(options: {
 export async function retryNoteGenServerBackgroundSync(): Promise<NoteGenServerSyncV2CycleResult | null> {
   const syncScopeId = state?.syncScopeId
   if (!syncScopeId) return null
+  syncPausedReason = null
   await waitForCurrentSyncCycle()
   if (state?.syncScopeId !== syncScopeId) return null
   await Promise.all([
@@ -567,9 +638,101 @@ export async function retryNoteGenServerBackgroundSync(): Promise<NoteGenServerS
   return await triggerNoteGenServerBackgroundSync()
 }
 
+/**
+ * A fresh browser authorization proves the account again, but it does not
+ * authorize replaying a pre-restore cursor or outbox. Keep the newly obtained
+ * session in memory and require the existing explicit epoch-accept flow.
+ */
+export function pauseNoteGenServerForRestoreEpoch(): void {
+  if (!state) return
+  clearUnlockedWorkspaceRuntime()
+  // Keep the freshly obtained session only as short-lived in-memory evidence
+  // for the explicit accept flow. Do not continue silent refreshes while the
+  // user has not authorized reconciliation against a new server epoch.
+  if (refreshTimer) clearTimeout(refreshTimer)
+  refreshTimer = null
+  syncPausedReason = 'sync_epoch_changed'
+  notifyStatus({
+    phase: 'paused', reason: 'sync_epoch_changed',
+    error: '服务器恢复后需要重新同步，已保留本地待同步数据', updatedAt: Date.now(),
+  })
+}
+
+/**
+ * Explicitly accepts a restore epoch advertised by the same server instance.
+ * This only restarts remote bootstrap/cursors. It never deletes local state
+ * or outbox records, and an E2EE workspace still requires an unlocked key.
+ */
+export async function acceptNoteGenServerRestoreEpoch(): Promise<boolean> {
+  if (syncPausedReason !== 'sync_epoch_changed') return false
+  const profile = await loadServerProfile()
+  const stored = profile === null ? null : await loadServerSession(profile.instanceId, profile.deviceId)
+  if (!profile || !stored) return false
+  const capabilities = await discoverServer(profile.baseUrl)
+  if (capabilities.instanceId !== profile.instanceId || !capabilities.syncEpoch
+    || capabilities.syncEpoch === profile.syncEpoch) return false
+  const syncScopeId = profile.workspaceId && profile.localWorkspaceKey
+    ? await getNoteGenServerSyncScopeId(profile)
+    : undefined
+  await waitForCurrentSyncCycle()
+  let session: ServerSession
+  try {
+    session = await refreshServerSession({
+      baseUrl: profile.baseUrl, refreshToken: stored.refreshToken, deviceId: profile.deviceId,
+      ...(stored.refreshRequestId === undefined ? {} : { refreshRequestId: stored.refreshRequestId }),
+    })
+  } catch (error) {
+    if (isTerminalServerSessionError(error)) {
+      await clearServerSession()
+      // An epoch notification may arrive while a previously healthy runtime
+      // still owns an access token, refresh timer and WebSocket. Tear those
+      // down before exposing the reauthorization state.
+      stopNoteGenServerBackgroundRuntime()
+      syncPausedReason = 'restore_reauthorization_required'
+      // Keep the profile and outbox: a restored server deliberately revokes
+      // old credentials, but local edits remain evidence to reconcile later.
+      notifyStatus({ phase: 'paused', reason: 'restore_reauthorization_required', error: '服务器恢复已撤销旧授权，请重新登录后再同步；本地待同步数据已保留', updatedAt: Date.now() })
+      return false
+    }
+    throw error
+  }
+  // Credential fencing precedes remote cursor replacement. If reauthorization
+  // is unavailable, leave the existing sync evidence untouched for the user.
+  if (syncScopeId) await resetSyncV2ForServerEpoch(syncScopeId)
+  let acceptedProfile = { ...profile, syncEpoch: capabilities.syncEpoch }
+  let managedWorkspace: Awaited<ReturnType<typeof getOrCreateManagedServerWorkspace>> | undefined
+  if (acceptedProfile.encryptionMode !== 'e2ee' && capabilities.features?.managedDefaultWorkspace === true) {
+    // After restore reauthorization the previous runtime key is intentionally
+    // gone. Once the user accepts the new epoch, obtain a fresh managed
+    // envelope rather than resuming with an empty runtime or old key material.
+    managedWorkspace = await getOrCreateManagedServerWorkspace({
+      baseUrl: acceptedProfile.baseUrl,
+      accessToken: session.accessToken,
+    })
+    acceptedProfile = {
+      ...acceptedProfile,
+      workspaceId: managedWorkspace.workspace.id,
+      encryptionMode: 'managed',
+    }
+  }
+  syncPausedReason = null
+  await configureNoteGenServerBackgroundSession(acceptedProfile, session)
+  if (managedWorkspace?.unlocked) {
+    unlockNoteGenServerBackgroundWorkspace({
+      workspaceKey: managedWorkspace.unlocked.key,
+      workspaceKeys: managedWorkspace.unlocked.keys,
+      keyVersion: managedWorkspace.unlocked.keyVersion,
+    })
+  }
+  notifyStatus({ phase: 'pending', updatedAt: Date.now() })
+  void triggerNoteGenServerBackgroundSync({ showProgress: false })
+  return true
+}
+
 export function stopNoteGenServerBackgroundRuntime(): void {
   resetNoteGenServerSyncV2Reconciliation(state?.syncScopeId)
   state = null
+  syncPausedReason = null
   if (refreshTimer) clearTimeout(refreshTimer)
   clearUnlockedWorkspaceRuntime()
   void import('./note-gen-server-collab').then(module => (
@@ -693,10 +856,13 @@ async function refreshSession(): Promise<void> {
 async function refreshSessionNow(): Promise<void> {
   if (!state) return
   const current = state
+  const refreshRequestId = crypto.randomUUID()
+  const hasDurableRefreshJournal = await saveServerRefreshJournal(current.profile.instanceId, current.session, refreshRequestId)
   const session = await refreshServerSession({
     baseUrl: current.profile.baseUrl,
     refreshToken: current.session.refreshToken,
     deviceId: current.profile.deviceId,
+    ...(hasDurableRefreshJournal ? { refreshRequestId } : {}),
   })
   if (!state
     || state.profile.instanceId !== current.profile.instanceId
@@ -719,14 +885,19 @@ function scheduleRefresh(): void {
   const delay = Math.max(state.accessTokenExpiresAt - Date.now() - 60_000, 1_000)
   refreshTimer = setTimeout(() => {
     void refreshSession().catch(async error => {
-      await clearServerSession()
-      stopNoteGenServerBackgroundRuntime()
-      notifyStatus({ phase: 'error', error: errorMessage(error), updatedAt: Date.now() })
+      if (isTerminalServerSessionError(error)) {
+        await clearServerSession()
+        stopNoteGenServerBackgroundRuntime()
+        notifyStatus({ phase: 'paused', error: errorMessage(error), updatedAt: Date.now() })
+        return
+      }
+      notifyStatus({ phase: 'offline', error: errorMessage(error), updatedAt: Date.now() })
     })
   }, delay)
 }
 
 function startSyncLoop(): void {
+  syncPausedReason = null
   if (!primaryEnabled) return
   syncDelayMs = normalSyncDelayMs
   scheduleNextSync(syncDelayMs)
@@ -757,6 +928,7 @@ async function runCurrentSyncCycle(): Promise<NoteGenServerSyncV2CycleResult> {
     baseUrl: state.profile.baseUrl,
     session: state.session,
     workspaceId: state.profile.workspaceId,
+    ...(state.profile.syncEpoch === undefined ? {} : { syncEpoch: state.profile.syncEpoch }),
     syncScopeId: state.syncScopeId,
     workspaceKey: state.workspaceKey,
     workspaceKeys: state.workspaceKeys,
@@ -784,6 +956,7 @@ function connectEventSocket(): void {
       type: 'authenticate',
       accessToken: state.session.accessToken,
       workspaceIds: [state.profile.workspaceId],
+      ...(state.profile.syncEpoch === undefined ? {} : { expectedSyncEpoch: state.profile.syncEpoch }),
     }))
   })
   socket.addEventListener('message', event => {
@@ -805,8 +978,13 @@ function connectEventSocket(): void {
         keyVersion?: number
         ciphertext?: string
         ciphertextHash?: string
+        code?: string
       }
-      if (message.type === 'workspace.changed' && message.workspaceId === state?.profile.workspaceId) {
+      if (message.type === 'sync.epoch-changed' && message.code === 'sync_epoch_changed') {
+        syncPausedReason = 'sync_epoch_changed'
+        notifyStatus({ phase: 'paused', reason: 'sync_epoch_changed', error: '服务器恢复后需要重新同步，已保留本地待同步数据', updatedAt: Date.now() })
+        socket.close()
+      } else if (message.type === 'workspace.changed' && message.workspaceId === state?.profile.workspaceId) {
         void handleWorkspaceChangedNotice(message.latestSequence)
       } else if (message.type === 'workspace.keys-changed'
         && message.workspaceId === state?.profile.workspaceId) {

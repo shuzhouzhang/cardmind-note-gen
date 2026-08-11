@@ -533,9 +533,6 @@ fn preserve_device_local_settings(
     restored_store_path: &Path,
     current_store: Option<&serde_json::Value>,
 ) -> Result<(), String> {
-    let Some(current_object) = current_store.and_then(serde_json::Value::as_object) else {
-        return Ok(());
-    };
     if !restored_store_path.exists() {
         return Ok(());
     }
@@ -556,6 +553,7 @@ fn preserve_device_local_settings(
         "deviceId",
         "noteGenServerDeviceId",
         "noteGenServerMachineId",
+        "noteGenServerDeviceIds",
         "assetsPath",
         "workspaceHistory",
         "workspaceSyncRepos",
@@ -564,12 +562,40 @@ fn preserve_device_local_settings(
         "gitlabCustomSyncRepo",
         "giteaCustomSyncRepo",
     ];
-    for field in device_local_fields {
-        if let Some(value) = current_object.get(field) {
-            restored_object.insert(field.to_string(), value.clone());
-        } else {
-            restored_object.remove(field);
+    if let Some(current_object) = current_store.and_then(serde_json::Value::as_object) {
+        for field in device_local_fields {
+            if let Some(value) = current_object.get(field) {
+                restored_object.insert(field.to_string(), value.clone());
+            } else {
+                restored_object.remove(field);
+            }
         }
+    }
+    // A backup may be from another machine, a previous server epoch, or an
+    // already-revoked account. Profiles are non-secret connection hints, but
+    // bearer sessions must never cross a local restore boundary.
+    let account_session_fields = [
+        "noteGenServerSyncSession",
+        "noteGenServerSession",
+        "noteGenServerAccessToken",
+        "noteGenServerRefreshToken",
+    ];
+    for field in account_session_fields {
+        restored_object.remove(field);
+    }
+    let legacy_session_fields: Vec<String> = restored_object
+        .keys()
+        .filter(|key| {
+            let normalized = key.to_ascii_lowercase();
+            normalized.starts_with("notegenserver")
+                && (normalized.contains("session")
+                    || normalized.contains("access_token")
+                    || normalized.contains("refresh_token"))
+        })
+        .cloned()
+        .collect();
+    for field in legacy_session_fields {
+        restored_object.remove(&field);
     }
     let updated = serde_json::to_vec_pretty(&restored)
         .map_err(|error| format!("Failed to serialize restored settings: {error}"))?;

@@ -20,6 +20,7 @@ interface HistoricalRestoreInput {
   syncScopeId: string
   objectId: string
   revision: string
+  expectedSyncEpoch?: string
   workspaceKeys: ReadonlyMap<number, CryptoKey>
   workspaceKey: CryptoKey
   keyVersion: number

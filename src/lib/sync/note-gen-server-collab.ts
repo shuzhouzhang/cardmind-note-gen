@@ -141,6 +141,7 @@ export async function loadNoteGenServerStructuredSnapshot(input: {
       const page = await pullSyncV2DocumentUpdates({
         baseUrl: connection.profile.baseUrl, accessToken: connection.session.accessToken,
         workspaceId: context.workspaceId, documentId: input.entity.documentId, after,
+        ...(context.syncEpoch === undefined ? {} : { expectedSyncEpoch: context.syncEpoch }),
       })
       for (const item of page.updates) {
         const key = context.workspaceKeys.get(item.keyVersion)
@@ -792,6 +793,7 @@ export class NoteGenServerTextSession {
       const page = await pullSyncV2DocumentUpdates({
         baseUrl: connection.profile.baseUrl, accessToken: connection.session.accessToken,
         workspaceId: context.workspaceId, documentId: this.#entity.documentId, after,
+        ...(context.syncEpoch === undefined ? {} : { expectedSyncEpoch: context.syncEpoch }),
       })
       for (const item of page.updates) {
         const key = context.workspaceKeys.get(item.keyVersion)

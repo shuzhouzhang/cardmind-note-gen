@@ -1,9 +1,14 @@
 import { Store } from '@tauri-apps/plugin-store'
 import { fetch as httpFetch } from '@tauri-apps/plugin-http'
 import { invoke } from '@tauri-apps/api/core'
+import { platform } from '@tauri-apps/plugin-os'
 
 const PROFILE_KEY = 'noteGenServerSyncProfile'
 const SESSION_KEY = 'noteGenServerSyncSession'
+const DEVICE_IDS_KEY = 'noteGenServerDeviceIds'
+const PENDING_ONBOARDING_SECRET_TTL_MS = 30 * 60 * 1000
+let webRuntimeSession: StoredServerSession | null = null
+let mobilePersistedSessionKey: string | null = null
 const ARGON2_MEMORY_KIB = 64 * 1024
 const ARGON2_ITERATIONS = 3
 const ARGON2_PARALLELISM = 1
@@ -11,6 +16,8 @@ const ARGON2_PARALLELISM = 1
 export interface NoteGenServerProfile {
   baseUrl: string
   instanceId: string
+  /** Last accepted server epoch; a changed value requires staged recovery. */
+  syncEpoch?: string
   serverName: string
   login: string
   deviceId: string
@@ -18,16 +25,48 @@ export interface NoteGenServerProfile {
   workspaceId?: string
   localWorkspaceKey?: string
   encryptionMode?: 'managed' | 'e2ee'
+  /** Non-secret journal for a foreground E2EE workspace creation. */
+  onboarding?: {
+    creationIdempotencyKey: string
+    /** Stable across a foreground recovery-envelope replacement retry. */
+    recoveryReplacementIdempotencyKey?: string
+  }
+}
+
+/** An intentionally short-lived mobile-only recovery-key record. It never
+ * reaches the settings Store, localStorage, diagnostics, or a local backup. */
+interface PendingOnboardingSecret {
+  version: 1
+  instanceId: string
+  accountId: string
+  deviceId: string
+  workspaceId: string
+  creationIdempotencyKey: string
+  recoveryKey: string
+  expiresAt: number
 }
 
 export interface ServerCapabilities {
   service: 'note-gen-server'
   instanceId: string
+  /** Additive on servers that have begun the restore-fencing rollout. */
+  syncEpoch?: string
   serverName: string
   serverVersion: string
   protocol: { minimum: number, maximum: number }
   registrationMode: 'closed' | 'open'
   deploymentMode?: 'self-hosted' | 'hosted'
+  /** Schema-2 fields are optional so older servers remain connectable. */
+  capabilitySchema?: number
+  instanceCapabilityRevision?: string
+  registrationPolicyRevision?: string
+  requiredSyncFeatures?: string[]
+  registration?: {
+    policy: 'bootstrap' | 'disabled' | 'invitation' | 'public'
+    methods: string[]
+    emailVerificationRequired: boolean
+  }
+  instanceCapabilities?: Record<string, boolean>
   features?: {
     webAccountPortal?: boolean
     deviceAuthorization?: boolean
@@ -39,6 +78,7 @@ export interface ServerCapabilities {
     durableCrdtUpdates?: boolean
     synchronizedConflicts?: boolean
     assetObjects?: boolean
+    invitationRegistration?: boolean
   }
   limits?: {
     maxBatchOperations: number
@@ -53,17 +93,68 @@ export interface ServerCapabilities {
   }
 }
 
+export interface ResolvedServerCapabilities extends ServerCapabilities {
+  registration: {
+    policy: 'bootstrap' | 'disabled' | 'invitation' | 'public'
+    methods: string[]
+    emailVerificationRequired: boolean
+  }
+  instanceCapabilities: Readonly<Record<string, boolean>>
+  requiredSyncFeatures: readonly string[]
+  instanceCapabilityRevision: string
+  registrationPolicyRevision: string
+  /** Discovery remains useful when an otherwise valid server is draining or
+   * temporarily unavailable. Authentication/sync still consult their own
+   * endpoints and must not treat this as permission to proceed. */
+  readiness: 'ready' | 'unavailable'
+}
+
+/**
+ * Normalizes additive schema-2 discovery without making legacy servers look
+ * incompatible. Callers must use this result rather than infer registration
+ * methods from a deployment mode or a version number.
+ */
+export function resolveServerCapabilities(capabilities: ServerCapabilities): ResolvedServerCapabilities {
+  const legacyPolicy = capabilities.registrationMode === 'open' ? 'public' : 'disabled'
+  return {
+    ...capabilities,
+    registration: capabilities.registration ?? {
+      policy: legacyPolicy,
+      methods: capabilities.registrationMode === 'open' ? ['password'] : [],
+      emailVerificationRequired: false,
+    },
+    instanceCapabilities: capabilities.instanceCapabilities ?? {},
+    requiredSyncFeatures: capabilities.requiredSyncFeatures ?? [],
+    instanceCapabilityRevision: capabilities.instanceCapabilityRevision ?? '0',
+    registrationPolicyRevision: capabilities.registrationPolicyRevision ?? '0',
+    readiness: 'ready',
+  }
+}
+
 export interface ServerSession {
   accountId: string
   deviceId: string
   accessToken: string
   refreshToken: string
   accessTokenExpiresIn: number
+  /** A mobile secure-storage journal survives only until its rotation response is committed. */
+  refreshRequestId?: string
 }
 
 export interface ServerAccount {
   id: string
   login: string
+}
+
+/** Additive account-service projection. Server enforcement remains authoritative;
+ * this is only a revisioned UI/scheduling hint for newer deployments. */
+export interface ServerAccountContext {
+  account: { id: string, login: string, isAdmin: boolean, totpEnabled: boolean }
+  entitlements: { revision: string, features: Record<string, boolean>, limits: Record<string, string | number | null> }
+  usage: { enforced: boolean, revision: string, metrics: Record<string, string>, updatedAt: string | null }
+  restrictions: unknown[]
+  actions: Record<string, { effect: 'allow' | 'deny', reasonCode: string }>
+  accountContextRevision: string
 }
 
 export interface DeviceAuthorizationCreated {
@@ -78,6 +169,17 @@ export interface DeviceAuthorizationCreated {
 interface StoredServerSession {
   instanceId: string
   session: ServerSession
+}
+
+/** Persisted only by Android/iOS Keychain/Keystore. Access tokens are never
+ * included because a cold start must always rotate from the refresh token. */
+interface MobileServerRefreshCredential {
+  version: 1
+  instanceId: string
+  accountId: string
+  deviceId: string
+  refreshToken: string
+  refreshRequestId?: string
 }
 
 export interface ServerWorkspace {
@@ -133,82 +235,285 @@ export async function clearServerProfile(): Promise<void> {
     return
   }
   const store = await Store.load('store.json')
+  const existingProfile = await store.get<NoteGenServerProfile>(PROFILE_KEY)
   await store.delete(PROFILE_KEY)
   await store.delete(SESSION_KEY)
   await store.save()
+  const secureStorage = mobileSecureStorage()
+  const secureKey = mobilePersistedSessionKey ?? (isServerInstanceId(existingProfile?.instanceId ?? '')
+    ? mobileSessionKey(existingProfile!.instanceId) : null)
+  if (secureStorage !== null && secureKey !== null) {
+    await invoke(secureStorage.deleteCommand, { key: secureKey }).catch(() => undefined)
+  }
+  mobilePersistedSessionKey = null
 }
 
-export async function loadServerSession(instanceId: string): Promise<ServerSession | null> {
-  const stored = !isTauriRuntime()
-    ? parseStoredSession(localStorage.getItem(SESSION_KEY))
-    : await (await Store.load('store.json')).get<StoredServerSession>(SESSION_KEY) ?? null
+export async function loadServerSession(instanceId: string, expectedDeviceId?: string): Promise<ServerSession | null> {
+  // Browser sessions are intentionally process-memory only. A Web account
+  // cookie is not a cross-origin sync bearer credential, and localStorage is
+  // not an acceptable refresh-token store.
+  if (isTauriRuntime()) {
+    const secureStorage = mobileSecureStorage()
+    const store = await Store.load('store.json')
+    await store.delete(SESSION_KEY)
+    await store.save()
+    if (secureStorage === null) return null
+    const key = mobileSessionKey(instanceId)
+    let raw: string | null
+    try {
+      raw = await invoke<string | null>(secureStorage.getCommand, { key })
+    } catch {
+      return null
+    }
+    const credential = parseMobileServerRefreshCredential(raw)
+    if (credential !== null && credential.instanceId === instanceId
+      && (expectedDeviceId === undefined || credential.deviceId === expectedDeviceId)) {
+      mobilePersistedSessionKey = key
+      return {
+        accountId: credential.accountId, deviceId: credential.deviceId,
+        refreshToken: credential.refreshToken, accessToken: '', accessTokenExpiresIn: 0,
+        ...(credential.refreshRequestId === undefined ? {} : { refreshRequestId: credential.refreshRequestId }),
+      }
+    }
+    if (raw !== null) await invoke(secureStorage.deleteCommand, { key }).catch(() => undefined)
+    return null
+  }
+  const stored = webRuntimeSession
   return stored?.instanceId === instanceId ? stored.session : null
 }
 
 export async function saveServerSession(instanceId: string, session: ServerSession): Promise<void> {
   const stored: StoredServerSession = { instanceId, session }
   if (!isTauriRuntime()) {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(stored))
+    webRuntimeSession = stored
     return
   }
   const store = await Store.load('store.json')
-  await store.set(SESSION_KEY, stored)
+  // Persisting a bearer refresh token in store.json is not an acceptable
+  // substitute for OS secure storage. Keep it in the background runtime only.
+  await store.delete(SESSION_KEY)
   await store.save()
+  const secureStorage = mobileSecureStorage()
+  if (secureStorage === null) return
+  const credential: MobileServerRefreshCredential = {
+    version: 1, instanceId, accountId: session.accountId, deviceId: session.deviceId, refreshToken: session.refreshToken,
+  }
+  if (!isServerInstanceId(instanceId) || !isServerInstanceId(session.accountId) || !isServerInstanceId(session.deviceId)
+    || !isRefreshToken(session.refreshToken)) return
+  const key = mobileSessionKey(instanceId)
+  try {
+    await invoke(secureStorage.setCommand, { key, value: JSON.stringify(credential) })
+    mobilePersistedSessionKey = key
+  } catch {
+    // A locked mobile secure store only disables persistence. The current
+    // in-memory authorization remains usable until the app exits.
+  }
+}
+
+/**
+ * Writes the pre-rotation credential before a mobile client asks the server
+ * to rotate it. Callers must only send the request ID when this returns true:
+ * otherwise a process death could turn a normal retry into token-reuse.
+ */
+export async function saveServerRefreshJournal(instanceId: string, session: ServerSession, refreshRequestId: string): Promise<boolean> {
+  if (!isTauriRuntime() || !isServerInstanceId(refreshRequestId)) return false
+  const storage = mobileSecureStorage()
+  if (storage === null) return false
+  const credential: MobileServerRefreshCredential = { version: 1, instanceId, accountId: session.accountId, deviceId: session.deviceId, refreshToken: session.refreshToken, refreshRequestId }
+  if (!isServerInstanceId(instanceId) || !isServerInstanceId(session.accountId) || !isServerInstanceId(session.deviceId) || !isRefreshToken(session.refreshToken)) return false
+  try {
+    const key = mobileSessionKey(instanceId)
+    await invoke(storage.setCommand, { key, value: JSON.stringify(credential) })
+    mobilePersistedSessionKey = key
+    return true
+  } catch {
+    return false
+  }
 }
 
 export async function clearServerSession(): Promise<void> {
   if (!isTauriRuntime()) {
+    webRuntimeSession = null
+    // Scrub the legacy browser-store value during the compatible rollout.
     localStorage.removeItem(SESSION_KEY)
     return
   }
   const store = await Store.load('store.json')
   await store.delete(SESSION_KEY)
   await store.save()
+  const secureStorage = mobileSecureStorage()
+  if (secureStorage !== null && mobilePersistedSessionKey !== null) {
+    await invoke(secureStorage.deleteCommand, { key: mobilePersistedSessionKey }).catch(() => undefined)
+  }
+  mobilePersistedSessionKey = null
 }
 
-export async function getOrCreateServerDeviceId(): Promise<string> {
+/**
+ * Records a just-created E2EE recovery key only when Android/iOS secure
+ * storage is available. A false result is expected on desktop/web and keeps
+ * the existing foreground-only confirmation flow intact.
+ */
+export async function savePendingServerWorkspaceRecoverySecret(input: {
+  profile: Pick<NoteGenServerProfile, 'instanceId' | 'deviceId' | 'workspaceId' | 'onboarding'>
+  accountId: string
+  recoveryKey: string
+}): Promise<boolean> {
+  const workspaceId = input.profile.workspaceId
+  const creationIdempotencyKey = input.profile.onboarding?.creationIdempotencyKey
+  if (!workspaceId || !creationIdempotencyKey || !isServerInstanceId(input.profile.instanceId)
+    || !isServerInstanceId(input.profile.deviceId) || !isServerInstanceId(input.accountId)
+    || !isServerInstanceId(workspaceId) || !isBase64UrlSecret(input.recoveryKey)) return false
+  const storage = mobileSecureStorage()
+  if (storage === null) return false
+  const value: PendingOnboardingSecret = {
+    version: 1, instanceId: input.profile.instanceId, accountId: input.accountId,
+    deviceId: input.profile.deviceId, workspaceId, creationIdempotencyKey,
+    recoveryKey: input.recoveryKey, expiresAt: Date.now() + PENDING_ONBOARDING_SECRET_TTL_MS,
+  }
+  try {
+    await invoke(storage.setCommand, { key: pendingOnboardingSecretKey(input.profile.instanceId, input.accountId, input.profile.deviceId), value: JSON.stringify(value) })
+    return true
+  } catch {
+    // A locked/unavailable secure store must not turn a foreground-only
+    // confirmation into a failed workspace creation.
+    return false
+  }
+}
+
+/** Reads a matching non-expired mobile pending record and removes malformed,
+ * expired, or cross-account values before they can influence onboarding. */
+export async function loadPendingServerWorkspaceRecoverySecret(input: {
+  profile: Pick<NoteGenServerProfile, 'instanceId' | 'deviceId' | 'workspaceId' | 'onboarding'>
+  accountId: string
+}): Promise<string | null> {
+  const storage = mobileSecureStorage()
+  const creationIdempotencyKey = input.profile.onboarding?.creationIdempotencyKey
+  const workspaceId = input.profile.workspaceId
+  if (storage === null || !creationIdempotencyKey || !workspaceId) return null
+  const key = pendingOnboardingSecretKey(input.profile.instanceId, input.accountId, input.profile.deviceId)
+  let raw: string | null
+  try {
+    raw = await invoke<string | null>(storage.getCommand, { key })
+  } catch {
+    return null
+  }
+  const parsed = parsePendingOnboardingSecret(raw)
+  if (parsed !== null && parsed.instanceId === input.profile.instanceId && parsed.accountId === input.accountId
+    && parsed.deviceId === input.profile.deviceId && parsed.workspaceId === workspaceId
+    && parsed.creationIdempotencyKey === creationIdempotencyKey) return parsed.recoveryKey
+  if (raw !== null) await invoke(storage.deleteCommand, { key }).catch(() => undefined)
+  return null
+}
+
+export async function clearPendingServerWorkspaceRecoverySecret(input: {
+  instanceId: string
+  accountId: string
+  deviceId: string
+}): Promise<void> {
+  const storage = mobileSecureStorage()
+  if (storage === null || !isServerInstanceId(input.instanceId) || !isServerInstanceId(input.accountId) || !isServerInstanceId(input.deviceId)) return
+  await invoke(storage.deleteCommand, { key: pendingOnboardingSecretKey(input.instanceId, input.accountId, input.deviceId) })
+}
+
+/** Device IDs are opaque per-server pseudonyms, never a cross-instance machine identifier. */
+export async function getOrCreateServerDeviceId(instanceId: string, legacyDeviceId?: string): Promise<string> {
+  if (!isServerInstanceId(instanceId)) throw new Error('Server instance ID is invalid')
   if (!isTauriRuntime()) {
-    const existing = localStorage.getItem('noteGenServerDeviceId')
+    const stored = parseDeviceIds(localStorage.getItem(DEVICE_IDS_KEY))
+    const existing = stored[instanceId]
     if (existing) return existing
-    const deviceId = crypto.randomUUID()
-    localStorage.setItem('noteGenServerDeviceId', deviceId)
+    const deviceId = legacyDeviceId !== undefined && isServerInstanceId(legacyDeviceId) ? legacyDeviceId : crypto.randomUUID()
+    localStorage.setItem(DEVICE_IDS_KEY, JSON.stringify({ ...stored, [instanceId]: deviceId }))
     return deviceId
   }
   const store = await Store.load('store.json')
-  try {
-    const machineId = await invoke<string>('get_device_id')
-    if (machineId.trim()) {
-      const stableDeviceId = await createStableDeviceUuid(machineId)
-      const storedMachineId = await store.get<string>('noteGenServerMachineId')
-      const existing = await store.get<string>('noteGenServerDeviceId')
-      if (storedMachineId === machineId && existing) return existing
-
-      // Migrate IDs generated by the old random-UUID implementation, and
-      // also prevent a restored store from making this machine impersonate
-      // the device that originally created the backup.
-      await store.set('noteGenServerMachineId', machineId)
-      await store.set('noteGenServerDeviceId', stableDeviceId)
-      await store.save()
-      return stableDeviceId
-    }
-  } catch (error) {
-    console.warn('Failed to derive a stable NoteGen Server device ID:', error)
-  }
-  const existing = await store.get<string>('noteGenServerDeviceId')
+  const stored = parseDeviceIds(await store.get<string | Record<string, string>>(DEVICE_IDS_KEY))
+  const existing = stored[instanceId]
   if (existing) return existing
-  const deviceId = crypto.randomUUID()
-  await store.set('noteGenServerDeviceId', deviceId)
+  const deviceId = legacyDeviceId !== undefined && isServerInstanceId(legacyDeviceId) ? legacyDeviceId : crypto.randomUUID()
+  await store.set(DEVICE_IDS_KEY, { ...stored, [instanceId]: deviceId })
   await store.save()
   return deviceId
 }
 
-async function createStableDeviceUuid(machineId: string): Promise<string> {
-  const source = new TextEncoder().encode(`notegen-server-device\0${machineId}`)
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', source))
-  digest[6] = (digest[6]! & 0x0f) | 0x50
-  digest[8] = (digest[8]! & 0x3f) | 0x80
-  const hex = Array.from(digest.slice(0, 16), byte => byte.toString(16).padStart(2, '0')).join('')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+function parseDeviceIds(value: string | Record<string, string> | null | undefined): Record<string, string> {
+  try {
+    const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+    return Object.fromEntries(Object.entries(parsed).filter(([instanceId, deviceId]) => (
+      isServerInstanceId(instanceId) && typeof deviceId === 'string' && isServerInstanceId(deviceId)
+    )))
+  } catch {
+    return {}
+  }
+}
+
+function isServerInstanceId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+function isBase64UrlSecret(value: string): boolean {
+  return /^[A-Za-z0-9_-]{43}$/.test(value)
+}
+
+function pendingOnboardingSecretKey(instanceId: string, accountId: string, deviceId: string): string {
+  return `notegen-server:onboarding:v1:${instanceId}:${accountId}:${deviceId}`
+}
+
+function mobileSessionKey(instanceId: string): string {
+  return `notegen-server:refresh:v1:${instanceId}`
+}
+
+function isRefreshToken(value: string): boolean {
+  return value.length >= 16 && value.length <= 8_192 && !/[\u0000-\u001f\u007f\s]/.test(value)
+}
+
+function mobileSecureStorage(): { setCommand: string, getCommand: string, deleteCommand: string } | null {
+  if (!isTauriRuntime()) return null
+  try {
+    const current = platform()
+    if (current === 'android') return {
+      setCommand: 'set_android_secure_value', getCommand: 'get_android_secure_value', deleteCommand: 'delete_android_secure_value',
+    }
+    if (current === 'ios') return {
+      setCommand: 'set_ios_secure_value', getCommand: 'get_ios_secure_value', deleteCommand: 'delete_ios_secure_value',
+    }
+  } catch {
+    // Secure storage is optional. Never fall back to Store/localStorage.
+  }
+  return null
+}
+
+function parsePendingOnboardingSecret(raw: string | null): PendingOnboardingSecret | null {
+  if (raw === null) return null
+  try {
+    const value: unknown = JSON.parse(raw)
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+    const record = value as Partial<PendingOnboardingSecret>
+    if (record.version !== 1 || !isServerInstanceId(record.instanceId ?? '') || !isServerInstanceId(record.accountId ?? '')
+      || !isServerInstanceId(record.deviceId ?? '') || !isServerInstanceId(record.workspaceId ?? '')
+      || typeof record.creationIdempotencyKey !== 'string' || !isBase64UrlSecret(record.recoveryKey ?? '')
+      || !Number.isSafeInteger(record.expiresAt) || (record.expiresAt ?? 0) <= Date.now()) return null
+    return record as PendingOnboardingSecret
+  } catch {
+    return null
+  }
+}
+
+function parseMobileServerRefreshCredential(raw: string | null): MobileServerRefreshCredential | null {
+  if (raw === null) return null
+  try {
+    const value: unknown = JSON.parse(raw)
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+    const credential = value as Partial<MobileServerRefreshCredential>
+    if (credential.version !== 1 || !isServerInstanceId(credential.instanceId ?? '')
+      || !isServerInstanceId(credential.accountId ?? '') || !isServerInstanceId(credential.deviceId ?? '')
+      || !isRefreshToken(credential.refreshToken ?? '')
+      || (credential.refreshRequestId !== undefined && !isServerInstanceId(credential.refreshRequestId))) return null
+    return credential as MobileServerRefreshCredential
+  } catch {
+    return null
+  }
 }
 
 export async function getNoteGenServerSyncScopeId(profile: NoteGenServerProfile): Promise<string> {
@@ -221,13 +526,13 @@ export async function getNoteGenServerSyncScopeId(profile: NoteGenServerProfile)
   return `ngs:${hex}`
 }
 
-export async function discoverServer(baseUrl: string): Promise<ServerCapabilities> {
+export async function discoverServer(baseUrl: string): Promise<ResolvedServerCapabilities> {
   const normalized = normalizeServerOrigin(baseUrl)
-  const [ready, capabilities] = await Promise.all([
-    serverRequest<{ status: string }>(normalized, '/health/ready', { timeoutMs: 5_000 }),
-    serverRequest<ServerCapabilities>(normalized, '/v1/capabilities', { timeoutMs: 5_000 }),
-  ])
-  if (ready.status !== 'ok') throw new Error('Server is not ready')
+  // Discover policy before readiness so UI can present the actual account
+  // methods and preserve a useful diagnostic if the instance is gated.
+  const capabilities = resolveServerCapabilities(await serverRequest<ServerCapabilities>(
+    normalized, '/v1/capabilities', { timeoutMs: 5_000 },
+  ))
   if (capabilities.service !== 'note-gen-server') throw new Error('The address is not a NoteGen Sync Server')
   if (capabilities.protocol.minimum > 1 || capabilities.protocol.maximum < 1) {
     throw new Error('The server protocol is incompatible with this NoteGen version')
@@ -235,7 +540,14 @@ export async function discoverServer(baseUrl: string): Promise<ServerCapabilitie
   if (capabilities.features?.assetObjects !== true) {
     throw new Error('服务器缺少附件资源对象能力，请先升级 NoteGen Sync Server')
   }
-  return capabilities
+  try {
+    const ready = await serverRequest<{ status: string }>(normalized, '/health/ready', { timeoutMs: 5_000 })
+    return { ...capabilities, readiness: ready.status === 'ok' ? 'ready' : 'unavailable' }
+  } catch {
+    // Readiness is an operational signal, not a discovery failure. Keep the
+    // authenticated UI able to explain the instance and retry later.
+    return { ...capabilities, readiness: 'unavailable' }
+  }
 }
 
 export async function authenticateServer(input: {
@@ -243,6 +555,7 @@ export async function authenticateServer(input: {
   action: 'login' | 'register'
   login: string
   password: string
+  totpCode?: string
   setupToken?: string
   deviceId: string
   deviceName: string
@@ -255,6 +568,7 @@ export async function authenticateServer(input: {
     body: {
       login: input.login.trim(),
       password: input.password,
+      ...(input.totpCode === undefined ? {} : { totpCode: input.totpCode }),
       deviceId: input.deviceId,
       deviceName: input.deviceName,
       platform: 'notegen',
@@ -318,11 +632,12 @@ export async function refreshServerSession(input: {
   baseUrl: string
   refreshToken: string
   deviceId: string
+  refreshRequestId?: string
 }): Promise<ServerSession> {
   return await serverRequest(normalizeServerOrigin(input.baseUrl), '/v1/auth/refresh', {
     method: 'POST',
     timeoutMs: 8_000,
-    body: { refreshToken: input.refreshToken, deviceId: input.deviceId },
+    body: { refreshToken: input.refreshToken, deviceId: input.deviceId, ...(input.refreshRequestId === undefined ? {} : { refreshRequestId: input.refreshRequestId }) },
   })
 }
 
@@ -342,6 +657,16 @@ export async function getServerAccount(baseUrl: string, accessToken: string): Pr
   return await serverRequest(normalizeServerOrigin(baseUrl), '/v1/account', { accessToken, timeoutMs: 8_000 })
 }
 
+/** Returns null for pre-account-service servers, preserving the legacy path. */
+export async function getServerAccountContext(baseUrl: string, accessToken: string): Promise<ServerAccountContext | null> {
+  try {
+    return await serverRequest<ServerAccountContext>(normalizeServerOrigin(baseUrl), '/v1/account/context', { accessToken, timeoutMs: 8_000 })
+  } catch (error) {
+    if (error instanceof NoteGenServerRequestError && error.status === 404) return null
+    throw error
+  }
+}
+
 export async function listServerWorkspaces(baseUrl: string, accessToken: string): Promise<ServerWorkspace[]> {
   return await serverRequest(normalizeServerOrigin(baseUrl), '/v1/workspaces', { accessToken, timeoutMs: 8_000 })
 }
@@ -351,7 +676,9 @@ export async function createServerWorkspace(input: {
   accessToken: string
   name: string
   syncPassphrase: string
-}): Promise<{ workspace: { id: string }, workspaceKey: CryptoKey, workspaceKeys: ReadonlyMap<number, CryptoKey>, recoveryKey: string }> {
+  /** Persisted by the foreground onboarding journal before any network request. */
+  creationIdempotencyKey?: string
+}): Promise<{ workspace: { id: string, created: boolean }, workspaceKey: CryptoKey, workspaceKeys: ReadonlyMap<number, CryptoKey>, recoveryKey: string }> {
   const workspaceKeyBytes = randomBytes(32)
   const workspaceKey = await importAesKey(workspaceKeyBytes)
   const passphraseSalt = randomBytes(16)
@@ -364,10 +691,11 @@ export async function createServerWorkspace(input: {
   const recoveryKey = await importAesKey(recoveryKeyBytes)
   const nameCiphertext = await encryptText(workspaceKey, input.name)
 
-  const workspace = await serverRequest<{ id: string }>(normalizeServerOrigin(input.baseUrl), '/v1/workspaces', {
+  const workspace = await serverRequest<{ id: string, created: boolean }>(normalizeServerOrigin(input.baseUrl), '/v1/workspaces', {
     method: 'POST',
-    expectedStatus: 201,
+    expectedStatus: [200, 201],
     accessToken: input.accessToken,
+    ...(input.creationIdempotencyKey === undefined ? {} : { headers: { 'idempotency-key': input.creationIdempotencyKey } }),
     body: {
       nameCiphertext,
       keyVersion: 1,
@@ -399,6 +727,27 @@ export async function createServerWorkspace(input: {
     workspaceKey,
     workspaceKeys: new Map([[1, workspaceKey]]),
     recoveryKey: toBase64Url(recoveryKeyBytes),
+  }
+}
+
+/**
+ * Recovers the server-side result of a persisted foreground E2EE creation
+ * attempt. The key is account-scoped; callers must not use this as discovery.
+ */
+export async function findServerWorkspaceCreation(input: {
+  baseUrl: string
+  accessToken: string
+  creationIdempotencyKey: string
+}): Promise<{ id: string, createdAt: string } | null> {
+  try {
+    return await serverRequest<{ id: string, createdAt: string }>(
+      normalizeServerOrigin(input.baseUrl),
+      `/v1/workspace-creation-requests/${encodeURIComponent(input.creationIdempotencyKey)}`,
+      { accessToken: input.accessToken, timeoutMs: 8_000 },
+    )
+  } catch (error) {
+    if (error instanceof NoteGenServerRequestError && error.status === 404) return null
+    throw error
   }
 }
 
@@ -548,6 +897,47 @@ export async function enableServerWorkspaceEndToEndEncryption(input: {
     },
   )
   return toBase64Url(recoveryKeyBytes)
+}
+
+/**
+ * Replaces exactly one active recovery envelope without exposing the workspace
+ * key to the server. Callers persist the idempotency key before the request.
+ */
+export async function replaceServerWorkspaceRecoveryKey(input: {
+  baseUrl: string
+  accessToken: string
+  workspaceId: string
+  keyVersion: number
+  workspaceKey: CryptoKey
+  idempotencyKey: string
+  /** Reuse the original candidate for a persisted retry; never store it in the ordinary profile. */
+  recoveryKey?: string
+}): Promise<{ recoveryKey: string, created: boolean }> {
+  const workspaceKeyBytes = new Uint8Array(await crypto.subtle.exportKey('raw', input.workspaceKey))
+  const recoveryKeyBytes = input.recoveryKey === undefined ? randomBytes(32) : fromBase64Url(input.recoveryKey)
+  if (recoveryKeyBytes.byteLength !== 32) throw new Error('The recovery key is invalid')
+  const recoveryKeyValue = toBase64Url(recoveryKeyBytes)
+  if (input.recoveryKey !== undefined && input.recoveryKey !== recoveryKeyValue) throw new Error('The recovery key is invalid')
+  const recoveryKey = await importAesKey(recoveryKeyBytes)
+  const response = await serverRequest<{ id: string, status: 'active', created: boolean }>(
+    normalizeServerOrigin(input.baseUrl),
+    `/v1/workspaces/${input.workspaceId}/keys/${input.keyVersion}/recovery-envelope`,
+    {
+      method: 'PUT', accessToken: input.accessToken, timeoutMs: 8_000,
+      headers: { 'idempotency-key': input.idempotencyKey },
+      body: {
+        type: 'recovery', recipientId: null,
+        wrappedKey: await encryptBytes(recoveryKey, workspaceKeyBytes),
+        kdfSalt: null, kdfParams: null,
+      },
+    },
+  )
+  return { recoveryKey: recoveryKeyValue, created: response.created }
+}
+
+/** Generates a recovery key only for foreground display or secure storage. */
+export function createServerWorkspaceRecoveryKey(): string {
+  return toBase64Url(randomBytes(32))
 }
 
 export async function enableServerWorkspaceManagedEncryption(input: {
@@ -711,6 +1101,7 @@ export async function uploadServerBlob(input: {
   baseUrl: string
   accessToken: string
   workspaceId: string
+  expectedSyncEpoch?: string
   blob: EncryptedServerBlob
   onProgress?: (progress: { blobId: string, completedBytes: number, totalBytes: number }) => void | Promise<void>
 }): Promise<void> {
@@ -733,6 +1124,7 @@ export async function uploadServerBlob(input: {
       blobId: input.blob.blobId,
       expectedSize: String(ciphertextSize),
       ciphertextHash: input.blob.ciphertextHash,
+      ...(input.expectedSyncEpoch === undefined ? {} : { expectedSyncEpoch: input.expectedSyncEpoch }),
     },
   })
   if (upload.alreadyExists) {
@@ -781,7 +1173,8 @@ export async function uploadServerBlob(input: {
   await serverRequest(
     normalizeServerOrigin(input.baseUrl),
     `/v1/workspaces/${input.workspaceId}/blobs/uploads/${upload.uploadId}/complete`,
-    { method: 'POST', accessToken: input.accessToken },
+    { method: 'POST', accessToken: input.accessToken, body: input.expectedSyncEpoch === undefined
+      ? undefined : { expectedSyncEpoch: input.expectedSyncEpoch } },
   )
 }
 
@@ -873,10 +1266,34 @@ export class NoteGenServerRequestError extends Error {
     readonly status: number,
     readonly code?: string,
     readonly retryable = false,
+    readonly details?: Record<string, unknown>,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message)
     this.name = 'NoteGenServerRequestError'
   }
+}
+
+/** Only explicit server-side credential revocation may erase local sync state. */
+export function isTerminalServerSessionError(error: unknown): boolean {
+  return error instanceof NoteGenServerRequestError && [
+    'refresh_token_invalid', 'refresh_token_revoked', 'refresh_token_reused',
+    'device_revoked', 'credential_epoch_invalid', 'instance_auth_epoch_invalid', 'account_deletion_completed',
+  ].includes(error.code ?? '')
+}
+
+/**
+ * These responses require an account, policy, operator, or maintenance action.
+ * They must retain local outbox state but may not drive an automatic retry loop.
+ */
+export function isSyncActionRequiredServerError(error: unknown): error is NoteGenServerRequestError {
+  return error instanceof NoteGenServerRequestError && [
+    'email_verification_required', 'policy_acceptance_required', 'policy_reacceptance_required',
+    'risk_challenge_required', 'risk_temporarily_locked', 'risk_review_required', 'risk_denied',
+    'quota_exceeded', 'device_limit_exceeded', 'workspace_limit_exceeded',
+    'account_read_only', 'credential_review_required', 'server_maintenance', 'cursor_expired',
+    'sync_epoch_changed', 'instance_auth_epoch_invalid',
+  ].includes(error.code ?? '')
 }
 
 export async function serverRequest<T>(
@@ -920,15 +1337,25 @@ export async function serverRequest<T>(
     let message = text || `HTTP ${response.status}`
     let code: string | undefined
     let retryable = false
+    let details: Record<string, unknown> | undefined
     try {
-      const body = JSON.parse(text) as { message?: string, code?: string, retryable?: boolean }
+      const body = JSON.parse(text) as {
+        message?: string
+        code?: string
+        retryable?: boolean
+        details?: Record<string, unknown>
+      }
       code = body.code
       retryable = body.retryable ?? false
       message = body.message ? `${body.message}${body.code ? ` (${body.code})` : ''}` : message
+      details = body.details
     } catch {
       // Keep the raw response.
     }
-    throw new NoteGenServerRequestError(`${message} [${path}]`, response.status, code, retryable)
+    throw new NoteGenServerRequestError(
+      `${message} [${path}]`, response.status, code, retryable,
+      details, parseRetryAfter(response.headers.get('retry-after'), details?.retryAfterSeconds),
+    )
   }
   if (!text) return undefined as T
   try {
@@ -941,6 +1368,17 @@ export async function serverRequest<T>(
       true,
     )
   }
+}
+
+function parseRetryAfter(header: string | null, detailValue?: unknown): number | undefined {
+  const fromDetails = typeof detailValue === 'number' && Number.isFinite(detailValue) ? detailValue : undefined
+  const value = header?.trim()
+  if (!value) return fromDetails
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds, 24 * 60 * 60)
+  const timestamp = Date.parse(value)
+  if (!Number.isNaN(timestamp)) return Math.min(Math.max(0, Math.ceil((timestamp - Date.now()) / 1_000)), 24 * 60 * 60)
+  return fromDetails
 }
 
 async function binaryServerRequest(

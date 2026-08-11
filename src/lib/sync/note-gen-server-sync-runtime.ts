@@ -111,6 +111,7 @@ interface RuntimeInput {
   baseUrl: string
   session: ServerSession
   workspaceId: string
+  syncEpoch?: string
   syncScopeId: string
   workspaceKey: CryptoKey
   workspaceKeys: ReadonlyMap<number, CryptoKey>
@@ -738,6 +739,7 @@ async function ensureBootstrap(input: RuntimeInput): Promise<void> {
         baseUrl: input.baseUrl, accessToken: input.session.accessToken,
         workspaceId: input.workspaceId, ...(bootstrapId ? { bootstrapId } : {}),
         ...(afterObjectId ? { afterObjectId } : {}),
+        ...(input.syncEpoch === undefined ? {} : { expectedSyncEpoch: input.syncEpoch }),
         // Keep encrypted bootstrap responses small enough for mobile WebViews
         // and yield frequently while materializing large workspaces.
         limit: 50,
@@ -919,6 +921,7 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
         : await prepareNoteGenServerPayloadAssets({
             payload: localPayload, baseUrl: input.baseUrl, accessToken: input.session.accessToken,
             workspaceId: input.workspaceId, workspaceKey: input.workspaceKey,
+            ...(input.syncEpoch === undefined ? {} : { expectedSyncEpoch: input.syncEpoch }),
             keyVersion: input.keyVersion,
             resolveResourceId: async reference => {
               const resourceEntity = await getOrCreateAssetResourceEntity(
@@ -1072,6 +1075,7 @@ async function flushV2Outbox(input: RuntimeInput): Promise<{ count: number, conf
     const results = await pushSyncV2Commands({
       baseUrl: input.baseUrl, accessToken: input.session.accessToken,
       workspaceId: input.workspaceId, commands,
+      ...(input.syncEpoch === undefined ? {} : { expectedSyncEpoch: input.syncEpoch }),
     })
     for (const result of results) {
       const outbox = entries.find(entry => entry.commandId === result.commandId)
@@ -1116,6 +1120,17 @@ async function flushV2Outbox(input: RuntimeInput): Promise<{ count: number, conf
         }
         await failSyncV2Command(input.syncScopeId, result.commandId,
           result.code ?? 'command_rejected', result.retryable !== true)
+        // Durable command responses do not have an HTTP status, but these
+        // codes carry the same account-action contract as a route response.
+        // Keeping just one command blocked while the background worker keeps
+        // flushing the rest creates a hot retry loop and hides the account
+        // state that must be resolved first. The outbox remains intact; the
+        // background coordinator turns this into a visible paused state.
+        if (isActionRequiredCommandCode(result.code)) {
+          throw new NoteGenServerRequestError(
+            `同步需要处理账号状态（${result.code}）`, 409, result.code, false, result.details,
+          )
+        }
         continue
       }
       if (result.status === 'conflict' && result.code !== 'delete_edit_conflict') {
@@ -1189,6 +1204,15 @@ async function flushV2Outbox(input: RuntimeInput): Promise<{ count: number, conf
       && entries.every((entry, index) => entry.commandId === remaining[index]?.commandId)) break
   }
   return { count, conflicts }
+}
+
+function isActionRequiredCommandCode(code: string | undefined): boolean {
+  return code !== undefined && [
+    'email_verification_required', 'policy_acceptance_required', 'policy_reacceptance_required',
+    'risk_challenge_required', 'risk_temporarily_locked', 'risk_review_required', 'risk_denied',
+    'quota_exceeded', 'device_limit_exceeded', 'workspace_limit_exceeded', 'account_read_only', 'credential_review_required',
+    'server_maintenance', 'cursor_expired', 'sync_epoch_changed', 'instance_auth_epoch_invalid',
+  ].includes(code)
 }
 
 async function enqueuePreparedAssetResource(
@@ -1273,6 +1297,7 @@ async function receiveEvents(input: RuntimeInput): Promise<number> {
     const page = await pullSyncV2Events({
       baseUrl: input.baseUrl, accessToken: input.session.accessToken,
       workspaceId: input.workspaceId, after,
+      ...(input.syncEpoch === undefined ? {} : { expectedSyncEpoch: input.syncEpoch }),
     })
     for (const event of page.events) await storeSyncV2Event(input.syncScopeId, event)
     after = page.nextCursor

@@ -73,13 +73,17 @@ export async function getSyncV2ObjectVersion(input: {
   workspaceId: string
   objectId: string
   revision: string
+  expectedSyncEpoch?: string
 }): Promise<{
   object: SyncV2HistoricalObjectVersion
   resources: SyncV2HistoricalObjectVersion[]
 }> {
+  const query = new URLSearchParams()
+  if (input.expectedSyncEpoch) query.set('expectedSyncEpoch', input.expectedSyncEpoch)
+  const queryString = query.toString()
   return serverRequest(
     normalizeServerOrigin(input.baseUrl),
-    `/v1/workspaces/${input.workspaceId}/sync/objects/${input.objectId}/versions/${input.revision}`,
+    `/v1/workspaces/${input.workspaceId}/sync/objects/${input.objectId}/versions/${input.revision}${queryString ? `?${queryString}` : ''}`,
     { accessToken: input.accessToken },
   )
 }
@@ -91,6 +95,7 @@ export async function listSyncV2ObjectVersions(input: {
   objectId: string
   before?: string | null
   limit?: number
+  expectedSyncEpoch?: string
 }): Promise<{
   versions: SyncV2HistoricalObjectVersion[]
   nextBefore: string | null
@@ -98,6 +103,7 @@ export async function listSyncV2ObjectVersions(input: {
 }> {
   const query = new URLSearchParams({ limit: String(input.limit ?? 20) })
   if (input.before) query.set('before', input.before)
+  if (input.expectedSyncEpoch) query.set('expectedSyncEpoch', input.expectedSyncEpoch)
   return serverRequest(
     normalizeServerOrigin(input.baseUrl),
     `/v1/workspaces/${input.workspaceId}/sync/objects/${input.objectId}/versions?${query.toString()}`,
@@ -109,12 +115,16 @@ export async function pushSyncV2Commands(input: {
   baseUrl: string
   accessToken: string
   workspaceId: string
+  expectedSyncEpoch?: string
   commands: SyncV2Command[]
 }): Promise<SyncV2CommandResult[]> {
   const response = await serverRequest<{ results: SyncV2CommandResult[] }>(
     normalizeServerOrigin(input.baseUrl),
     `/v1/workspaces/${input.workspaceId}/sync/commands`,
-    { method: 'POST', accessToken: input.accessToken, body: { commands: input.commands } },
+    { method: 'POST', accessToken: input.accessToken, body: {
+      commands: input.commands,
+      ...(input.expectedSyncEpoch === undefined ? {} : { expectedSyncEpoch: input.expectedSyncEpoch }),
+    } },
   )
   return response.results
 }
@@ -125,8 +135,10 @@ export async function pullSyncV2Events(input: {
   workspaceId: string
   after: string
   limit?: number
+  expectedSyncEpoch?: string
 }): Promise<{ events: SyncV2Event[], nextCursor: string, latestSequence: string, hasMore: boolean }> {
   const query = new URLSearchParams({ after: input.after, limit: String(input.limit ?? 200) })
+  if (input.expectedSyncEpoch) query.set('expectedSyncEpoch', input.expectedSyncEpoch)
   return serverRequest(
     normalizeServerOrigin(input.baseUrl),
     `/v1/workspaces/${input.workspaceId}/sync/events?${query}`,
@@ -175,6 +187,7 @@ export async function bootstrapSyncV2(input: {
   bootstrapId?: string
   afterObjectId?: string
   limit?: number
+  expectedSyncEpoch?: string
 }): Promise<{
   bootstrapId: string
   snapshotSequence: string
@@ -186,6 +199,7 @@ export async function bootstrapSyncV2(input: {
   const query = new URLSearchParams({ limit: String(input.limit ?? 200) })
   if (input.bootstrapId) query.set('bootstrapId', input.bootstrapId)
   if (input.afterObjectId) query.set('afterObjectId', input.afterObjectId)
+  if (input.expectedSyncEpoch) query.set('expectedSyncEpoch', input.expectedSyncEpoch)
   return serverRequest(
     normalizeServerOrigin(input.baseUrl),
     `/v1/workspaces/${input.workspaceId}/sync/bootstrap?${query}`,
@@ -200,6 +214,7 @@ export async function pullSyncV2DocumentUpdates(input: {
   documentId: string
   after: string
   limit?: number
+  expectedSyncEpoch?: string
 }): Promise<{
   updates: Array<{
     documentSequence: string
@@ -212,6 +227,7 @@ export async function pullSyncV2DocumentUpdates(input: {
   hasMore: boolean
 }> {
   const query = new URLSearchParams({ after: input.after, limit: String(input.limit ?? 500) })
+  if (input.expectedSyncEpoch) query.set('expectedSyncEpoch', input.expectedSyncEpoch)
   return serverRequest(
     normalizeServerOrigin(input.baseUrl),
     `/v1/workspaces/${input.workspaceId}/documents/${encodeURIComponent(input.documentId)}/updates?${query}`,

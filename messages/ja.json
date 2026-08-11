@@ -1129,6 +1129,7 @@
       "imageRepo": "画像ホスティング倉庫",
       "imageRepoDesc": "あなたの画像を画像ホスティングリポジトリに同期します。",
       "status": {
+        "actionRequired": "設定が必要",
         "connected": "接続済み",
         "configured": "設定済み",
         "disconnected": "未接続",
@@ -1303,6 +1304,13 @@
         "syncing": "同期中",
         "synced": "同期済み",
         "syncError": "同期の確認が必要です",
+        "syncPausedDescription": "サーバーでアカウント、ポリシー、またはメンテナンス操作が必要です。ローカルの保留中変更は保持され、完了後に手動で再試行できます。",
+        "recoveryConfirmLabel": "復元キーの末尾 6 文字を入力してください：{suffix}",
+        "hostedRegistrationInBrowser": "このサーバーでは、ブラウザーのアカウント画面でメール登録と確認を行う必要があります。",
+        "openAccountPortal": "アカウントポータルを開く",
+        "openingAccountPortal": "アカウントポータルを開いています",
+        "totpRequired": "認証アプリの 6 桁コードを入力して、もう一度お試しください。",
+        "totpCode": "二段階認証コード",
         "problemCategory": {
           "outbox": "送信操作がブロックされました",
           "inbox": "受信データの適用に失敗しました",

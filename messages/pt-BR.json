@@ -1154,6 +1154,7 @@
       "imageRepo": "Repositório de Imagens",
       "imageRepoDesc": "Sincronize suas imagens para o repositório, usando jsdelivr para aceleração",
       "status": {
+        "actionRequired": "Configuração necessária",
         "connected": "Conectado",
         "configured": "Configurado",
         "disconnected": "Desconectado",
@@ -1248,6 +1249,13 @@
         "syncing": "Sincronizando",
         "synced": "Sincronizado",
         "syncError": "A sincronização precisa de atenção",
+        "syncPausedDescription": "O servidor exige uma ação de conta, política ou manutenção. As alterações locais pendentes foram preservadas; tente novamente manualmente após concluí-la.",
+        "recoveryConfirmLabel": "Digite os 6 últimos caracteres da chave de recuperação: {suffix}",
+        "hostedRegistrationInBrowser": "Este servidor exige cadastro e verificação de e-mail no portal da conta no navegador.",
+        "openAccountPortal": "Abrir portal da conta",
+        "openingAccountPortal": "Abrindo portal da conta",
+        "totpRequired": "Digite o código de seis dígitos do seu autenticador e tente novamente.",
+        "totpCode": "Código de dois fatores",
         "problemCategory": {
           "outbox": "Operação de envio bloqueada",
           "inbox": "Falha ao aplicar dados recebidos",
