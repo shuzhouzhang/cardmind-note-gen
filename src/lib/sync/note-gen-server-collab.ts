@@ -1,13 +1,13 @@
 'use client'
 
 import * as Y from 'yjs'
-import { IndexeddbPersistence } from 'y-indexeddb'
+import { IndexeddbPersistence, storeState } from 'y-indexeddb'
 
 import {
-  enqueueSyncV2Command,
-  getLocalSyncV2Document,
-  getOrCreateSyncV2Entity,
-  type SyncV2Entity,
+  enqueueSyncCommand,
+  getLocalSyncDocument,
+  getOrCreateSyncEntity,
+  type SyncEntity,
 } from '@/db/note-gen-server-sync-index'
 import {
   deleteNoteGenServerOutboxEntry,
@@ -17,7 +17,7 @@ import emitter from '@/lib/emitter'
 import { normalizeWorkspaceRelativePath } from '@/lib/workspace'
 import {
   getNoteGenServerBackgroundConnection,
-  getNoteGenServerBackgroundV2Context,
+  getNoteGenServerSyncContext,
   publishNoteGenServerDocumentUpdate,
   publishNoteGenServerPresence,
   retainNoteGenServerRealtimeDocument,
@@ -27,7 +27,7 @@ import {
   triggerNoteGenServerBackgroundSync,
   type NoteGenServerPresence,
 } from './note-gen-server-background'
-import { createSyncV2NameBlindIndex, decryptSyncV2Payload, encryptSyncV2Payload, getSyncV2StableBlindIndexKey, getSyncV2StableBlindIndexKeyVersion, pullSyncV2DocumentUpdates, type SyncV2ObjectKind } from './note-gen-server-sync-protocol'
+import { createSyncNameBlindIndex, decryptSyncPayload, encryptSyncPayload, getSyncStableBlindIndexKey, getSyncStableBlindIndexKeyVersion, pullSyncDocumentUpdates, type SyncObjectKind } from './note-gen-server-sync-protocol'
 
 type TextListener = (value: string) => void
 type FieldsListener = (value: Record<string, unknown>) => void
@@ -73,7 +73,7 @@ export function moveNoteGenServerMarkdownDocs(
 
 export async function refreshNoteGenServerMarkdownEntity(
   workspaceId: string,
-  entity: SyncV2Entity,
+  entity: SyncEntity,
 ): Promise<void> {
   const session = sessions.get(`${workspaceId}:note:${entity.objectId}`)
   if (session) await session.updateEntity(entity)
@@ -115,22 +115,22 @@ type NoteGenServerStructuredFieldsSnapshot = Omit<NoteGenServerStructuredSnapsho
  */
 export async function loadNoteGenServerStructuredSnapshot(input: {
   workspaceId: string
-  entity: SyncV2Entity
+  entity: SyncEntity
 }): Promise<NoteGenServerStructuredSnapshot | null> {
   const connection = getNoteGenServerBackgroundConnection()
-  const context = getNoteGenServerBackgroundV2Context()
+  const context = getNoteGenServerSyncContext()
   if (!connection || !context || context.workspaceId !== input.workspaceId || !input.entity.documentId) {
     return null
   }
   const doc = new Y.Doc()
   try {
-    const localDocument = await getLocalSyncV2Document(context.syncScopeId, input.entity.documentId)
+    const localDocument = await getLocalSyncDocument(context.syncScopeId, input.entity.documentId)
     let after = localDocument?.checkpointDocumentSequence ?? '0'
     if (localDocument?.checkpointCiphertext && localDocument.checkpointId
       && localDocument.checkpointKeyVersion) {
       const key = context.workspaceKeys.get(localDocument.checkpointKeyVersion)
       if (!key) throw new Error(`缺少 Workspace Key v${localDocument.checkpointKeyVersion}`)
-      const checkpoint = await decryptSyncV2Payload<Uint8Array>(key, localDocument.checkpointCiphertext, {
+      const checkpoint = await decryptSyncPayload<Uint8Array>(key, localDocument.checkpointCiphertext, {
         workspaceId: context.workspaceId, objectId: input.entity.objectId, kind: input.entity.kind,
         keyVersion: localDocument.checkpointKeyVersion, purpose: 'checkpoint',
         identity: localDocument.checkpointId,
@@ -138,7 +138,7 @@ export async function loadNoteGenServerStructuredSnapshot(input: {
       Y.applyUpdate(doc, checkpoint)
     }
     while (true) {
-      const page = await pullSyncV2DocumentUpdates({
+      const page = await pullSyncDocumentUpdates({
         baseUrl: connection.profile.baseUrl, accessToken: connection.session.accessToken,
         workspaceId: context.workspaceId, documentId: input.entity.documentId, after,
         ...(context.syncEpoch === undefined ? {} : { expectedSyncEpoch: context.syncEpoch }),
@@ -146,7 +146,7 @@ export async function loadNoteGenServerStructuredSnapshot(input: {
       for (const item of page.updates) {
         const key = context.workspaceKeys.get(item.keyVersion)
         if (!key) throw new Error(`缺少 Workspace Key v${item.keyVersion}`)
-        const update = await decryptSyncV2Payload<Uint8Array>(key, item.ciphertext, {
+        const update = await decryptSyncPayload<Uint8Array>(key, item.ciphertext, {
           workspaceId: context.workspaceId, objectId: input.entity.objectId, kind: input.entity.kind,
           keyVersion: item.keyVersion, purpose: 'update', identity: item.updateId,
         }, true)
@@ -173,10 +173,10 @@ export async function getNoteGenServerTextSession(input: {
   doc?: Y.Doc
 }): Promise<NoteGenServerTextSession | null> {
   const connection = getNoteGenServerBackgroundConnection()
-  const context = getNoteGenServerBackgroundV2Context()
+  const context = getNoteGenServerSyncContext()
   if (!connection || !context || connection.profile.workspaceId !== input.workspaceId) return null
   const normalizedPath = await normalizeWorkspaceRelativePath(input.relativePath)
-  const entity = await getOrCreateSyncV2Entity({
+  const entity = await getOrCreateSyncEntity({
     scopeId: context.syncScopeId, kind: 'note', localKey: normalizedPath,
     stableWorkspaceId: input.workspaceId,
   })
@@ -221,11 +221,11 @@ export async function getNoteGenServerJsonSession(input: {
   initialFields?: Record<string, unknown>
 }): Promise<NoteGenServerTextSession | null> {
   const connection = getNoteGenServerBackgroundConnection()
-  const context = getNoteGenServerBackgroundV2Context()
+  const context = getNoteGenServerSyncContext()
   if (!connection || !context || connection.profile.workspaceId !== input.workspaceId) return null
   const kind = kindForDocument(input.documentId)
   const localKey = localKeyForDocument(input.documentId, kind)
-  const entity = await getOrCreateSyncV2Entity({
+  const entity = await getOrCreateSyncEntity({
     scopeId: context.syncScopeId, kind, localKey,
     stableWorkspaceId: input.workspaceId,
   })
@@ -288,6 +288,7 @@ export class NoteGenServerTextSession {
   readonly canvasNodeOrder: Y.Array<string>
   readonly canvasEdgeOrder: Y.Array<string>
   readonly #persistence: IndexeddbPersistence
+  #legacyPersistence: IndexeddbPersistence | null
   readonly #listeners = new Set<TextListener>()
   readonly #fieldListeners = new Set<FieldsListener>()
   readonly #messageListeners = new Set<MessagesListener>()
@@ -297,8 +298,8 @@ export class NoteGenServerTextSession {
   readonly #remoteOrigin = {}
   readonly #key: string
   readonly #workspaceId: string
-  #entity: SyncV2Entity
-  readonly #kind: SyncV2ObjectKind
+  #entity: SyncEntity
+  readonly #kind: SyncObjectKind
   readonly #recoveryStorageKey: string
   #started = false
   #ready = false
@@ -315,9 +316,9 @@ export class NoteGenServerTextSession {
 
   constructor(input: {
     key: string
-    entity: SyncV2Entity
+    entity: SyncEntity
     workspaceId: string
-    kind: SyncV2ObjectKind
+    kind: SyncObjectKind
     initialContent: string
     doc?: Y.Doc
   }) {
@@ -337,8 +338,11 @@ export class NoteGenServerTextSession {
     this.#workspaceId = input.workspaceId
     this.#entity = input.entity
     this.#kind = input.kind
-    this.#recoveryStorageKey = `note-gen-server:v2:recovery:${this.#key}`
-    this.#persistence = new IndexeddbPersistence(`note-gen-server:v2:${this.#key}`, this.doc)
+    const legacyRecoveryStorageKey = `note-gen-server:v2:recovery:${this.#key}`
+    this.#recoveryStorageKey = `note-gen-server:recovery:${this.#key}`
+    migrateRecoveryState(legacyRecoveryStorageKey, this.#recoveryStorageKey)
+    this.#legacyPersistence = new IndexeddbPersistence(`note-gen-server:v2:${this.#key}`, this.doc)
+    this.#persistence = new IndexeddbPersistence(`note-gen-server:${this.#key}`, this.doc)
     this.text.observe(() => {
       for (const listener of this.#listeners) listener(this.text.toString())
     })
@@ -375,9 +379,15 @@ export class NoteGenServerTextSession {
   async start(): Promise<void> {
     if (this.#started) return
     this.#started = true
+    if (this.#legacyPersistence) await this.#legacyPersistence.whenSynced
     await this.#persistence.whenSynced
+    if (this.#legacyPersistence) {
+      await storeState(this.#persistence, true)
+      await this.#legacyPersistence.clearData()
+      this.#legacyPersistence = null
+    }
     if (this.#kind === 'note') {
-      const context = getNoteGenServerBackgroundV2Context()
+      const context = getNoteGenServerSyncContext()
       if (context) {
         const legacySnapshot = await getNoteGenServerOutboxForObject(
           context.syncScopeId,
@@ -418,10 +428,10 @@ export class NoteGenServerTextSession {
         || update.documentId !== this.#entity.documentId
         || update.objectId !== this.#entity.objectId
         || update.kind !== this.#kind) return
-      const context = getNoteGenServerBackgroundV2Context()
+      const context = getNoteGenServerSyncContext()
       const key = context?.workspaceKeys.get(update.keyVersion)
       if (!context || !key) return
-      void decryptSyncV2Payload<Uint8Array>(key, update.ciphertext, {
+      void decryptSyncPayload<Uint8Array>(key, update.ciphertext, {
         workspaceId: update.workspaceId,
         objectId: update.objectId,
         kind: update.kind,
@@ -609,7 +619,7 @@ export class NoteGenServerTextSession {
     return this.syncMeta.get('markdownMirrorVersion') === 1
   }
 
-  async updateEntity(entity: SyncV2Entity): Promise<void> {
+  async updateEntity(entity: SyncEntity): Promise<void> {
     this.#entity = entity
     await this.#ensureObjectCommand()
   }
@@ -714,6 +724,7 @@ export class NoteGenServerTextSession {
     // This also gives y-indexeddb time to persist a final delete/edit before
     // the same file is reopened.
     void this.#sendQueue.finally(() => {
+      this.#legacyPersistence?.destroy()
       this.#persistence.destroy()
       this.doc.destroy()
     })
@@ -734,38 +745,38 @@ export class NoteGenServerTextSession {
     }
     if (this.#entity.lifecycleRevision !== '0' && lifecycleType === 'crdt-object'
       && lifecycleLocalKey === this.#entity.localKey) return
-    const context = getNoteGenServerBackgroundV2Context()
+    const context = getNoteGenServerSyncContext()
     if (!context || !this.#entity.documentId) throw new Error('同步工作区尚未解锁')
     const payload = {
       schemaVersion: 2, type: 'crdt-object', localKey: this.#entity.localKey,
       documentId: this.#entity.documentId,
     }
-    const encrypted = await encryptSyncV2Payload(context.workspaceKey, payload, {
+    const encrypted = await encryptSyncPayload(context.workspaceKey, payload, {
       workspaceId: this.#workspaceId, objectId: this.#entity.objectId, kind: this.#kind,
       keyVersion: context.keyVersion, purpose: 'object', identity: this.#entity.objectId,
     })
     const name = this.#entity.localKey.split('/').filter(Boolean).at(-1) ?? this.#entity.localKey
     const nameConflictId = crypto.randomUUID()
-    const nameConflict = await encryptSyncV2Payload(context.workspaceKey, {
+    const nameConflict = await encryptSyncPayload(context.workspaceKey, {
       schemaVersion: 2, type: 'same-name', objectId: this.#entity.objectId,
       parentObjectId: this.#entity.parentObjectId, path: this.#entity.localKey, name,
     }, {
       workspaceId: this.#workspaceId, objectId: this.#entity.objectId, kind: this.#kind,
       keyVersion: context.keyVersion, purpose: 'conflict', identity: nameConflictId,
     })
-    await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+    await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
       type: 'upsert-object', commandId: crypto.randomUUID(), objectId: this.#entity.objectId,
       kind: this.#kind, parentObjectId: this.#entity.parentObjectId,
       nameCiphertext: encrypted.ciphertext,
       baseRevision: this.#entity.lifecycleRevision === '0' ? null : this.#entity.lifecycleRevision,
       blobRefs: [],
       ...(['note', 'folder'].includes(this.#kind) ? {
-        nameBlindIndex: await createSyncV2NameBlindIndex({
-          key: getSyncV2StableBlindIndexKey(context.workspaceKeys, context.workspaceKey),
+        nameBlindIndex: await createSyncNameBlindIndex({
+          key: getSyncStableBlindIndexKey(context.workspaceKeys, context.workspaceKey),
           workspaceId: this.#workspaceId,
           parentObjectId: this.#entity.parentObjectId, name,
         }),
-        nameBlindIndexKeyVersion: getSyncV2StableBlindIndexKeyVersion(context.workspaceKeys),
+        nameBlindIndexKeyVersion: getSyncStableBlindIndexKeyVersion(context.workspaceKeys),
         nameConflictId,
         nameConflictCiphertext: nameConflict.ciphertext,
         nameConflictCiphertextHash: nameConflict.ciphertextHash,
@@ -775,22 +786,22 @@ export class NoteGenServerTextSession {
   }
 
   async #loadRemoteDocument(): Promise<void> {
-    const context = getNoteGenServerBackgroundV2Context()
+    const context = getNoteGenServerSyncContext()
     const connection = getNoteGenServerBackgroundConnection()
     if (!context || !connection || !this.#entity.documentId) return
-    const document = await getLocalSyncV2Document(context.syncScopeId, this.#entity.documentId)
+    const document = await getLocalSyncDocument(context.syncScopeId, this.#entity.documentId)
     let after = document?.checkpointDocumentSequence ?? '0'
     if (document?.checkpointCiphertext && document.checkpointId && document.checkpointKeyVersion) {
       const key = context.workspaceKeys.get(document.checkpointKeyVersion)
       if (!key) throw new Error(`缺少 Workspace Key v${document.checkpointKeyVersion}`)
-      const checkpoint = await decryptSyncV2Payload<Uint8Array>(key, document.checkpointCiphertext, {
+      const checkpoint = await decryptSyncPayload<Uint8Array>(key, document.checkpointCiphertext, {
         workspaceId: context.workspaceId, objectId: this.#entity.objectId, kind: this.#kind,
         keyVersion: document.checkpointKeyVersion, purpose: 'checkpoint', identity: document.checkpointId,
       }, true)
       Y.applyUpdate(this.doc, checkpoint, this.#remoteOrigin)
     }
     while (true) {
-      const page = await pullSyncV2DocumentUpdates({
+      const page = await pullSyncDocumentUpdates({
         baseUrl: connection.profile.baseUrl, accessToken: connection.session.accessToken,
         workspaceId: context.workspaceId, documentId: this.#entity.documentId, after,
         ...(context.syncEpoch === undefined ? {} : { expectedSyncEpoch: context.syncEpoch }),
@@ -798,7 +809,7 @@ export class NoteGenServerTextSession {
       for (const item of page.updates) {
         const key = context.workspaceKeys.get(item.keyVersion)
         if (!key) throw new Error(`缺少 Workspace Key v${item.keyVersion}`)
-        const update = await decryptSyncV2Payload<Uint8Array>(key, item.ciphertext, {
+        const update = await decryptSyncPayload<Uint8Array>(key, item.ciphertext, {
           workspaceId: context.workspaceId, objectId: this.#entity.objectId, kind: this.#kind,
           keyVersion: item.keyVersion, purpose: 'update', identity: item.updateId,
         }, true)
@@ -817,14 +828,14 @@ export class NoteGenServerTextSession {
       // update bytes are already captured, so destroying the in-memory Y.Doc
       // must not discard durable work that is waiting for encryption/queueing.
       if (!this.#entity.documentId) return
-      const context = getNoteGenServerBackgroundV2Context()
+      const context = getNoteGenServerSyncContext()
       if (!context || context.workspaceId !== this.#workspaceId) return
       const updateId = crypto.randomUUID()
-      const encrypted = await encryptSyncV2Payload(context.workspaceKey, update, {
+      const encrypted = await encryptSyncPayload(context.workspaceKey, update, {
         workspaceId: this.#workspaceId, objectId: this.#entity.objectId, kind: this.#kind,
         keyVersion: context.keyVersion, purpose: 'update', identity: updateId,
       })
-      await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+      await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
         type: 'append-update', commandId: crypto.randomUUID(), updateId,
         documentId: this.#entity.documentId, objectId: this.#entity.objectId,
         kind: this.#kind, keyVersion: context.keyVersion, ...encrypted,
@@ -854,10 +865,10 @@ export class NoteGenServerTextSession {
     if (this.#destroyed || !this.#entity.documentId) return
     const stateUpdate = Y.encodeStateAsUpdate(this.doc)
     void (async () => {
-      const context = getNoteGenServerBackgroundV2Context()
+      const context = getNoteGenServerSyncContext()
       if (!context || context.workspaceId !== this.#workspaceId || !this.#entity.documentId) return
       const updateId = crypto.randomUUID()
-      const encrypted = await encryptSyncV2Payload(context.workspaceKey, stateUpdate, {
+      const encrypted = await encryptSyncPayload(context.workspaceKey, stateUpdate, {
         workspaceId: this.#workspaceId,
         objectId: this.#entity.objectId,
         kind: this.#kind,
@@ -879,17 +890,17 @@ export class NoteGenServerTextSession {
     })
   }
 
-  async #queueCheckpoint(context: NonNullable<ReturnType<typeof getNoteGenServerBackgroundV2Context>>): Promise<void> {
+  async #queueCheckpoint(context: NonNullable<ReturnType<typeof getNoteGenServerSyncContext>>): Promise<void> {
     if (!this.#entity.documentId) return
-    const current = await getLocalSyncV2Document(context.syncScopeId, this.#entity.documentId)
+    const current = await getLocalSyncDocument(context.syncScopeId, this.#entity.documentId)
     const covers = current?.latestDocumentSequence ?? '0'
     if (covers === '0' || covers === current?.checkpointDocumentSequence) return
     const checkpointId = crypto.randomUUID()
-    const encrypted = await encryptSyncV2Payload(context.workspaceKey, Y.encodeStateAsUpdate(this.doc), {
+    const encrypted = await encryptSyncPayload(context.workspaceKey, Y.encodeStateAsUpdate(this.doc), {
       workspaceId: this.#workspaceId, objectId: this.#entity.objectId, kind: this.#kind,
       keyVersion: context.keyVersion, purpose: 'checkpoint', identity: checkpointId,
     })
-    await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+    await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
       type: 'commit-checkpoint', commandId: crypto.randomUUID(), checkpointId,
       documentId: this.#entity.documentId, objectId: this.#entity.objectId, kind: this.#kind,
       coversDocumentSequence: covers,
@@ -1024,7 +1035,17 @@ function removeRecoveryState(key: string): void {
   }
 }
 
-function kindForDocument(documentId: string): SyncV2ObjectKind {
+function migrateRecoveryState(legacyKey: string, currentKey: string): void {
+  for (const suffix of ['', ':markdown-import']) {
+    const value = readRecoveryState(`${legacyKey}${suffix}`)
+    if (value !== null && readRecoveryState(`${currentKey}${suffix}`) === null) {
+      writeRecoveryState(`${currentKey}${suffix}`, value)
+    }
+    removeRecoveryState(`${legacyKey}${suffix}`)
+  }
+}
+
+function kindForDocument(documentId: string): SyncObjectKind {
   const value = documentId.startsWith('structured:') ? documentId.slice('structured:'.length) : documentId
   if (value.startsWith('conversation:')) return 'conversation'
   if (value.startsWith('canvas:')) return 'canvas'
@@ -1034,7 +1055,7 @@ function kindForDocument(documentId: string): SyncV2ObjectKind {
   return 'mark'
 }
 
-function localKeyForDocument(documentId: string, kind: SyncV2ObjectKind): string {
+function localKeyForDocument(documentId: string, kind: SyncObjectKind): string {
   const value = documentId.startsWith('structured:') ? documentId.slice('structured:'.length) : documentId
   if (value === 'workspace-preferences' || value === 'settings') return 'workspace-preferences'
   if (value.startsWith('record:')) return `mark:${value.slice('record:'.length)}`

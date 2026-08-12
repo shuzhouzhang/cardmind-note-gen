@@ -1,4 +1,4 @@
-export interface SyncV2HealthSnapshot {
+export interface SyncHealthSnapshot {
   receivedCursor: string
   latestServerSequence: string
   lastServerConfirmedAt: number | null
@@ -15,7 +15,7 @@ export interface SyncV2HealthSnapshot {
   failedTransfers: number
 }
 
-export function isSyncV2FullyConverged(snapshot: SyncV2HealthSnapshot): boolean {
+export function isSyncFullyConverged(snapshot: SyncHealthSnapshot): boolean {
   return snapshot.receivedCursor === snapshot.latestServerSequence
     && snapshot.pendingMutations === 0
     && snapshot.pendingOutbox === 0

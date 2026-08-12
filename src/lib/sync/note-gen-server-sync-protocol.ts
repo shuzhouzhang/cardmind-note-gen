@@ -1,10 +1,10 @@
 import { normalizeServerOrigin, serverRequest } from './note-gen-server'
 
-export type SyncV2ObjectKind =
+export type SyncObjectKind =
   | 'note' | 'folder' | 'asset' | 'canvas' | 'record' | 'tag' | 'mark'
   | 'conversation' | 'memory' | 'setting' | 'yjs-checkpoint' | 'yjs-update'
 
-export interface SyncV2Event {
+export interface SyncEvent {
   eventId: string
   sequence: string
   commandId: string
@@ -20,14 +20,14 @@ export interface SyncV2Event {
   createdAt: string
 }
 
-export type SyncV2Command = Record<string, unknown> & {
+export type SyncCommand = Record<string, unknown> & {
   commandId: string
   type: string
   objectId?: string
   documentId?: string
 }
 
-export interface SyncV2CommandResult {
+export interface SyncCommandResult {
   commandId: string
   status: 'applied' | 'conflict' | 'rejected'
   duplicate: boolean
@@ -40,12 +40,12 @@ export interface SyncV2CommandResult {
   details?: Record<string, unknown>
 }
 
-export interface SyncV2HistoricalObjectVersion {
+export interface SyncHistoricalObjectVersion {
   workspaceId: string
   objectId: string
   revision: string
   sequence: string
-  kind: SyncV2ObjectKind
+  kind: SyncObjectKind
   parentObjectId: string | null
   nameCiphertext: string | null
   nameBlindIndex: string | null
@@ -58,7 +58,7 @@ export interface SyncV2HistoricalObjectVersion {
   currentRevision?: string | null
 }
 
-export interface SyncV2Aad {
+export interface SyncAad {
   workspaceId: string
   objectId: string
   kind: string
@@ -67,7 +67,7 @@ export interface SyncV2Aad {
   identity: string
 }
 
-export async function getSyncV2ObjectVersion(input: {
+export async function getSyncObjectVersion(input: {
   baseUrl: string
   accessToken: string
   workspaceId: string
@@ -75,8 +75,8 @@ export async function getSyncV2ObjectVersion(input: {
   revision: string
   expectedSyncEpoch?: string
 }): Promise<{
-  object: SyncV2HistoricalObjectVersion
-  resources: SyncV2HistoricalObjectVersion[]
+  object: SyncHistoricalObjectVersion
+  resources: SyncHistoricalObjectVersion[]
 }> {
   const query = new URLSearchParams()
   if (input.expectedSyncEpoch) query.set('expectedSyncEpoch', input.expectedSyncEpoch)
@@ -88,7 +88,7 @@ export async function getSyncV2ObjectVersion(input: {
   )
 }
 
-export async function listSyncV2ObjectVersions(input: {
+export async function listSyncObjectVersions(input: {
   baseUrl: string
   accessToken: string
   workspaceId: string
@@ -97,7 +97,7 @@ export async function listSyncV2ObjectVersions(input: {
   limit?: number
   expectedSyncEpoch?: string
 }): Promise<{
-  versions: SyncV2HistoricalObjectVersion[]
+  versions: SyncHistoricalObjectVersion[]
   nextBefore: string | null
   hasMore: boolean
 }> {
@@ -111,14 +111,14 @@ export async function listSyncV2ObjectVersions(input: {
   )
 }
 
-export async function pushSyncV2Commands(input: {
+export async function pushSyncCommands(input: {
   baseUrl: string
   accessToken: string
   workspaceId: string
   expectedSyncEpoch?: string
-  commands: SyncV2Command[]
-}): Promise<SyncV2CommandResult[]> {
-  const response = await serverRequest<{ results: SyncV2CommandResult[] }>(
+  commands: SyncCommand[]
+}): Promise<SyncCommandResult[]> {
+  const response = await serverRequest<{ results: SyncCommandResult[] }>(
     normalizeServerOrigin(input.baseUrl),
     `/v1/workspaces/${input.workspaceId}/sync/commands`,
     { method: 'POST', accessToken: input.accessToken, body: {
@@ -129,14 +129,14 @@ export async function pushSyncV2Commands(input: {
   return response.results
 }
 
-export async function pullSyncV2Events(input: {
+export async function pullSyncEvents(input: {
   baseUrl: string
   accessToken: string
   workspaceId: string
   after: string
   limit?: number
   expectedSyncEpoch?: string
-}): Promise<{ events: SyncV2Event[], nextCursor: string, latestSequence: string, hasMore: boolean }> {
+}): Promise<{ events: SyncEvent[], nextCursor: string, latestSequence: string, hasMore: boolean }> {
   const query = new URLSearchParams({ after: input.after, limit: String(input.limit ?? 200) })
   if (input.expectedSyncEpoch) query.set('expectedSyncEpoch', input.expectedSyncEpoch)
   return serverRequest(
@@ -146,9 +146,9 @@ export async function pullSyncV2Events(input: {
   )
 }
 
-export interface SyncV2BootstrapObject {
+export interface SyncBootstrapObject {
   objectId: string
-  kind: SyncV2ObjectKind
+  kind: SyncObjectKind
   parentObjectId: string | null
   nameCiphertext: string | null
   nameBlindIndexPresent: boolean
@@ -169,10 +169,10 @@ export interface SyncV2BootstrapObject {
   }
 }
 
-export interface SyncV2BootstrapConflict {
+export interface SyncBootstrapConflict {
   conflictId: string
   objectId: string
-  kind: SyncV2ObjectKind
+  kind: SyncObjectKind
   type: string
   keyVersion: number
   ciphertext: string
@@ -180,7 +180,7 @@ export interface SyncV2BootstrapConflict {
   createdSequence: string
 }
 
-export async function bootstrapSyncV2(input: {
+export async function bootstrapSync(input: {
   baseUrl: string
   accessToken: string
   workspaceId: string
@@ -191,8 +191,8 @@ export async function bootstrapSyncV2(input: {
 }): Promise<{
   bootstrapId: string
   snapshotSequence: string
-  objects: SyncV2BootstrapObject[]
-  conflicts: SyncV2BootstrapConflict[]
+  objects: SyncBootstrapObject[]
+  conflicts: SyncBootstrapConflict[]
   nextObjectId: string | null
   hasMore: boolean
 }> {
@@ -207,7 +207,7 @@ export async function bootstrapSyncV2(input: {
   )
 }
 
-export async function pullSyncV2DocumentUpdates(input: {
+export async function pullSyncDocumentUpdates(input: {
   baseUrl: string
   accessToken: string
   workspaceId: string
@@ -235,10 +235,10 @@ export async function pullSyncV2DocumentUpdates(input: {
   )
 }
 
-export async function encryptSyncV2Payload(
+export async function encryptSyncPayload(
   key: CryptoKey,
   payload: unknown | Uint8Array,
-  aad: SyncV2Aad,
+  aad: SyncAad,
 ): Promise<{ ciphertext: string, ciphertextHash: string }> {
   const plaintext = payload instanceof Uint8Array
     ? payload
@@ -259,10 +259,10 @@ export async function encryptSyncV2Payload(
   }
 }
 
-export async function decryptSyncV2Payload<T = unknown>(
+export async function decryptSyncPayload<T = unknown>(
   key: CryptoKey,
   ciphertext: string,
-  aad: SyncV2Aad,
+  aad: SyncAad,
   binary = false,
   allowLegacyObjectEnvelope = false,
 ): Promise<T> {
@@ -311,7 +311,7 @@ function hasBytePrefix(value: Uint8Array, prefix: readonly number[]): boolean {
  * not correlate. The index intentionally leaks equality within one directory;
  * that is the minimum information required for server-side collision detection.
  */
-export async function createSyncV2NameBlindIndex(input: {
+export async function createSyncNameBlindIndex(input: {
   key: CryptoKey
   workspaceId: string
   parentObjectId: string | null
@@ -328,9 +328,9 @@ export async function createSyncV2NameBlindIndex(input: {
   return toBase64Url(new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, message)))
 }
 
-/** Name indexes must survive content-key rotation, so v2 anchors them to the
+/** Name indexes must survive content-key rotation, so sync anchors them to the
  * oldest retained workspace key instead of whichever key encrypts this command. */
-export function getSyncV2StableBlindIndexKey(
+export function getSyncStableBlindIndexKey(
   keys: ReadonlyMap<number, CryptoKey>,
   fallback: CryptoKey,
 ): CryptoKey {
@@ -338,11 +338,11 @@ export function getSyncV2StableBlindIndexKey(
   return oldestVersion === undefined ? fallback : keys.get(oldestVersion) ?? fallback
 }
 
-export function getSyncV2StableBlindIndexKeyVersion(keys: ReadonlyMap<number, CryptoKey>): number {
+export function getSyncStableBlindIndexKeyVersion(keys: ReadonlyMap<number, CryptoKey>): number {
   return [...keys.keys()].sort((left, right) => left - right)[0] ?? 1
 }
 
-function encodeAad(aad: SyncV2Aad): Uint8Array {
+function encodeAad(aad: SyncAad): Uint8Array {
   return new TextEncoder().encode(JSON.stringify([
     'notegen-sync-v1', aad.workspaceId, aad.objectId, aad.kind,
     aad.keyVersion, aad.purpose, aad.identity,

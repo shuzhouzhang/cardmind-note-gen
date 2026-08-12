@@ -53,15 +53,37 @@ const ALLOWED_ASSET_DIRECTORIES = [
 ]
 const MAX_CLIENT_BLOB_PLAINTEXT_BYTES = 256 * 1024 * 1024
 const BLOB_DOWNLOAD_CHUNK_BYTES = 4 * 1024 * 1024
-const BLOB_DOWNLOAD_TEMP_DIR = 'sync-v2-downloads'
-const BLOB_UPLOAD_TEMP_DIR = 'sync-v2-uploads'
+const BLOB_DOWNLOAD_TEMP_DIR = 'sync-downloads'
+const BLOB_UPLOAD_TEMP_DIR = 'sync-uploads'
+const LEGACY_BLOB_DOWNLOAD_TEMP_DIR = 'sync-v2-downloads'
+const LEGACY_BLOB_UPLOAD_TEMP_DIR = 'sync-v2-uploads'
 const STREAMING_ASSET_THRESHOLD_BYTES = 8 * 1024 * 1024
 const ENCRYPTION_CHUNK_BYTES = 4 * 1024 * 1024
+let blobDirectoryMigration: Promise<void> | null = null
+
+async function migrateVersionedBlobDirectories(): Promise<void> {
+  blobDirectoryMigration ??= (async () => {
+    for (const [legacyPath, currentPath] of [
+      [LEGACY_BLOB_DOWNLOAD_TEMP_DIR, BLOB_DOWNLOAD_TEMP_DIR],
+      [LEGACY_BLOB_UPLOAD_TEMP_DIR, BLOB_UPLOAD_TEMP_DIR],
+    ] as const) {
+      if (await exists(legacyPath, { baseDir: BaseDirectory.AppData })
+        && !await exists(currentPath, { baseDir: BaseDirectory.AppData })) {
+        await rename(legacyPath, currentPath, {
+          oldPathBaseDir: BaseDirectory.AppData,
+          newPathBaseDir: BaseDirectory.AppData,
+        })
+      }
+    }
+  })()
+  await blobDirectoryMigration
+}
 
 export async function cleanupStaleNoteGenServerBlobDownloads(
   activeBlobIds: ReadonlySet<string>,
   olderThan: number,
 ): Promise<void> {
+  await migrateVersionedBlobDirectories()
   const entries = await exists(BLOB_DOWNLOAD_TEMP_DIR, { baseDir: BaseDirectory.AppData })
     ? await readDir(BLOB_DOWNLOAD_TEMP_DIR, { baseDir: BaseDirectory.AppData }) : []
   for (const entry of entries) {
@@ -229,8 +251,9 @@ export async function restoreNoteGenServerPayloadAssets(input: {
   const references = parseAssetReferences(input.payload)
   const declaredBlobRefs = new Set(input.blobRefs)
   const restoredPaths: string[] = []
+  const restoredWorkspacePaths: string[] = []
   for (const reference of references) {
-    // v2 parents only retain resourceId. Their independent asset events own and
+    // Synced parents only retain resourceId. Their independent asset events own and
     // restore the Blob; legacy parent-owned Blob references remain readable.
     if (reference.resourceId && !reference.blobId) continue
     if (!reference.blobId || !declaredBlobRefs.has(reference.blobId)) {
@@ -303,9 +326,13 @@ export async function restoreNoteGenServerPayloadAssets(input: {
     if (displacedPath?.includes('.sync-replaced-')) {
       await removeAsset(displacedPath, scope).catch(() => undefined)
     }
-    if (scope === 'appData' && !localPath.startsWith('conversation-assets/')) restoredPaths.push(localPath)
+    if (scope === 'workspace') restoredWorkspacePaths.push(localPath)
+    else if (!localPath.startsWith('conversation-assets/')) restoredPaths.push(localPath)
   }
   if (restoredPaths.length > 0) emitter.emit('record-assets-downloaded', { paths: restoredPaths })
+  if (restoredWorkspacePaths.length > 0) {
+    emitter.emit('workspace-assets-downloaded', { paths: restoredWorkspacePaths })
+  }
 }
 
 export function getNoteGenServerPayloadResourceReferences(payload: unknown): Array<{
@@ -329,6 +356,7 @@ async function downloadServerBlobResumable(input: {
     blobId: string, completedBytes: number, totalBytes: number,
   }) => void | Promise<void>
 }): Promise<{ path: string, size: number, streaming: boolean }> {
+  await migrateVersionedBlobDirectories()
   if (!/^[A-Za-z0-9_-]{43}$/.test(input.blobId)) throw new Error('Blob ID 格式无效')
   const metadata = await getServerBlobMetadata(input)
   await mkdir(BLOB_DOWNLOAD_TEMP_DIR, { baseDir: BaseDirectory.AppData, recursive: true })
@@ -596,19 +624,22 @@ function createAssetConflictPath(localPath: string): string {
   const suffix = new Date().toISOString().replace(/[:.]/g, '-')
   const parts = localPath.split('/')
   const filename = parts.pop() as string
-  return [...parts, `.${filename}.sync-conflict-${suffix}-${crypto.randomUUID()}`].join('/')
+  return [...parts, `${filename}.sync-conflict-${suffix}-${crypto.randomUUID()}`].join('/')
 }
 
 function createAssetStagingPath(localPath: string, blobId: string): string {
   const parts = localPath.split('/')
   const filename = parts.pop() as string
-  return [...parts, `.${filename}.sync-download-${blobId.slice(0, 12)}`].join('/')
+  // Tauri's iOS filesystem scope does not match dot-prefixed temporary files
+  // under an otherwise allowed workspace directory. Keep the staging file in
+  // the same directory for an atomic rename, but use a non-hidden name.
+  return [...parts, `${filename}.sync-download-${blobId.slice(0, 12)}`].join('/')
 }
 
 function createAssetReplacementBackupPath(localPath: string, blobId: string): string {
   const parts = localPath.split('/')
   const filename = parts.pop() as string
-  return [...parts, `.${filename}.sync-replaced-${blobId.slice(0, 12)}-${crypto.randomUUID()}`].join('/')
+  return [...parts, `${filename}.sync-replaced-${blobId.slice(0, 12)}-${crypto.randomUUID()}`].join('/')
 }
 
 async function hashBytesHex(value: Uint8Array): Promise<string> {
@@ -650,6 +681,7 @@ async function prepareStreamingEncryptedAsset(input: {
   plaintextSize: number
   workspaceKey: CryptoKey
 }): Promise<EncryptedServerBlob> {
+  await migrateVersionedBlobDirectories()
   await mkdir(BLOB_UPLOAD_TEMP_DIR, { baseDir: BaseDirectory.AppData, recursive: true })
   const basename = `${input.workspaceId}-v${input.keyVersion}-${input.resourceId}-${input.contentHash}`
   const ciphertextPath = `${BLOB_UPLOAD_TEMP_DIR}/${basename}.ngb2`

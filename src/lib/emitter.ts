@@ -91,6 +91,7 @@ interface Events {
   'refresh-marks': unknown;
   'open-new-record-tag': void;
   'record-assets-downloaded': { paths: string[] };
+  'workspace-assets-downloaded': { paths: string[] };
   'quick-prompt-insert': string;
   'quick-prompt-send': string;
   'conversation-compaction-status': {

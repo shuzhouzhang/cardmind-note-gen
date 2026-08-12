@@ -77,13 +77,13 @@ fn validate_statement(statement: &str) -> Result<(), String> {
         return Err("同步原子批处理包含不允许的 SQLite 操作".into());
     }
     const ALLOWED_TABLES: [&str; 24] = [
-        "sync_v2_state", "sync_v2_entities", "sync_v2_outbox", "sync_v2_inbox",
-        "sync_v2_apply_journal", "sync_v2_conflicts", "sync_v2_transfers",
-        "sync_v2_mutation_journal", "sync_v2_documents", "note_gen_server_sync_objects",
+        "sync_state", "sync_entities", "sync_outbox", "sync_inbox",
+        "sync_apply_journal", "sync_conflicts", "sync_transfers",
+        "sync_mutation_journal", "sync_documents", "note_gen_server_sync_objects",
         "note_gen_server_sync_outbox", "note_gen_server_sync_inbox", "tags", "tag_sync_aliases", "marks",
         "canvases", "conversations", "chats", "memories", "notes", "conversation_messages",
         "conversation_tombstones", "settings_sync_state",
-        "sync_v2_resource_refs",
+        "sync_resource_refs",
     ];
     let tokens = normalized.split_whitespace().collect::<Vec<_>>();
     let target = match tokens.as_slice() {

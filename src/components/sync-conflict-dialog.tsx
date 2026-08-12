@@ -12,12 +12,13 @@ import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 
 import {
-  enqueueSyncV2Command,
-  getLocalSyncV2Document,
-  getSyncV2Entity,
-  listSyncV2SubtreeEntities,
-  listSyncV2Conflicts,
-  type SyncV2Conflict,
+  dismissPendingSyncConflict,
+  enqueueSyncCommand,
+  getLocalSyncDocument,
+  getSyncEntity,
+  listSyncSubtreeEntities,
+  listSyncConflicts,
+  type SyncConflict,
 } from '@/db/note-gen-server-sync-index'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -26,16 +27,16 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import {
   getNoteGenServerBackgroundConnection,
-  getNoteGenServerBackgroundV2Context,
+  getNoteGenServerSyncContext,
   syncNoteGenServerNow,
 } from '@/lib/sync/note-gen-server-background'
 import {
-  decryptSyncV2Payload,
-  createSyncV2NameBlindIndex,
-  getSyncV2StableBlindIndexKey,
-  getSyncV2StableBlindIndexKeyVersion,
-  encryptSyncV2Payload,
-  pullSyncV2DocumentUpdates,
+  decryptSyncPayload,
+  createSyncNameBlindIndex,
+  getSyncStableBlindIndexKey,
+  getSyncStableBlindIndexKeyVersion,
+  encryptSyncPayload,
+  pullSyncDocumentUpdates,
 } from '@/lib/sync/note-gen-server-sync-protocol'
 import { materializeMerge, mergeMarkdownThreeWay, type MergePart } from '@/lib/sync/markdown-three-way-merge'
 import {
@@ -65,8 +66,8 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
 }) {
   const router = useRouter()
   const pathname = usePathname()
-  const context = getNoteGenServerBackgroundV2Context()
-  const [conflicts, setConflicts] = useState<SyncV2Conflict[]>([])
+  const context = getNoteGenServerSyncContext()
+  const [conflicts, setConflicts] = useState<SyncConflict[]>([])
   const [index, setIndex] = useState(0)
   const [resolutions, setResolutions] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
@@ -75,7 +76,7 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
   const openingMarkdownConflictRef = useRef<string | null>(null)
   useEffect(() => {
     if (!open || !context) return
-    void listSyncV2Conflicts(context.syncScopeId).then(setConflicts)
+    void listSyncConflicts(context.syncScopeId).then(setConflicts)
   }, [open, context?.syncScopeId])
   const conflict = conflicts[index]
   const payload = conflict ? parsePayload(conflict.payloadJson) : null
@@ -98,7 +99,7 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
       return
     }
     if (!context) return
-    void getSyncV2Entity(context.syncScopeId, conflict.objectId).then(entity => {
+    void getSyncEntity(context.syncScopeId, conflict.objectId).then(entity => {
       if (cancelled) return
       const entityPath = normalizeConflictPath(entity?.localKey ?? '')
       setMarkdownPath(entityPath.startsWith('__sync_') ? '' : entityPath)
@@ -118,34 +119,34 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
     if (normalizedPath === currentPath) return
     setSaving(true)
     try {
-      const entity = await getSyncV2Entity(context.syncScopeId, conflict.objectId)
+      const entity = await getSyncEntity(context.syncScopeId, conflict.objectId)
       if (!entity) throw new Error('冲突对象不存在')
       const basePayload = parseRawPayload(entity.basePayloadJson ?? '') ?? {}
       const objectPayload = {
         ...basePayload,
         ...('relativePath' in basePayload ? { relativePath: normalizedPath } : { localKey: normalizedPath }),
       }
-      const encrypted = await encryptSyncV2Payload(context.workspaceKey, objectPayload, {
+      const encrypted = await encryptSyncPayload(context.workspaceKey, objectPayload, {
         workspaceId: context.workspaceId, objectId: entity.objectId, kind: entity.kind,
         keyVersion: context.keyVersion, purpose: 'object', identity: entity.objectId,
       })
-      await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+      await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
         type: 'resolve-conflict', commandId: crypto.randomUUID(), conflictId: conflict.conflictId,
         expectedCreatedSequence: conflict.createdSequence,
         objectResolution: {
           objectId: entity.objectId, kind: entity.kind, parentObjectId: entity.parentObjectId,
           nameCiphertext: encrypted.ciphertext,
-          nameBlindIndex: await createSyncV2NameBlindIndex({
-            key: getSyncV2StableBlindIndexKey(context.workspaceKeys, context.workspaceKey),
+          nameBlindIndex: await createSyncNameBlindIndex({
+            key: getSyncStableBlindIndexKey(context.workspaceKeys, context.workspaceKey),
             workspaceId: context.workspaceId,
             parentObjectId: entity.parentObjectId, name,
           }),
-          nameBlindIndexKeyVersion: getSyncV2StableBlindIndexKeyVersion(context.workspaceKeys),
+          nameBlindIndexKeyVersion: getSyncStableBlindIndexKeyVersion(context.workspaceKeys),
           keyVersion: context.keyVersion, ...encrypted,
         },
       } })
       await syncNoteGenServerNow()
-      const next = await listSyncV2Conflicts(context.syncScopeId)
+      const next = await listSyncConflicts(context.syncScopeId)
       setConflicts(next)
       setIndex(Math.min(index, Math.max(0, next.length - 1)))
       setResolutions({})
@@ -161,26 +162,44 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
     forceDelete = false,
     keepExisting = false,
   ) => {
-    if (!context || !conflict || !payload || conflict.createdSequence === '0') return
+    if (!context || !conflict || !payload) return
+    if (conflict.createdSequence === '0') {
+      if (conflict.type !== 'structured-concurrent') return
+      setSaving(true)
+      setResolutionError('')
+      try {
+        await dismissPendingSyncConflict(context.syncScopeId, conflict.conflictId)
+        const next = await listSyncConflicts(context.syncScopeId)
+        setConflicts(next)
+        setIndex(Math.min(index, Math.max(0, next.length - 1)))
+        setResolutions({})
+        if (next.length === 0) onOpenChange(false)
+      } catch (cause) {
+        setResolutionError(cause instanceof Error ? cause.message : String(cause))
+      } finally {
+        setSaving(false)
+      }
+      return
+    }
     setSaving(true)
     setResolutionError('')
     try {
       if (conflict.kind === 'note' && content !== null) {
         await resolveMarkdownSyncConflict({ conflict, content })
-        const next = await listSyncV2Conflicts(context.syncScopeId)
+        const next = await listSyncConflicts(context.syncScopeId)
         setConflicts(next)
         setIndex(Math.min(index, Math.max(0, next.length - 1)))
         setResolutions({})
         if (next.length === 0) onOpenChange(false)
         return
       }
-      const entity = await getSyncV2Entity(context.syncScopeId, conflict.objectId)
+      const entity = await getSyncEntity(context.syncScopeId, conflict.objectId)
       if (!entity) throw new Error('冲突对象不存在，无法应用所选版本')
       if (conflict.type === 'delete-subtree-vs-edit' && content === null) {
-        const subtree = await listSyncV2SubtreeEntities(context.syncScopeId, conflict.objectId)
+        const subtree = await listSyncSubtreeEntities(context.syncScopeId, conflict.objectId)
         const retryCommandId = crypto.randomUUID()
         const retryConflictId = crypto.randomUUID()
-        const retryConflictEnvelope = await encryptSyncV2Payload(context.workspaceKey, {
+        const retryConflictEnvelope = await encryptSyncPayload(context.workspaceKey, {
           ...(rawPayload ?? {}), retryOfConflictId: conflict.conflictId,
           objectIds: subtree.map(item => item.objectId),
         }, {
@@ -192,7 +211,7 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
           const objectPayload = parseRawPayload(item.basePayloadJson ?? '') ?? {
             schemaVersion: 2, type: 'deleted-object', localKey: item.localKey,
           }
-          const envelope = await encryptSyncV2Payload(context.workspaceKey, objectPayload, {
+          const envelope = await encryptSyncPayload(context.workspaceKey, objectPayload, {
             workspaceId: context.workspaceId, objectId: item.objectId, kind: item.kind,
             keyVersion: context.keyVersion, purpose: 'object', identity: item.objectId,
           })
@@ -202,18 +221,18 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
             keyVersion: context.keyVersion, ...envelope,
           })
         }
-        await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+        await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
           type: 'delete-subtree', commandId: retryCommandId, rootObjectId: conflict.objectId,
           conflictId: retryConflictId, conflictKeyVersion: context.keyVersion,
           conflictCiphertext: retryConflictEnvelope.ciphertext,
           conflictCiphertextHash: retryConflictEnvelope.ciphertextHash, objects,
         } })
-        await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+        await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
           type: 'resolve-conflict', commandId: crypto.randomUUID(), conflictId: conflict.conflictId,
           expectedCreatedSequence: conflict.createdSequence, requiresCommandId: retryCommandId,
         } })
         await syncNoteGenServerNow()
-        const remaining = await listSyncV2Conflicts(context.syncScopeId)
+        const remaining = await listSyncConflicts(context.syncScopeId)
         setConflicts(remaining)
         setIndex(Math.min(index, Math.max(0, remaining.length - 1)))
         if (remaining.length === 0) onOpenChange(false)
@@ -221,7 +240,7 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
       }
       let resolution: Record<string, unknown> | undefined
       const durableDocument = entity.documentId
-        ? await getLocalSyncV2Document(context.syncScopeId, entity.documentId) : null
+        ? await getLocalSyncDocument(context.syncScopeId, entity.documentId) : null
       if (content !== null && durableDocument) {
         const loadedDocument = conflict.kind === 'note' ? null : await loadDurableYDoc({
           context, entity, document: durableDocument,
@@ -272,7 +291,7 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
           document.destroy()
         }
         const checkpointId = crypto.randomUUID()
-        const encrypted = await encryptSyncV2Payload(context.workspaceKey, update, {
+        const encrypted = await encryptSyncPayload(context.workspaceKey, update, {
           workspaceId: context.workspaceId, objectId: entity.objectId, kind: entity.kind,
           keyVersion: context.keyVersion, purpose: 'checkpoint', identity: checkpointId,
         })
@@ -288,7 +307,7 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
           schemaVersion: 1, type: 'markdown-note', relativePath: payload.path,
           content, modifiedAt: new Date().toISOString(),
         }
-        const encryptedObject = await encryptSyncV2Payload(context.workspaceKey, objectPayload, {
+        const encryptedObject = await encryptSyncPayload(context.workspaceKey, objectPayload, {
           workspaceId: context.workspaceId, objectId: entity.objectId, kind: entity.kind,
           keyVersion: context.keyVersion, purpose: 'object', identity: entity.objectId,
         })
@@ -301,7 +320,7 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
         }
       }
       const commandId = crypto.randomUUID()
-      await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+      await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
         type: 'resolve-conflict', commandId, conflictId: conflict.conflictId,
         expectedCreatedSequence: conflict.createdSequence,
         ...(content === null
@@ -312,13 +331,13 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
       for (const related of conflicts) {
         if (related.conflictId === conflict.conflictId || related.objectId !== conflict.objectId
           || related.createdSequence === '0') continue
-        await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+        await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
           type: 'resolve-conflict', commandId: crypto.randomUUID(), conflictId: related.conflictId,
           expectedCreatedSequence: related.createdSequence, requiresCommandId: commandId,
         } })
       }
       await syncNoteGenServerNow()
-      const next = await listSyncV2Conflicts(context.syncScopeId)
+      const next = await listSyncConflicts(context.syncScopeId)
       setConflicts(next)
       setIndex(Math.min(index, Math.max(0, next.length - 1)))
       setResolutions({})
@@ -335,16 +354,16 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
 
   const resolveKeepObject = async () => {
     if (!context || !conflict || conflict.createdSequence === '0') return
-    const entity = await getSyncV2Entity(context.syncScopeId, conflict.objectId)
+    const entity = await getSyncEntity(context.syncScopeId, conflict.objectId)
     const objectPayload = entity ? parseRawPayload(entity.basePayloadJson ?? '') : null
     if (!entity || !objectPayload) throw new Error('缺少可恢复的对象快照')
     setSaving(true)
     try {
-      const encrypted = await encryptSyncV2Payload(context.workspaceKey, objectPayload, {
+      const encrypted = await encryptSyncPayload(context.workspaceKey, objectPayload, {
         workspaceId: context.workspaceId, objectId: entity.objectId, kind: entity.kind,
         keyVersion: context.keyVersion, purpose: 'object', identity: entity.objectId,
       })
-      await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+      await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
         type: 'resolve-conflict', commandId: crypto.randomUUID(), conflictId: conflict.conflictId,
         expectedCreatedSequence: conflict.createdSequence,
         objectResolution: {
@@ -353,7 +372,7 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
         },
       } })
       await syncNoteGenServerNow()
-      const next = await listSyncV2Conflicts(context.syncScopeId)
+      const next = await listSyncConflicts(context.syncScopeId)
       setConflicts(next)
       setIndex(Math.min(index, Math.max(0, next.length - 1)))
       if (next.length === 0) onOpenChange(false)
@@ -395,7 +414,7 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
     if (!context || !conflict || conflict.type !== 'asset-content'
       || conflict.createdSequence === '0' || !rawPayload) return
     const connection = getNoteGenServerBackgroundConnection()
-    const entity = await getSyncV2Entity(context.syncScopeId, conflict.objectId)
+    const entity = await getSyncEntity(context.syncScopeId, conflict.objectId)
     const remote = rawPayload.remote && typeof rawPayload.remote === 'object'
       ? rawPayload.remote as Record<string, unknown> : null
     const path = typeof rawPayload.path === 'string' ? rawPayload.path : null
@@ -442,11 +461,11 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
         objectPayload = { ...(prepared.payload as Record<string, unknown>), blobId }
         blobRefs = [blobId]
       }
-      const encrypted = await encryptSyncV2Payload(context.workspaceKey, objectPayload, {
+      const encrypted = await encryptSyncPayload(context.workspaceKey, objectPayload, {
         workspaceId: context.workspaceId, objectId: entity.objectId, kind: 'asset',
         keyVersion: context.keyVersion, purpose: 'object', identity: entity.objectId,
       })
-      await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+      await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
         type: 'resolve-conflict', commandId: crypto.randomUUID(), conflictId: conflict.conflictId,
         expectedCreatedSequence: conflict.createdSequence,
         objectResolution: {
@@ -456,7 +475,7 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
         },
       } })
       await syncNoteGenServerNow()
-      const next = await listSyncV2Conflicts(context.syncScopeId)
+      const next = await listSyncConflicts(context.syncScopeId)
       setConflicts(next)
       setIndex(Math.min(index, Math.max(0, next.length - 1)))
       if (next.length === 0) onOpenChange(false)
@@ -528,7 +547,7 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
           ? '重新核对并确认删除整棵子树' : '确认删除文件夹'}</Button>
     </>
   ) : conflict?.type === 'structured-concurrent' ? (
-    <Button disabled={saving || conflict.createdSequence === '0'} onClick={() => void resolve(null)}>
+    <Button disabled={saving} onClick={() => void resolve(null)}>
       <Check data-icon="inline-start" />使用当前同步结果
     </Button>
   ) : conflict?.type === 'delete-vs-edit' && conflict.kind !== 'note' ? (
@@ -730,22 +749,22 @@ function ConflictResolverContent({ presentation, children }: {
 }
 
 export async function resolveMarkdownSyncConflict({ conflict, content, relatedConflicts = [] }: {
-  conflict: SyncV2Conflict
+  conflict: SyncConflict
   content: string
-  relatedConflicts?: SyncV2Conflict[]
+  relatedConflicts?: SyncConflict[]
 }): Promise<void> {
-  const context = getNoteGenServerBackgroundV2Context()
+  const context = getNoteGenServerSyncContext()
   if (!context || conflict.kind !== 'note' || conflict.createdSequence === '0') {
     throw new Error('Markdown 冲突尚未准备好，请等待同步完成后重试')
   }
   const payload = parsePayload(conflict.payloadJson)
-  const entity = await getSyncV2Entity(context.syncScopeId, conflict.objectId)
+  const entity = await getSyncEntity(context.syncScopeId, conflict.objectId)
   if (!payload || !entity?.documentId) throw new Error('冲突对象缺少 CRDT 文档身份')
-  const durableDocument = await getLocalSyncV2Document(context.syncScopeId, entity.documentId)
+  const durableDocument = await getLocalSyncDocument(context.syncScopeId, entity.documentId)
   if (!durableDocument) throw new Error('冲突文档尚未下载完成')
   const encoded = await encodeMarkdownCheckpoint({ content, context, entity, document: durableDocument })
   const checkpointId = crypto.randomUUID()
-  const encrypted = await encryptSyncV2Payload(context.workspaceKey, encoded.update, {
+  const encrypted = await encryptSyncPayload(context.workspaceKey, encoded.update, {
     workspaceId: context.workspaceId, objectId: entity.objectId, kind: entity.kind,
     keyVersion: context.keyVersion, purpose: 'checkpoint', identity: checkpointId,
   })
@@ -756,12 +775,12 @@ export async function resolveMarkdownSyncConflict({ conflict, content, relatedCo
         schemaVersion: 2, type: 'crdt-object', localKey: payload.path,
         documentId: entity.documentId,
       }
-  const encryptedObject = await encryptSyncV2Payload(context.workspaceKey, objectPayload, {
+  const encryptedObject = await encryptSyncPayload(context.workspaceKey, objectPayload, {
     workspaceId: context.workspaceId, objectId: entity.objectId, kind: entity.kind,
     keyVersion: context.keyVersion, purpose: 'object', identity: entity.objectId,
   })
   const commandId = crypto.randomUUID()
-  await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+  await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
     type: 'resolve-conflict', commandId, conflictId: conflict.conflictId,
     expectedCreatedSequence: conflict.createdSequence,
     resolution: {
@@ -779,7 +798,7 @@ export async function resolveMarkdownSyncConflict({ conflict, content, relatedCo
   } })
   for (const related of relatedConflicts) {
     if (related.kind !== 'note' || related.objectId !== conflict.objectId || related.createdSequence === '0') continue
-    await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+    await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
       type: 'resolve-conflict', commandId: crypto.randomUUID(), conflictId: related.conflictId,
       expectedCreatedSequence: related.createdSequence, requiresCommandId: commandId,
     } })
@@ -787,12 +806,12 @@ export async function resolveMarkdownSyncConflict({ conflict, content, relatedCo
   await syncNoteGenServerNow()
 }
 
-export async function dismissMarkdownSyncConflicts(conflicts: SyncV2Conflict[]): Promise<void> {
-  const context = getNoteGenServerBackgroundV2Context()
+export async function dismissMarkdownSyncConflicts(conflicts: SyncConflict[]): Promise<void> {
+  const context = getNoteGenServerSyncContext()
   if (!context) throw new Error('同步服务连接不可用')
   for (const conflict of conflicts) {
     if (conflict.kind !== 'note' || conflict.createdSequence === '0') continue
-    await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+    await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
       type: 'resolve-conflict', commandId: crypto.randomUUID(), conflictId: conflict.conflictId,
       expectedCreatedSequence: conflict.createdSequence,
     } })
@@ -801,23 +820,23 @@ export async function dismissMarkdownSyncConflicts(conflicts: SyncV2Conflict[]):
 }
 
 export async function confirmMarkdownSyncDeletion({ conflict, relatedConflicts = [] }: {
-  conflict: SyncV2Conflict
-  relatedConflicts?: SyncV2Conflict[]
+  conflict: SyncConflict
+  relatedConflicts?: SyncConflict[]
 }): Promise<void> {
-  const context = getNoteGenServerBackgroundV2Context()
+  const context = getNoteGenServerSyncContext()
   const payload = parsePayload(conflict.payloadJson)
   if (!context || conflict.kind !== 'note' || !payload || conflict.createdSequence === '0') {
     throw new Error('Markdown 冲突尚未准备好，请等待同步完成后重试')
   }
   const commandId = crypto.randomUUID()
-  await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+  await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
     type: 'resolve-conflict', commandId, conflictId: conflict.conflictId,
     expectedCreatedSequence: conflict.createdSequence,
     ...(payload.deletionRequestedLocally === true ? { deleteObject: true } : {}),
   } })
   for (const related of relatedConflicts) {
     if (related.kind !== 'note' || related.objectId !== conflict.objectId || related.createdSequence === '0') continue
-    await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+    await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
       type: 'resolve-conflict', commandId: crypto.randomUUID(), conflictId: related.conflictId,
       expectedCreatedSequence: related.createdSequence, requiresCommandId: commandId,
     } })
@@ -827,9 +846,9 @@ export async function confirmMarkdownSyncDeletion({ conflict, relatedConflicts =
 
 async function encodeMarkdownCheckpoint(input: {
   content: string
-  context: NonNullable<ReturnType<typeof getNoteGenServerBackgroundV2Context>>
-  entity: NonNullable<Awaited<ReturnType<typeof getSyncV2Entity>>>
-  document: NonNullable<Awaited<ReturnType<typeof getLocalSyncV2Document>>>
+  context: NonNullable<ReturnType<typeof getNoteGenServerSyncContext>>
+  entity: NonNullable<Awaited<ReturnType<typeof getSyncEntity>>>
+  document: NonNullable<Awaited<ReturnType<typeof getLocalSyncDocument>>>
 }): Promise<{ update: Uint8Array, documentSequence: string }> {
   const loaded = await loadDurableYDoc(input)
   const document = loaded.document
@@ -850,9 +869,9 @@ async function encodeMarkdownCheckpoint(input: {
 }
 
 async function loadDurableYDoc(input: {
-  context: NonNullable<ReturnType<typeof getNoteGenServerBackgroundV2Context>>
-  entity: NonNullable<Awaited<ReturnType<typeof getSyncV2Entity>>>
-  document: NonNullable<Awaited<ReturnType<typeof getLocalSyncV2Document>>>
+  context: NonNullable<ReturnType<typeof getNoteGenServerSyncContext>>
+  entity: NonNullable<Awaited<ReturnType<typeof getSyncEntity>>>
+  document: NonNullable<Awaited<ReturnType<typeof getLocalSyncDocument>>>
 }): Promise<{ document: Y.Doc, documentSequence: string }> {
   const document = new Y.Doc()
   const connection = getNoteGenServerBackgroundConnection()
@@ -862,7 +881,7 @@ async function loadDurableYDoc(input: {
     && input.document.checkpointKeyVersion) {
     const key = input.context.workspaceKeys.get(input.document.checkpointKeyVersion)
     if (!key) throw new Error(`缺少 Workspace Key v${input.document.checkpointKeyVersion}`)
-    const checkpoint = await decryptSyncV2Payload<Uint8Array>(key, input.document.checkpointCiphertext, {
+    const checkpoint = await decryptSyncPayload<Uint8Array>(key, input.document.checkpointCiphertext, {
       workspaceId: input.context.workspaceId, objectId: input.entity.objectId, kind: input.entity.kind,
       keyVersion: input.document.checkpointKeyVersion, purpose: 'checkpoint',
       identity: input.document.checkpointId,
@@ -870,14 +889,14 @@ async function loadDurableYDoc(input: {
     Y.applyUpdate(document, checkpoint)
   }
   while (true) {
-    const page = await pullSyncV2DocumentUpdates({
+    const page = await pullSyncDocumentUpdates({
       baseUrl: connection.profile.baseUrl, accessToken: connection.session.accessToken,
       workspaceId: input.context.workspaceId, documentId: input.document.documentId, after,
     })
     for (const item of page.updates) {
       const key = input.context.workspaceKeys.get(item.keyVersion)
       if (!key) throw new Error(`缺少 Workspace Key v${item.keyVersion}`)
-      const update = await decryptSyncV2Payload<Uint8Array>(key, item.ciphertext, {
+      const update = await decryptSyncPayload<Uint8Array>(key, item.ciphertext, {
         workspaceId: input.context.workspaceId, objectId: input.entity.objectId, kind: input.entity.kind,
         keyVersion: item.keyVersion, purpose: 'update', identity: item.updateId,
       }, true)
@@ -941,7 +960,7 @@ function entityPathFromRawPayload(payload: Record<string, unknown> | null): stri
   return String(payload?.path ?? payload?.localKey ?? payload?.relativePath ?? '')
 }
 
-function conflictDisplayName(conflict: SyncV2Conflict, path?: string): string {
+function conflictDisplayName(conflict: SyncConflict, path?: string): string {
   const normalized = String(path ?? '').trim()
   if (normalized === 'workspace-preferences' || conflict.kind === 'setting') return '应用设置'
   if (conflict.kind === 'mark') return '记录'

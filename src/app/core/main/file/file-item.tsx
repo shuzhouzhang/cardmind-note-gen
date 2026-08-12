@@ -49,7 +49,7 @@ import {
   prepareActiveEditorDeactivationDurably,
   prepareActiveEditorPathMutationDurably,
 } from '@/lib/editor-deactivation'
-import { recordNoteGenServerV2PathMove } from '@/lib/sync/note-gen-server-outbox'
+import { recordNoteGenServerPathMove } from '@/lib/sync/note-gen-server-outbox'
 
 type Platform = 'macos' | 'windows' | 'linux' | 'unknown'
 
@@ -561,7 +561,7 @@ export function FileItem({
         }
         const { renameVectorDocumentsByFilename } = await import('@/db/vector')
         await renameVectorDocumentsByFilename(path, targetRelativePath)
-        await recordNoteGenServerV2PathMove(path, targetRelativePath)
+        await recordNoteGenServerPathMove(path, targetRelativePath)
       } else {
         // 创建新文件
         const pathOptions = await getFilePathOptions(targetRelativePath)

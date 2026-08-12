@@ -4681,6 +4681,38 @@ export function TipTapEditor({
     viewMode,
   ])
 
+  // Markdown may arrive before its independently synchronized image asset.
+  // Retry only the affected deferred node views when those assets land.
+  useEffect(() => {
+    if (!editor) return
+    const mountedView = getMountedEditorView(editor)
+    if (!mountedView) return
+
+    const handleWorkspaceAssetsDownloaded = (event: { paths: string[] }) => {
+      const currentFilePath = activeFilePath || useArticleStore.getState().activeFilePath
+      if (!currentFilePath || event.paths.length === 0) return
+      const downloadedPaths = new Set(event.paths)
+      const images = mountedView.dom.querySelectorAll<HTMLImageElement>('img[data-relative-src]')
+      for (const img of images) {
+        const relativeSrc = img.getAttribute('data-relative-src')
+        if (!relativeSrc || !shouldTransformImageSrcToWorkspaceAsset(relativeSrc)) continue
+        const resolvedPath = resolveImagePathFromMarkdown(currentFilePath, relativeSrc)
+        if (!downloadedPaths.has(resolvedPath)) continue
+        void convertImageByWorkspace(resolvedPath).then(assetUrl => {
+          // The Markdown can arrive before its independent Asset event. Clear
+          // the failed request first so WebKit reloads the now-present file.
+          img.removeAttribute('src')
+          requestAnimationFrame(() => img.setAttribute('src', assetUrl))
+        })
+      }
+    }
+
+    emitter.on('workspace-assets-downloaded', handleWorkspaceAssetsDownloaded)
+    return () => {
+      emitter.off('workspace-assets-downloaded', handleWorkspaceAssetsDownloaded)
+    }
+  }, [editor, activeFilePath, editorMountVersion])
+
   // Listen to editor transactions and notify header/tab bar about undo/redo state
   useEffect(() => {
     if (!editor || !isActive || isSectionVirtualView) return

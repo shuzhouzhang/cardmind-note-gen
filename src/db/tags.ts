@@ -151,7 +151,7 @@ export async function repairOrphanedMarkTags(syncScopeId: string): Promise<boole
 
   const currentTags = await db.select<Tag[]>('select * from tags order by sortOrder asc, id asc')
   const history = await db.select<Array<{ basePayloadJson: string | null }>>(
-    `select basePayloadJson from sync_v2_entities
+    `select basePayloadJson from sync_entities
      where scopeId = $1 and kind = 'tag' and basePayloadJson is not null`,
     [syncScopeId],
   )

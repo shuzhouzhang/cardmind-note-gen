@@ -107,8 +107,8 @@ async function initializeAllDatabases() {
   const { initConversationSyncStateDb } = await import('./conversation-sync-state');
   const { initImageAnalysisCacheDb } = await import('./image-analysis-cache');
   const { initKnowledgeDb } = await import('./knowledge');
-  const { initNoteGenServerSyncDb } = await import('./note-gen-server-sync');
-  const { initNoteGenServerSyncV2Db } = await import('./note-gen-server-sync-index');
+  const { initNoteGenServerQueueDb } = await import('./note-gen-server-sync');
+  const { initNoteGenServerSyncDb } = await import('./note-gen-server-sync-index');
 
   // 执行初始化：先确保基础表存在，再做 conversations 对 chats 的迁移/补列。
   await initChatsDb();
@@ -124,8 +124,8 @@ async function initializeAllDatabases() {
   await initActivityDb();
   await initCanvasesDb();
   await initKnowledgeDb();
+  await initNoteGenServerQueueDb();
   await initNoteGenServerSyncDb();
-  await initNoteGenServerSyncV2Db();
   const { bootstrapStructuredKnowledgeRegistry } = await import('@/lib/knowledge-index');
   await bootstrapStructuredKnowledgeRegistry();
 

@@ -12,13 +12,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SyncConflictDialog } from "@/components/sync-conflict-dialog";
-import { listSyncV2Conflicts } from "@/db/note-gen-server-sync-index";
+import { listSyncConflicts } from "@/db/note-gen-server-sync-index";
 import emitter from "@/lib/emitter";
 import { isMobileDevice } from "@/lib/check";
 import useArticleStore from "@/stores/article";
 import { useRouter } from "next/navigation";
 import {
-  getNoteGenServerBackgroundV2Context,
+  getNoteGenServerSyncContext,
   subscribeNoteGenServerBackgroundStatus,
   retryNoteGenServerBackgroundSync,
   triggerNoteGenServerBackgroundSync,
@@ -326,12 +326,12 @@ function NoteGenServerStatus({ compact }: { compact: boolean }) {
       setConflictsOpen(true)
       return
     }
-    const context = getNoteGenServerBackgroundV2Context()
+    const context = getNoteGenServerSyncContext()
     if (!context) {
       setMobileConflictMessage('同步工作区尚未解锁')
       return
     }
-    const conflicts = await listSyncV2Conflicts(context.syncScopeId)
+    const conflicts = await listSyncConflicts(context.syncScopeId)
     const markdownConflict = conflicts
       .filter(conflict => conflict.kind === 'note')
       .sort((left, right) => BigInt(left.createdSequence) < BigInt(right.createdSequence) ? 1 : -1)

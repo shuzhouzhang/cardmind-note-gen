@@ -4130,6 +4130,8 @@ dependencies = [
  "regex",
  "reqwest",
  "reqwest_dav",
+ "security-framework",
+ "security-framework-sys",
  "serde",
  "serde_json",
  "serde_yaml",

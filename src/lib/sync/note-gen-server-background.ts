@@ -3,16 +3,16 @@ import { watch } from '@tauri-apps/plugin-fs'
 import { Store } from '@tauri-apps/plugin-store'
 
 import {
-  initNoteGenServerSyncDb,
+  initNoteGenServerQueueDb,
   retryBlockedNoteGenServerOutbox,
 } from '@/db/note-gen-server-sync'
 import {
-  initNoteGenServerSyncV2Db,
-  getSyncV2HealthSnapshot,
-  listSyncV2ProblemDetails,
-  resetSyncV2ForServerEpoch,
-  retrySyncV2Problems,
-  type SyncV2ProblemDetail,
+  initNoteGenServerSyncDb,
+  getSyncHealthSnapshot,
+  listSyncProblemDetails,
+  resetSyncForServerEpoch,
+  retrySyncProblems,
+  type SyncProblemDetail,
 } from '@/db/note-gen-server-sync-index'
 import emitter from '@/lib/emitter'
 import { getWorkspacePath } from '@/lib/workspace'
@@ -36,10 +36,10 @@ import {
   type ServerSession,
 } from './note-gen-server'
 import {
-  runNoteGenServerSyncV2Cycle,
-  resetNoteGenServerSyncV2Reconciliation,
-  SyncV2KeyMissingError,
-  type NoteGenServerSyncV2CycleResult,
+  runNoteGenServerSyncCycle,
+  resetNoteGenServerSyncReconciliation,
+  SyncKeyMissingError,
+  type NoteGenServerSyncCycleResult,
 } from './note-gen-server-sync-runtime'
 import {
   queueCurrentNoteGenServerMarkdownWorkspace,
@@ -59,8 +59,8 @@ interface RuntimeState {
 export interface NoteGenServerBackgroundStatus {
   phase: 'idle' | 'saving' | 'pending' | 'syncing' | 'synced' | 'offline'
     | 'needs-attention' | 'paused' | 'workspace-mismatch' | 'error'
-  result?: NoteGenServerSyncV2CycleResult
-  problems?: SyncV2ProblemDetail[]
+  result?: NoteGenServerSyncCycleResult
+  problems?: SyncProblemDetail[]
   error?: string
   reason?: string
   updatedAt: number
@@ -167,8 +167,8 @@ export async function initNoteGenServerBackgroundRuntime(): Promise<void> {
 }
 
 async function initializeRuntime(): Promise<void> {
+  await initNoteGenServerQueueDb()
   await initNoteGenServerSyncDb()
-  await initNoteGenServerSyncV2Db()
   const settings = await Store.load('store.json')
   primaryEnabled = await settings.get<string>('primaryBackupMethod') === 'noteGenServer'
   const storedProfile = await loadServerProfile()
@@ -266,8 +266,8 @@ export async function configureNoteGenServerBackgroundSession(
   session: ServerSession,
 ): Promise<void> {
   ensureArticleSavedListener()
+  await initNoteGenServerQueueDb()
   await initNoteGenServerSyncDb()
-  await initNoteGenServerSyncV2Db()
   const localWorkspaceKey = await getNoteGenServerLocalWorkspaceKey()
   const profileMatchesLocalWorkspace = !profile.localWorkspaceKey
     || profile.localWorkspaceKey === localWorkspaceKey
@@ -393,7 +393,7 @@ export function getNoteGenServerBackgroundWorkspaceKey(): CryptoKey | null {
   return state?.workspaceKey ?? null
 }
 
-export function getNoteGenServerBackgroundV2Context(): {
+export function getNoteGenServerSyncContext(): {
   workspaceId: string
   syncScopeId: string
   syncEpoch?: string
@@ -431,7 +431,7 @@ export function getNoteGenServerBackgroundReadiness(): {
  * obtain user consent before any future upload endpoint is introduced. */
 export async function getNoteGenServerDiagnosticSummary(): Promise<NoteGenServerDiagnosticSummary> {
   const profile = state?.profile ?? await loadServerProfile()
-  const health = state?.syncScopeId ? await getSyncV2HealthSnapshot(state.syncScopeId) : null
+  const health = state?.syncScopeId ? await getSyncHealthSnapshot(state.syncScopeId) : null
   return {
     formatVersion: 1,
     phase: currentStatus.phase,
@@ -513,7 +513,7 @@ export function lockNoteGenServerBackgroundWorkspace(): void {
 
 export async function triggerNoteGenServerBackgroundSync(options: {
   showProgress?: boolean
-} = {}): Promise<NoteGenServerSyncV2CycleResult | null> {
+} = {}): Promise<NoteGenServerSyncCycleResult | null> {
   if (syncPausedReason !== null) return null
   const showProgress = options.showProgress !== false
   if (!primaryEnabled) return null
@@ -535,7 +535,7 @@ export async function triggerNoteGenServerBackgroundSync(options: {
   if (showProgress) notifyStatus({ phase: 'syncing', updatedAt: Date.now() })
   try {
     if (Date.now() >= state.accessTokenExpiresAt - 60_000) await refreshSession()
-    let result: NoteGenServerSyncV2CycleResult
+    let result: NoteGenServerSyncCycleResult
     try {
       result = await runCurrentSyncCycle()
     } catch (error) {
@@ -548,7 +548,7 @@ export async function triggerNoteGenServerBackgroundSync(options: {
       const hasProblems = result.blockedOutbox > 0 || result.failedInbox > 0 || result.failedTransfers > 0
       const problemScopeId = state?.syncScopeId
       const problems = hasProblems && problemScopeId
-        ? await listSyncV2ProblemDetails(problemScopeId).catch(error => {
+        ? await listSyncProblemDetails(problemScopeId).catch(error => {
             console.error('Failed to load sync problem details:', error)
             return []
           })
@@ -576,7 +576,7 @@ export async function triggerNoteGenServerBackgroundSync(options: {
       notifyStatus({ phase: 'paused', error: errorMessage(error), updatedAt: Date.now() })
       return null
     }
-    if (error instanceof SyncV2KeyMissingError) {
+    if (error instanceof SyncKeyMissingError) {
       notifyStatus({ phase: 'paused', error: error.message, updatedAt: Date.now() })
       return null
     }
@@ -624,7 +624,7 @@ export async function triggerNoteGenServerBackgroundSync(options: {
   }
 }
 
-export async function retryNoteGenServerBackgroundSync(): Promise<NoteGenServerSyncV2CycleResult | null> {
+export async function retryNoteGenServerBackgroundSync(): Promise<NoteGenServerSyncCycleResult | null> {
   const syncScopeId = state?.syncScopeId
   if (!syncScopeId) return null
   syncPausedReason = null
@@ -632,8 +632,13 @@ export async function retryNoteGenServerBackgroundSync(): Promise<NoteGenServerS
   if (state?.syncScopeId !== syncScopeId) return null
   await Promise.all([
     retryBlockedNoteGenServerOutbox(syncScopeId),
-    retrySyncV2Problems(syncScopeId),
+    retrySyncProblems(syncScopeId),
   ])
+  // A permanently failed asset binding has already been materialized as a
+  // durable `failed` lifecycle payload, so resetting transfer rows alone does
+  // not recreate its staging outbox entry. Reconcile Markdown references on an
+  // explicit retry to enqueue a fresh binding operation with the same assets.
+  await queueCurrentNoteGenServerMarkdownWorkspace()
   notifyStatus({ phase: 'pending', updatedAt: Date.now() })
   return await triggerNoteGenServerBackgroundSync()
 }
@@ -698,7 +703,7 @@ export async function acceptNoteGenServerRestoreEpoch(): Promise<boolean> {
   }
   // Credential fencing precedes remote cursor replacement. If reauthorization
   // is unavailable, leave the existing sync evidence untouched for the user.
-  if (syncScopeId) await resetSyncV2ForServerEpoch(syncScopeId)
+  if (syncScopeId) await resetSyncForServerEpoch(syncScopeId)
   let acceptedProfile = { ...profile, syncEpoch: capabilities.syncEpoch }
   let managedWorkspace: Awaited<ReturnType<typeof getOrCreateManagedServerWorkspace>> | undefined
   if (acceptedProfile.encryptionMode !== 'e2ee' && capabilities.features?.managedDefaultWorkspace === true) {
@@ -730,7 +735,7 @@ export async function acceptNoteGenServerRestoreEpoch(): Promise<boolean> {
 }
 
 export function stopNoteGenServerBackgroundRuntime(): void {
-  resetNoteGenServerSyncV2Reconciliation(state?.syncScopeId)
+  resetNoteGenServerSyncReconciliation(state?.syncScopeId)
   state = null
   syncPausedReason = null
   if (refreshTimer) clearTimeout(refreshTimer)
@@ -760,7 +765,7 @@ export async function setNoteGenServerPrimaryEnabled(enabled: boolean): Promise<
 
   if (!enabled) {
     await waitForCurrentSyncCycle()
-    resetNoteGenServerSyncV2Reconciliation(state?.syncScopeId)
+    resetNoteGenServerSyncReconciliation(state?.syncScopeId)
     notifyStatus({ phase: 'idle', updatedAt: Date.now() })
     return
   }
@@ -920,11 +925,11 @@ function scheduleNextSync(delay: number): void {
   }, delay)
 }
 
-async function runCurrentSyncCycle(): Promise<NoteGenServerSyncV2CycleResult> {
+async function runCurrentSyncCycle(): Promise<NoteGenServerSyncCycleResult> {
   if (!state?.profile.workspaceId || !state.syncScopeId || !state.workspaceKey || !state.workspaceKeys || !state.keyVersion) {
     throw new Error('NoteGen Server 同步工作区尚未解锁')
   }
-  return await runNoteGenServerSyncV2Cycle({
+  return await runNoteGenServerSyncCycle({
     baseUrl: state.profile.baseUrl,
     session: state.session,
     workspaceId: state.profile.workspaceId,
@@ -1070,7 +1075,7 @@ async function handleWorkspaceChangedNotice(latestSequence?: string): Promise<vo
   const scopeId = state?.syncScopeId
   if (scopeId && latestSequence && /^\d+$/.test(latestSequence)) {
     try {
-      const health = await getSyncV2HealthSnapshot(scopeId)
+      const health = await getSyncHealthSnapshot(scopeId)
       if (BigInt(latestSequence) <= BigInt(health.receivedCursor)) return
     } catch {
       // Fall through to the authoritative pull when local cursor inspection fails.
@@ -1137,6 +1142,16 @@ async function startWorkspaceWatcher(): Promise<void> {
   unwatchWorkspace = await watch(workspaceRoot, event => {
     void handleWorkspaceFileEvent(event.paths, normalizedRoot, watchedLocalWorkspaceKey)
   }, { recursive: true, delayMs: 300 })
+
+  // A filesystem event can arrive before the editor has persisted the
+  // Markdown reference, and events can be lost while the app is suspended.
+  // Reconcile after installing the watcher so already-local assets are not
+  // left outside the durable Asset/Blob queue until another edit happens.
+  const queued = await queueCurrentNoteGenServerMarkdownWorkspace()
+  if (queued > 0) {
+    notifyStatus({ phase: 'pending', updatedAt: Date.now() })
+    void triggerNoteGenServerBackgroundSync()
+  }
 }
 
 async function handleWorkspaceFileEvent(

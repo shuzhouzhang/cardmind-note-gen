@@ -15,6 +15,8 @@ mod fonts;
 mod ios_ocr;
 mod mcp;
 mod mcp_runtime;
+#[cfg(target_os = "macos")]
+mod macos_secure_storage;
 #[cfg(any(target_os = "android", target_os = "ios"))]
 mod microsoft_oauth;
 mod mobile_system_bars;
@@ -67,6 +69,7 @@ use skills::{
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_fs::init())
@@ -161,6 +164,12 @@ pub fn run() {
             ios_ocr::get_ios_secure_value,
             #[cfg(target_os = "ios")]
             ios_ocr::delete_ios_secure_value,
+            #[cfg(target_os = "macos")]
+            macos_secure_storage::set_macos_secure_value,
+            #[cfg(target_os = "macos")]
+            macos_secure_storage::get_macos_secure_value,
+            #[cfg(target_os = "macos")]
+            macos_secure_storage::delete_macos_secure_value,
             #[cfg(target_os = "android")]
             android_cloud_folder::set_android_secure_value,
             #[cfg(target_os = "android")]

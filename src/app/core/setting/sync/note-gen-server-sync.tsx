@@ -218,7 +218,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
           setSession(nextSession)
           setAccountContext(nextAccountContext)
           setWorkspaces(nextWorkspaces)
-          setWorkspaceId(selectedWorkspaceId)
+          setWorkspaceId(selectedWorkspaceId ?? '')
         }
       } catch (cause) {
         if (authorizationAttempt.current === attempt) {
@@ -260,7 +260,8 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
     () => workspaces.find(workspace => workspace.id === workspaceId) ?? null,
     [workspaceId, workspaces],
   )
-  const authenticated = session !== null && capabilities !== null
+  const authorized = session !== null
+  const authenticated = authorized && capabilities !== null
   const unlocked = authenticated && workspaceKey !== null && workspaceId.length > 0
   const syncPushDecision = accountContext?.actions['sync.push']
   const discoveredRegistration = discoveredCapabilities?.registration
@@ -290,11 +291,11 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
         ? 'checking'
         : unlocked
           ? 'connected'
-          : authenticated
+          : authorized
             ? 'action-required'
             : 'disconnected',
     )
-  }, [authenticated, busy, connectionInitialized, onConnectionStateChange, unlocked])
+  }, [authorized, busy, connectionInitialized, onConnectionStateChange, unlocked])
 
   async function completeAuthentication(
     normalizedBaseUrl: string,
@@ -1021,7 +1022,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
           </Alert>
         ) : null}
 
-        {!authenticated ? (
+        {!authorized && connectionInitialized && busy !== 'restore' ? (
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="note-gen-server-url">{t('serverUrl')}</FieldLabel>
@@ -1032,7 +1033,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
                   setBaseUrl(event.target.value)
                   setDiscoveredCapabilities(null)
                 }}
-                disabled={pendingAuthorization !== null || busy === 'restore'}
+                disabled={pendingAuthorization !== null}
                 placeholder="https://sync.example.com"
                 autoCapitalize="none"
                 autoCorrect="off"
@@ -1066,7 +1067,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
                 type="single"
                 variant="outline"
                 value={connectionMethod}
-                disabled={pendingAuthorization !== null || busy === 'restore'}
+                disabled={pendingAuthorization !== null}
                 onValueChange={value => {
                   if (value === 'browser' || value === 'password') setConnectionMethod(value)
                 }}
@@ -1532,7 +1533,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
         ) : null}
       </CardContent>
       <CardFooter className="flex flex-wrap gap-2">
-        {!authenticated ? (
+        {!authorized && connectionInitialized && busy !== 'restore' ? (
           <>
           {mobile ? (
             <Button
@@ -1562,10 +1563,10 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
                 onClick={() => void handleBrowserConnect()}
                 disabled={busy !== null || !baseUrl.trim()}
               >
-                {busy === 'browser-authorize' || busy === 'restore'
+                {busy === 'browser-authorize'
                   ? <Loader2 data-icon="inline-start" className="animate-spin" />
                   : <Globe data-icon="inline-start" />}
-                {busy === 'restore' ? t('restoringSession') : busy === 'browser-authorize' ? t('openingBrowser') : t('browserConnect')}
+                {busy === 'browser-authorize' ? t('openingBrowser') : t('browserConnect')}
               </Button>
             )
           ) : (
@@ -1640,23 +1641,23 @@ function pausedReasonTranslationKey(reason: string | undefined): string {
 }
 
 function sumAccountMetrics(metrics: Record<string, string>, keys: readonly string[]): string {
-  return keys.reduce((sum, key) => sum + parseAccountBytes(metrics[key]), 0n).toString()
+  return keys.reduce((sum, key) => sum + parseAccountBytes(metrics[key]), BigInt(0)).toString()
 }
 
 function formatAccountBytes(value: string | number): string {
   let bytes = parseAccountBytes(value)
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
   let unit = 0
-  while (bytes >= 1024n && unit < units.length - 1) {
-    bytes /= 1024n
+  while (bytes >= BigInt(1024) && unit < units.length - 1) {
+    bytes /= BigInt(1024)
     unit += 1
   }
   return `${bytes.toString()} ${units[unit]}`
 }
 
 function parseAccountBytes(value: string | number | undefined): bigint {
-  if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? BigInt(value) : 0n
-  return value !== undefined && /^(?:0|[1-9][0-9]*)$/.test(value) ? BigInt(value) : 0n
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value >= 0 ? BigInt(value) : BigInt(0)
+  return value !== undefined && /^(?:0|[1-9][0-9]*)$/.test(value) ? BigInt(value) : BigInt(0)
 }
 
 async function openAuthorizationPage(url: string): Promise<void> {

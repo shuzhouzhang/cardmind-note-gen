@@ -16,6 +16,8 @@ mod file_open;
 mod fonts;
 mod fuzzy_search;
 mod keywords;
+#[cfg(target_os = "macos")]
+mod macos_secure_storage;
 mod mcp;
 mod mcp_runtime;
 mod notion_import;
@@ -167,6 +169,12 @@ fn main() {
             file_open::drain_pending_open_files,
             system_trash::move_paths_to_trash,
             sync_atomic::apply_sync_atomic_batch,
+            #[cfg(target_os = "macos")]
+            macos_secure_storage::set_macos_secure_value,
+            #[cfg(target_os = "macos")]
+            macos_secure_storage::get_macos_secure_value,
+            #[cfg(target_os = "macos")]
+            macos_secure_storage::delete_macos_secure_value,
             approve_web_clipper_pairing,
             reject_web_clipper_pairing,
             get_web_clipper_status,

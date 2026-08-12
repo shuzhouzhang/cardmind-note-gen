@@ -6,10 +6,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { getSyncV2Entity, listSyncV2Conflicts, type SyncV2Conflict } from '@/db/note-gen-server-sync-index'
+import { getSyncEntity, listSyncConflicts, type SyncConflict } from '@/db/note-gen-server-sync-index'
 import emitter from '@/lib/emitter'
 import { materializeMerge, mergeMarkdownThreeWay } from '@/lib/sync/markdown-three-way-merge'
-import { getNoteGenServerBackgroundV2Context } from '@/lib/sync/note-gen-server-background'
+import { getNoteGenServerSyncContext } from '@/lib/sync/note-gen-server-background'
 import {
   confirmMarkdownSyncDeletion,
   dismissMarkdownSyncConflicts,
@@ -28,8 +28,8 @@ export function MarkdownConflictEditor({ filePath, editor }: {
   filePath: string
   editor: Editor | null
 }) {
-  const [conflict, setConflict] = useState<SyncV2Conflict | null>(null)
-  const [relatedConflicts, setRelatedConflicts] = useState<SyncV2Conflict[]>([])
+  const [conflict, setConflict] = useState<SyncConflict | null>(null)
+  const [relatedConflicts, setRelatedConflicts] = useState<SyncConflict[]>([])
   const [payload, setPayload] = useState<MarkdownConflictPayload | null>(null)
   const [open, setOpen] = useState(false)
   const [blockIndex, setBlockIndex] = useState(0)
@@ -54,14 +54,14 @@ export function MarkdownConflictEditor({ filePath, editor }: {
   const finalContent = useMemo(() => materializeMerge(parts, resolutions), [parts, resolutions])
 
   const loadConflict = useCallback(async (forceOpen = false) => {
-    const context = getNoteGenServerBackgroundV2Context()
+    const context = getNoteGenServerSyncContext()
     if (!context || !filePath) return
-    const conflicts = await listSyncV2Conflicts(context.syncScopeId)
+    const conflicts = await listSyncConflicts(context.syncScopeId)
     const noteConflicts = conflicts.filter(item => item.kind === 'note')
     const paths = await Promise.all(noteConflicts.map(async item => {
       const payloadPath = conflictPath(item)
       if (payloadPath) return payloadPath
-      const entity = await getSyncV2Entity(context.syncScopeId, item.objectId)
+      const entity = await getSyncEntity(context.syncScopeId, item.objectId)
       return normalizePath(entity?.localKey ?? '')
     }))
     const matches = noteConflicts
@@ -136,9 +136,9 @@ export function MarkdownConflictEditor({ filePath, editor }: {
         content: finalContent,
         relatedConflicts: relatedConflicts.filter(item => item.conflictId !== conflict.conflictId),
       })
-      const context = getNoteGenServerBackgroundV2Context()
+      const context = getNoteGenServerSyncContext()
       const remaining = context
-        ? (await listSyncV2Conflicts(context.syncScopeId)).filter(item => (
+        ? (await listSyncConflicts(context.syncScopeId)).filter(item => (
             item.objectId === conflict.objectId && relatedConflicts.some(related => related.conflictId === item.conflictId)
           ))
         : []
@@ -327,7 +327,7 @@ function parseMarkdownPayload(value: string): MarkdownConflictPayload | null {
   }
 }
 
-function conflictPath(conflict: SyncV2Conflict): string {
+function conflictPath(conflict: SyncConflict): string {
   return normalizePath(parseMarkdownPayload(conflict.payloadJson)?.path ?? '')
 }
 

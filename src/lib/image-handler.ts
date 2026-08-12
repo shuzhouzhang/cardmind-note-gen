@@ -10,6 +10,7 @@ import { getNormalizedImageHosting } from './image-hosting-config'
 import { getWritingAssetsDirName } from './writing-assets-path'
 import useArticleStore from '@/stores/article'
 import { uploadLocalLibraryFile } from '@/lib/sync/remote-library'
+import type { PrimarySyncPlatform } from '@/types/sync'
 
 export interface ImageUploadResult {
   /** Webview 可访问的 URL（用于编辑器显示） */
@@ -30,8 +31,16 @@ export async function saveImageToWorkspace(
 ): Promise<ImageUploadResult> {
   const { imageRelativePath, markdownRelativePath } = await saveImageLocally(file, activeFilePath)
   const articleStore = useArticleStore.getState()
+  const store = await Store.load('store.json')
+  const primaryBackupMethod = await store.get<PrimarySyncPlatform>('primaryBackupMethod') ?? 'local'
 
-  if (articleStore.syncStaticAssets) {
+  if (primaryBackupMethod === 'noteGenServer') {
+    // Do not upload through remote-library here. Once the editor persists the
+    // Markdown image reference, the NoteGen Server background runtime collects
+    // this local file as an Asset, encrypts it and uploads it through the
+    // durable Workspace/Blob queue. Keeping ownership there prevents an
+    // unreferenced Blob when the editor insertion or Markdown save fails.
+  } else if (articleStore.syncStaticAssets && primaryBackupMethod !== 'local') {
     try {
       const sha = await uploadLocalLibraryFile(imageRelativePath)
       articleStore.markFileRemote(imageRelativePath, sha)

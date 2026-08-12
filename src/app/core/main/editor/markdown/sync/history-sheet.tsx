@@ -17,14 +17,14 @@ import { toast } from '@/hooks/use-toast'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import { isMobileDevice } from '@/lib/check'
-import { getSyncV2EntityByLocalKey } from '@/db/note-gen-server-sync-index'
+import { getSyncEntityByLocalKey } from '@/db/note-gen-server-sync-index'
 import {
   getNoteGenServerBackgroundConnection,
-  getNoteGenServerBackgroundV2Context,
+  getNoteGenServerSyncContext,
   triggerNoteGenServerBackgroundSync,
 } from '@/lib/sync/note-gen-server-background'
-import { listSyncV2ObjectVersions } from '@/lib/sync/note-gen-server-sync-protocol'
-import { enqueueSyncV2HistoricalRestore } from '@/lib/sync/note-gen-server-history'
+import { listSyncObjectVersions } from '@/lib/sync/note-gen-server-sync-protocol'
+import { enqueueSyncHistoricalRestore } from '@/lib/sync/note-gen-server-history'
 
 interface CommitInfo {
   sha: string
@@ -81,16 +81,16 @@ export function HistorySheet({ editor, prepareExternalAction, onMarkdownChange }
       if (!provider) return
 
       if (provider === 'noteGenServer') {
-        const context = getNoteGenServerBackgroundV2Context()
+        const context = getNoteGenServerSyncContext()
         const connection = getNoteGenServerBackgroundConnection()
         if (!context || !connection) throw new Error('NoteGen Server 同步空间尚未解锁')
-        const entity = await getSyncV2EntityByLocalKey(context.syncScopeId, activeFilePath)
+        const entity = await getSyncEntityByLocalKey(context.syncScopeId, activeFilePath)
         if (!entity || entity.kind !== 'note') {
           setHistory([])
           setProvider(provider)
           return
         }
-        const result = await listSyncV2ObjectVersions({
+        const result = await listSyncObjectVersions({
           baseUrl: connection.profile.baseUrl,
           accessToken: connection.session.accessToken,
           workspaceId: context.workspaceId,
@@ -220,12 +220,12 @@ export function HistorySheet({ editor, prepareExternalAction, onMarkdownChange }
       if (!provider) return
 
       if (provider === 'noteGenServer') {
-        const context = getNoteGenServerBackgroundV2Context()
+        const context = getNoteGenServerSyncContext()
         const connection = getNoteGenServerBackgroundConnection()
         if (!context || !connection) throw new Error('NoteGen Server 同步空间尚未解锁')
-        const entity = await getSyncV2EntityByLocalKey(context.syncScopeId, activeFilePath)
+        const entity = await getSyncEntityByLocalKey(context.syncScopeId, activeFilePath)
         if (!entity || entity.kind !== 'note') throw new Error('当前笔记尚未建立服务器同步身份')
-        const restored = await enqueueSyncV2HistoricalRestore({
+        const restored = await enqueueSyncHistoricalRestore({
           baseUrl: connection.profile.baseUrl,
           accessToken: connection.session.accessToken,
           workspaceId: context.workspaceId,

@@ -17,10 +17,10 @@ import type { Tag } from '@/db/tags'
 import type { CanvasProject } from '@/types/canvas'
 import type { Memory } from '@/db/memories'
 import {
-  applySyncV2AtomicBatch, getOrCreateSyncV2Entity, getSyncV2Entity,
-  hasUnresolvedSyncV2ConflictForObject,
-  markSyncV2MutationQueued, recordSyncV2Mutation, type SyncV2Entity,
-  type SyncV2AtomicStatement,
+  applySyncAtomicBatch, getOrCreateSyncEntity, getSyncEntity,
+  hasUnresolvedSyncConflictForObject,
+  markSyncMutationQueued, recordSyncMutation, type SyncEntity,
+  type SyncAtomicStatement,
 } from '@/db/note-gen-server-sync-index'
 import { getMarkLocalAssetPaths } from './record-assets'
 import type { ConversationSyncItem, NoteGenServerConversationSnapshot } from './conversation-sync'
@@ -137,7 +137,7 @@ async function queueNoteGenServerDomainChangeNow(domain: NoteGenServerDataDomain
   let queued = false
 
   for (const object of localObjects) {
-    const entity = await getOrCreateSyncV2Entity({
+    const entity = await getOrCreateSyncEntity({
       scopeId: syncScopeId, kind: object.kind, localKey: object.logicalKey,
       stableWorkspaceId: profile.workspaceId,
     })
@@ -146,7 +146,7 @@ async function queueNoteGenServerDomainChangeNow(domain: NoteGenServerDataDomain
     // A durable conflict already owns reconciliation for this object. Starting
     // CRDT collaboration or staging another local mutation here turns every
     // background scan into a new retry and can create an endless sync echo.
-    if (await hasUnresolvedSyncV2ConflictForObject(syncScopeId, objectId)) continue
+    if (await hasUnresolvedSyncConflictForObject(syncScopeId, objectId)) continue
     await ensureStructuredObjectCollaboration({
       workspaceId: profile.workspaceId, syncScopeId, objectId, object,
     })
@@ -189,9 +189,9 @@ async function ensureStructuredObjectCollaboration(input: {
   object: LocalObject
 }): Promise<void> {
   const subscriptionKey = `${input.workspaceId}:${input.objectId}`
-  const entity = await getSyncV2Entity(input.syncScopeId, input.objectId)
+  const entity = await getSyncEntity(input.syncScopeId, input.objectId)
   if (!entity || entity.lifecycleRevision === '0') return
-  if (await hasUnresolvedSyncV2ConflictForObject(input.syncScopeId, input.objectId)) return
+  if (await hasUnresolvedSyncConflictForObject(input.syncScopeId, input.objectId)) return
   const collab = await import('./note-gen-server-collab')
   const initialFields = fieldsForCrdtPayload(input.object.payload)
   const session = input.object.payload.type === 'conversation'
@@ -286,7 +286,7 @@ function payloadFromCrdtFields(
 export async function materializeNoteGenServerCrdtEntity(input: {
   syncScopeId: string
   workspaceId: string
-  entity: SyncV2Entity
+  entity: SyncEntity
   refreshView?: boolean
 }): Promise<boolean> {
   const snapshot = await import('./note-gen-server-collab').then(module => (
@@ -302,7 +302,7 @@ export async function materializeNoteGenServerCrdtEntity(input: {
   if (!payload) return false
   if (input.entity.kind === 'mark' && input.entity.localKey === 'mark:settings'
     && payload.type === 'settings') {
-    // Older v2 clients inferred the legacy `settings` logical key as a mark
+    // Older clients inferred the legacy `settings` logical key as a mark
     // document. Retire that polluted server object instead of applying its
     // preference fields to the records table.
     await queueDeletedObject(input.syncScopeId, {
@@ -395,7 +395,7 @@ export async function applyNoteGenServerDomainChange(input: {
 export async function applyNoteGenServerDomainChangeAtomic(input: {
   syncScopeId: string
   eventId: string
-  entity: SyncV2Entity
+  entity: SyncEntity
   revision: string
   payload: unknown
   deleted: boolean
@@ -406,7 +406,7 @@ export async function applyNoteGenServerDomainChangeAtomic(input: {
     kind: input.entity.kind, payload: input.payload, deleted: input.deleted,
   })
   let deletedMarkId: number | null = null
-  const operations: SyncV2AtomicStatement[] = []
+  const operations: SyncAtomicStatement[] = []
   if (resolved.payload.type === 'delete') {
     const stableId = resolved.payload.logicalKey.slice(resolved.payload.logicalKey.indexOf(':') + 1)
     if (resolved.payload.kind === 'tag') {
@@ -494,7 +494,7 @@ export async function applyNoteGenServerDomainChangeAtomic(input: {
   // unique index is touched; the runtime has already turned a genuinely
   // pending local edit into a conflict before reaching this path.
   operations.push({
-    statement: `update sync_v2_entities set localKey='__sync_replaced__/' || objectId,
+    statement: `update sync_entities set localKey='__sync_replaced__/' || objectId,
       deleted=1,updatedAt=$4 where scopeId=$1 and localKey=$2 and objectId!=$3`,
     values: [input.syncScopeId, resolved.logicalKey, input.entity.objectId, now],
   }, {
@@ -515,13 +515,13 @@ export async function applyNoteGenServerDomainChangeAtomic(input: {
     })
   }
   operations.push({
-    statement: 'delete from sync_v2_resource_refs where scopeId=$1 and ownerObjectId=$2',
+    statement: 'delete from sync_resource_refs where scopeId=$1 and ownerObjectId=$2',
     values: [input.syncScopeId, input.entity.objectId],
   })
   if (!input.deleted) {
     for (const resource of input.resourceRefs ?? []) {
       operations.push({
-        statement: `insert into sync_v2_resource_refs
+        statement: `insert into sync_resource_refs
           (scopeId,ownerObjectId,resourceObjectId,localPath,updatedAt)
           values($1,$2,$3,$4,$5)`,
         values: [input.syncScopeId, input.entity.objectId, resource.resourceObjectId,
@@ -530,7 +530,7 @@ export async function applyNoteGenServerDomainChangeAtomic(input: {
     }
   }
   operations.push({
-    statement: `insert into sync_v2_entities(scopeId,objectId,kind,localKey,parentObjectId,name,
+    statement: `insert into sync_entities(scopeId,objectId,kind,localKey,parentObjectId,name,
       lifecycleRevision,documentId,documentSequence,materializedHash,basePayloadJson,deleted,updatedAt)
       values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
       on conflict(scopeId,objectId) do update set kind=excluded.kind,localKey=excluded.localKey,
@@ -544,14 +544,14 @@ export async function applyNoteGenServerDomainChangeAtomic(input: {
       payloadHash, payloadJson, input.deleted ? 1 : 0, now],
   })
   operations.push({
-    statement: `update sync_v2_inbox set status='applied',lastError=null,appliedAt=$3
+    statement: `update sync_inbox set status='applied',lastError=null,appliedAt=$3
       where scopeId=$1 and eventId=$2`,
     values: [input.syncScopeId, input.eventId, now],
   }, {
-    statement: 'delete from sync_v2_apply_journal where scopeId=$1 and eventId=$2',
+    statement: 'delete from sync_apply_journal where scopeId=$1 and eventId=$2',
     values: [input.syncScopeId, input.eventId],
   })
-  await applySyncV2AtomicBatch(operations)
+  await applySyncAtomicBatch(operations)
   if (deletedMarkId !== null) {
     await import('@/stores/article').then(module => (
       module.default.getState().cleanTabsByDeletedFile(`record://mark/${deletedMarkId}`)
@@ -828,7 +828,7 @@ async function queueObject(input: {
   syncScopeId: string
   objectId: string
   object: LocalObject
-  entity: SyncV2Entity
+  entity: SyncEntity
   tracked: NoteGenServerSyncObject | null
 }): Promise<boolean> {
   const payloadJson = JSON.stringify(input.object.payload)
@@ -839,7 +839,7 @@ async function queueObject(input: {
   if (!pending && input.tracked?.contentHash === contentHash
     && lifecyclePayload && lifecyclePayload.type !== 'crdt-object') return false
   const operationId = crypto.randomUUID()
-  await recordSyncV2Mutation({
+  await recordSyncMutation({
     scopeId: input.syncScopeId, mutationId: operationId, objectId: input.objectId,
     kind: input.object.kind, payload: input.object.payload,
   })
@@ -854,12 +854,12 @@ async function queueObject(input: {
     payloadJson,
     contentHash,
   })
-  await markSyncV2MutationQueued(input.syncScopeId, operationId)
+  await markSyncMutationQueued(input.syncScopeId, operationId)
   return true
 }
 
 async function queueDeletedObject(syncScopeId: string, tracked: NoteGenServerSyncObject): Promise<boolean> {
-  if (await hasUnresolvedSyncV2ConflictForObject(syncScopeId, tracked.objectId)) return false
+  if (await hasUnresolvedSyncConflictForObject(syncScopeId, tracked.objectId)) return false
   const pending = await getNoteGenServerOutboxForObject(syncScopeId, tracked.objectId)
   if (pending?.action === 'delete') return false
   const payload: DeletePayload = {
@@ -870,7 +870,7 @@ async function queueDeletedObject(syncScopeId: string, tracked: NoteGenServerSyn
     deletedAt: Date.now(),
   }
   const operationId = crypto.randomUUID()
-  await recordSyncV2Mutation({
+  await recordSyncMutation({
     scopeId: syncScopeId, mutationId: operationId, objectId: tracked.objectId,
     kind: tracked.kind, payload,
   })
@@ -885,7 +885,7 @@ async function queueDeletedObject(syncScopeId: string, tracked: NoteGenServerSyn
     payloadJson: JSON.stringify(payload),
     contentHash: null,
   })
-  await markSyncV2MutationQueued(syncScopeId, operationId)
+  await markSyncMutationQueued(syncScopeId, operationId)
   return true
 }
 

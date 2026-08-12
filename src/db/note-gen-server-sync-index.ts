@@ -1,16 +1,16 @@
 import { getDb } from './index'
 import { invoke } from '@tauri-apps/api/core'
 import {
-  isSyncV2FullyConverged,
-  type SyncV2HealthSnapshot,
+  isSyncFullyConverged,
+  type SyncHealthSnapshot,
 } from '@/lib/sync/sync-health'
 
-export { isSyncV2FullyConverged, type SyncV2HealthSnapshot }
+export { isSyncFullyConverged, type SyncHealthSnapshot }
 
-export type SyncV2InboxStatus = 'pending' | 'applied' | 'failed'
-export type SyncV2ConflictStatus = 'unresolved' | 'resolved'
+export type SyncInboxStatus = 'pending' | 'applied' | 'failed'
+export type SyncConflictStatus = 'unresolved' | 'resolved'
 
-export interface SyncV2Entity {
+export interface SyncEntity {
   scopeId: string
   objectId: string
   kind: string
@@ -25,7 +25,7 @@ export interface SyncV2Entity {
   deleted: number
 }
 
-export interface SyncV2OutboxEntry {
+export interface SyncOutboxEntry {
   id: number
   scopeId: string
   commandId: string
@@ -40,7 +40,7 @@ export interface SyncV2OutboxEntry {
   updatedAt: number
 }
 
-export interface RecoverableSyncV2Mutation {
+export interface RecoverableSyncMutation {
   mutationId: string
   objectId: string | null
   kind: string
@@ -49,20 +49,20 @@ export interface RecoverableSyncV2Mutation {
   createdAt: number
 }
 
-export interface SyncV2Conflict {
+export interface SyncConflict {
   scopeId: string
   conflictId: string
   objectId: string
   kind: string
   type: string
-  status: SyncV2ConflictStatus
+  status: SyncConflictStatus
   createdSequence: string
   payloadJson: string
   createdAt: number
   resolvedAt: number | null
 }
 
-export interface SyncV2ProblemDetail {
+export interface SyncProblemDetail {
   category: 'outbox' | 'inbox' | 'transfer'
   operation: string
   objectId: string | null
@@ -70,16 +70,17 @@ export interface SyncV2ProblemDetail {
   lastError: string | null
 }
 
-export interface SyncV2BootstrapProgress {
+export interface SyncBootstrapProgress {
   bootstrapId: string
   snapshotSequence: string
   afterObjectId: string | null
 }
 
-export async function initNoteGenServerSyncV2Db(): Promise<void> {
+export async function initNoteGenServerSyncDb(): Promise<void> {
   const db = await getDb()
+  await migrateVersionedSyncTables(db)
   await db.execute(`
-    create table if not exists sync_v2_state (
+    create table if not exists sync_state (
       scopeId text primary key,
       receivedCursor text not null default '0',
       latestServerSequence text not null default '0',
@@ -90,7 +91,7 @@ export async function initNoteGenServerSyncV2Db(): Promise<void> {
     )
   `)
   await db.execute(`
-    create table if not exists sync_v2_entities (
+    create table if not exists sync_entities (
       scopeId text not null,
       objectId text not null,
       kind text not null,
@@ -109,12 +110,12 @@ export async function initNoteGenServerSyncV2Db(): Promise<void> {
     )
   `)
   try {
-    await db.execute('alter table sync_v2_entities add column basePayloadJson text default null')
+    await db.execute('alter table sync_entities add column basePayloadJson text default null')
   } catch {
     // Idempotent migration.
   }
   await db.execute(`
-    create table if not exists sync_v2_outbox (
+    create table if not exists sync_outbox (
       id integer primary key autoincrement,
       scopeId text not null,
       commandId text not null,
@@ -131,11 +132,11 @@ export async function initNoteGenServerSyncV2Db(): Promise<void> {
     )
   `)
   await db.execute(`
-    create index if not exists idx_sync_v2_outbox_scope_created
-    on sync_v2_outbox(scopeId, blocked, createdAt)
+    create index if not exists idx_sync_outbox_scope_created
+    on sync_outbox(scopeId, blocked, createdAt)
   `)
   await db.execute(`
-    create table if not exists sync_v2_inbox (
+    create table if not exists sync_inbox (
       id integer primary key autoincrement,
       scopeId text not null,
       eventId text not null,
@@ -154,7 +155,7 @@ export async function initNoteGenServerSyncV2Db(): Promise<void> {
     )
   `)
   await db.execute(`
-    create table if not exists sync_v2_apply_journal (
+    create table if not exists sync_apply_journal (
       scopeId text not null,
       eventId text not null,
       eventJson text not null,
@@ -164,20 +165,20 @@ export async function initNoteGenServerSyncV2Db(): Promise<void> {
     )
   `)
   await db.execute(`
-    create trigger if not exists sync_v2_inbox_applied_cleanup
-    after update of status on sync_v2_inbox
+    create trigger if not exists sync_inbox_applied_cleanup
+    after update of status on sync_inbox
     when new.status = 'applied'
     begin
-      delete from sync_v2_apply_journal
+      delete from sync_apply_journal
       where scopeId = new.scopeId and eventId = new.eventId;
     end
   `)
   await db.execute(`
-    create index if not exists idx_sync_v2_inbox_scope_status
-    on sync_v2_inbox(scopeId, status, sequence)
+    create index if not exists idx_sync_inbox_scope_status
+    on sync_inbox(scopeId, status, sequence)
   `)
   await db.execute(`
-    create table if not exists sync_v2_conflicts (
+    create table if not exists sync_conflicts (
       scopeId text not null,
       conflictId text not null,
       objectId text not null,
@@ -192,11 +193,11 @@ export async function initNoteGenServerSyncV2Db(): Promise<void> {
     )
   `)
   await db.execute(`
-    create index if not exists idx_sync_v2_conflicts_scope_status
-    on sync_v2_conflicts(scopeId, status, createdAt)
+    create index if not exists idx_sync_conflicts_scope_status
+    on sync_conflicts(scopeId, status, createdAt)
   `)
   await db.execute(`
-    create table if not exists sync_v2_transfers (
+    create table if not exists sync_transfers (
       scopeId text not null,
       transferId text not null,
       objectId text default null,
@@ -212,7 +213,7 @@ export async function initNoteGenServerSyncV2Db(): Promise<void> {
     )
   `)
   await db.execute(`
-    create table if not exists sync_v2_resource_refs (
+    create table if not exists sync_resource_refs (
       scopeId text not null,
       ownerObjectId text not null,
       resourceObjectId text not null,
@@ -222,11 +223,11 @@ export async function initNoteGenServerSyncV2Db(): Promise<void> {
     )
   `)
   await db.execute(`
-    create index if not exists idx_sync_v2_resource_refs_resource
-    on sync_v2_resource_refs(scopeId, resourceObjectId)
+    create index if not exists idx_sync_resource_refs_resource
+    on sync_resource_refs(scopeId, resourceObjectId)
   `)
   await db.execute(`
-    create table if not exists sync_v2_mutation_journal (
+    create table if not exists sync_mutation_journal (
       id integer primary key autoincrement,
       scopeId text not null,
       mutationId text not null,
@@ -241,7 +242,7 @@ export async function initNoteGenServerSyncV2Db(): Promise<void> {
     )
   `)
   await db.execute(`
-    create table if not exists sync_v2_documents (
+    create table if not exists sync_documents (
       scopeId text not null,
       documentId text not null,
       objectId text not null,
@@ -256,15 +257,50 @@ export async function initNoteGenServerSyncV2Db(): Promise<void> {
       primary key(scopeId, documentId)
     )
   `)
-  try { await db.execute('alter table sync_v2_state add column bootstrapComplete integer not null default 0') } catch {}
-  try { await db.execute('alter table sync_v2_state add column bootstrapId text default null') } catch {}
-  try { await db.execute('alter table sync_v2_state add column bootstrapSnapshotSequence text default null') } catch {}
-  try { await db.execute('alter table sync_v2_state add column bootstrapAfterObjectId text default null') } catch {}
-  try { await db.execute('alter table sync_v2_state add column lastServerConfirmedAt integer default null') } catch {}
-  try { await db.execute('alter table sync_v2_state add column lastFullyConvergedAt integer default null') } catch {}
+  try { await db.execute('alter table sync_state add column bootstrapComplete integer not null default 0') } catch {}
+  try { await db.execute('alter table sync_state add column bootstrapId text default null') } catch {}
+  try { await db.execute('alter table sync_state add column bootstrapSnapshotSequence text default null') } catch {}
+  try { await db.execute('alter table sync_state add column bootstrapAfterObjectId text default null') } catch {}
+  try { await db.execute('alter table sync_state add column lastServerConfirmedAt integer default null') } catch {}
+  try { await db.execute('alter table sync_state add column lastFullyConvergedAt integer default null') } catch {}
 }
 
-export interface LocalSyncV2Document {
+async function migrateVersionedSyncTables(db: Awaited<ReturnType<typeof getDb>>): Promise<void> {
+  const tableRenames = [
+    ['sync_v2_state', 'sync_state'],
+    ['sync_v2_entities', 'sync_entities'],
+    ['sync_v2_outbox', 'sync_outbox'],
+    ['sync_v2_inbox', 'sync_inbox'],
+    ['sync_v2_apply_journal', 'sync_apply_journal'],
+    ['sync_v2_conflicts', 'sync_conflicts'],
+    ['sync_v2_transfers', 'sync_transfers'],
+    ['sync_v2_resource_refs', 'sync_resource_refs'],
+    ['sync_v2_mutation_journal', 'sync_mutation_journal'],
+    ['sync_v2_documents', 'sync_documents'],
+  ] as const
+  for (const [legacyName, currentName] of tableRenames) {
+    const existing = await db.select<Array<{ name: string }>>(
+      'select name from sqlite_master where type = $1 and name in ($2, $3)',
+      ['table', legacyName, currentName],
+    )
+    if (existing.some(table => table.name === legacyName)
+      && !existing.some(table => table.name === currentName)) {
+      await db.execute(`alter table "${legacyName}" rename to "${currentName}"`)
+    }
+  }
+
+  await db.execute('drop trigger if exists sync_v2_inbox_applied_cleanup')
+  for (const legacyIndex of [
+    'idx_sync_v2_outbox_scope_created',
+    'idx_sync_v2_inbox_scope_status',
+    'idx_sync_v2_conflicts_scope_status',
+    'idx_sync_v2_resource_refs_resource',
+  ]) {
+    await db.execute(`drop index if exists "${legacyIndex}"`)
+  }
+}
+
+export interface LocalSyncDocument {
   scopeId: string
   documentId: string
   objectId: string
@@ -277,23 +313,23 @@ export interface LocalSyncV2Document {
   checkpointCiphertextHash: string | null
 }
 
-export async function beginSyncV2EventApply(scopeId: string, eventId: string, eventJson: string): Promise<void> {
+export async function beginSyncEventApply(scopeId: string, eventId: string, eventJson: string): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `insert into sync_v2_apply_journal(scopeId, eventId, eventJson, attempts, startedAt)
+    `insert into sync_apply_journal(scopeId, eventId, eventJson, attempts, startedAt)
      values($1, $2, $3, 1, $4)
      on conflict(scopeId, eventId) do update set
-       eventJson = excluded.eventJson, attempts = sync_v2_apply_journal.attempts + 1,
+       eventJson = excluded.eventJson, attempts = sync_apply_journal.attempts + 1,
        startedAt = excluded.startedAt`,
     [scopeId, eventId, eventJson, Date.now()],
   )
 }
 
-export async function recoverSyncV2ApplyJournal(scopeId: string): Promise<number> {
+export async function recoverSyncApplyJournal(scopeId: string): Promise<number> {
   const db = await getDb()
   const rows = await db.select<Array<{ eventId: string, eventJson: string }>>(
-    `select journal.eventId, journal.eventJson from sync_v2_apply_journal journal
-     left join sync_v2_inbox inbox on inbox.scopeId=journal.scopeId and inbox.eventId=journal.eventId
+    `select journal.eventId, journal.eventJson from sync_apply_journal journal
+     left join sync_inbox inbox on inbox.scopeId=journal.scopeId and inbox.eventId=journal.eventId
      where journal.scopeId=$1 and (inbox.eventId is null or inbox.status != 'applied')`,
     [scopeId],
   )
@@ -302,38 +338,38 @@ export async function recoverSyncV2ApplyJournal(scopeId: string): Promise<number
       eventId: string, sequence: string, type: string,
       objectId?: string | null, documentId?: string | null,
     }
-    await storeSyncV2Event(scopeId, event)
+    await storeSyncEvent(scopeId, event)
   }
-  await applySyncV2AtomicBatch([
+  await applySyncAtomicBatch([
     {
-      statement: `delete from sync_v2_apply_journal where scopeId=$1 and exists(
-        select 1 from sync_v2_inbox where scopeId=$1
-          and eventId=sync_v2_apply_journal.eventId and status='applied')`,
+      statement: `delete from sync_apply_journal where scopeId=$1 and exists(
+        select 1 from sync_inbox where scopeId=$1
+          and eventId=sync_apply_journal.eventId and status='applied')`,
       values: [scopeId],
     },
   ])
   return rows.length
 }
 
-export async function listRecoverableSyncV2Mutations(scopeId: string): Promise<RecoverableSyncV2Mutation[]> {
+export async function listRecoverableSyncMutations(scopeId: string): Promise<RecoverableSyncMutation[]> {
   const db = await getDb()
-  return db.select<RecoverableSyncV2Mutation[]>(
+  return db.select<RecoverableSyncMutation[]>(
     `select mutationId,objectId,kind,payloadJson,state,createdAt
-     from sync_v2_mutation_journal where scopeId=$1 and state in ('pending','materialized','failed')
+     from sync_mutation_journal where scopeId=$1 and state in ('pending','materialized','failed')
      order by createdAt`,
     [scopeId],
   )
 }
 
-export async function isSyncV2BootstrapComplete(scopeId: string): Promise<boolean> {
+export async function isSyncBootstrapComplete(scopeId: string): Promise<boolean> {
   const db = await getDb()
   const rows = await db.select<Array<{ bootstrapComplete: number }>>(
-    'select bootstrapComplete from sync_v2_state where scopeId = $1 limit 1', [scopeId],
+    'select bootstrapComplete from sync_state where scopeId = $1 limit 1', [scopeId],
   )
   return rows[0]?.bootstrapComplete === 1
 }
 
-export async function getSyncV2BootstrapProgress(scopeId: string): Promise<SyncV2BootstrapProgress | null> {
+export async function getSyncBootstrapProgress(scopeId: string): Promise<SyncBootstrapProgress | null> {
   const db = await getDb()
   const rows = await db.select<Array<{
     bootstrapId: string | null
@@ -341,7 +377,7 @@ export async function getSyncV2BootstrapProgress(scopeId: string): Promise<SyncV
     bootstrapAfterObjectId: string | null
   }>>(
     `select bootstrapId, bootstrapSnapshotSequence, bootstrapAfterObjectId
-     from sync_v2_state where scopeId = $1 limit 1`,
+     from sync_state where scopeId = $1 limit 1`,
     [scopeId],
   )
   const row = rows[0]
@@ -353,13 +389,13 @@ export async function getSyncV2BootstrapProgress(scopeId: string): Promise<SyncV
   }
 }
 
-export async function saveSyncV2BootstrapProgress(
+export async function saveSyncBootstrapProgress(
   scopeId: string,
-  progress: SyncV2BootstrapProgress,
+  progress: SyncBootstrapProgress,
 ): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `insert into sync_v2_state(
+    `insert into sync_state(
        scopeId, receivedCursor, latestServerSequence, updatedAt, bootstrapComplete,
        bootstrapId, bootstrapSnapshotSequence, bootstrapAfterObjectId
      ) values($1, '0', '0', $5, 0, $2, $3, $4)
@@ -373,10 +409,10 @@ export async function saveSyncV2BootstrapProgress(
   )
 }
 
-export async function clearSyncV2BootstrapProgress(scopeId: string): Promise<void> {
+export async function clearSyncBootstrapProgress(scopeId: string): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `update sync_v2_state set bootstrapId = null, bootstrapSnapshotSequence = null,
+    `update sync_state set bootstrapId = null, bootstrapSnapshotSequence = null,
        bootstrapAfterObjectId = null, updatedAt = $2 where scopeId = $1`,
     [scopeId, Date.now()],
   )
@@ -388,13 +424,13 @@ export async function clearSyncV2BootstrapProgress(scopeId: string): Promise<voi
  * deliberately retained: they are the device's evidence of edits that may
  * not have made it into the restored server database.
  */
-export async function resetSyncV2ForServerEpoch(scopeId: string): Promise<void> {
+export async function resetSyncForServerEpoch(scopeId: string): Promise<void> {
   const now = Date.now()
-  await applySyncV2AtomicBatch([
-    { statement: 'delete from sync_v2_apply_journal where scopeId=$1', values: [scopeId] },
-    { statement: 'delete from sync_v2_inbox where scopeId=$1', values: [scopeId] },
+  await applySyncAtomicBatch([
+    { statement: 'delete from sync_apply_journal where scopeId=$1', values: [scopeId] },
+    { statement: 'delete from sync_inbox where scopeId=$1', values: [scopeId] },
     {
-      statement: `insert into sync_v2_state(
+      statement: `insert into sync_state(
         scopeId, receivedCursor, latestServerSequence, updatedAt, bootstrapComplete,
         bootstrapId, bootstrapSnapshotSequence, bootstrapAfterObjectId
       ) values($1, '0', '0', $2, 0, null, null, null)
@@ -407,11 +443,11 @@ export async function resetSyncV2ForServerEpoch(scopeId: string): Promise<void> 
   ])
 }
 
-export async function markSyncV2BootstrapComplete(scopeId: string, snapshotSequence: string): Promise<void> {
+export async function markSyncBootstrapComplete(scopeId: string, snapshotSequence: string): Promise<void> {
   const db = await getDb()
   const now = Date.now()
   await db.execute(
-    `insert into sync_v2_state(scopeId, receivedCursor, latestServerSequence, lastSuccessfulSyncAt, updatedAt,
+    `insert into sync_state(scopeId, receivedCursor, latestServerSequence, lastSuccessfulSyncAt, updatedAt,
        bootstrapComplete, bootstrapId, bootstrapSnapshotSequence, bootstrapAfterObjectId)
      values($1, $2, $2, null, $3, 1, null, null, null)
      on conflict(scopeId) do update set receivedCursor = excluded.receivedCursor,
@@ -422,10 +458,10 @@ export async function markSyncV2BootstrapComplete(scopeId: string, snapshotSeque
   )
 }
 
-export async function upsertLocalSyncV2Document(document: LocalSyncV2Document): Promise<void> {
+export async function upsertLocalSyncDocument(document: LocalSyncDocument): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `insert into sync_v2_documents(scopeId, documentId, objectId, kind, latestDocumentSequence,
+    `insert into sync_documents(scopeId, documentId, objectId, kind, latestDocumentSequence,
        checkpointDocumentSequence, checkpointId, checkpointKeyVersion, checkpointCiphertext,
        checkpointCiphertextHash, updatedAt)
      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -441,33 +477,33 @@ export async function upsertLocalSyncV2Document(document: LocalSyncV2Document): 
   )
 }
 
-export async function getLocalSyncV2Document(scopeId: string, documentId: string): Promise<LocalSyncV2Document | null> {
+export async function getLocalSyncDocument(scopeId: string, documentId: string): Promise<LocalSyncDocument | null> {
   const db = await getDb()
-  const rows = await db.select<LocalSyncV2Document[]>(
-    'select * from sync_v2_documents where scopeId = $1 and documentId = $2 limit 1',
+  const rows = await db.select<LocalSyncDocument[]>(
+    'select * from sync_documents where scopeId = $1 and documentId = $2 limit 1',
     [scopeId, documentId],
   )
   return rows[0] ?? null
 }
 
-export async function getSyncV2EntityByLocalKey(scopeId: string, localKey: string): Promise<SyncV2Entity | null> {
+export async function getSyncEntityByLocalKey(scopeId: string, localKey: string): Promise<SyncEntity | null> {
   const db = await getDb()
-  const rows = await db.select<SyncV2Entity[]>(
-    'select * from sync_v2_entities where scopeId = $1 and localKey = $2 limit 1',
+  const rows = await db.select<SyncEntity[]>(
+    'select * from sync_entities where scopeId = $1 and localKey = $2 limit 1',
     [scopeId, localKey],
   )
   return rows[0] ?? null
 }
 
-export async function getSyncV2AssetEntityByPath(
+export async function getSyncAssetEntityByPath(
   scopeId: string,
   localPath: string,
   assetScope: 'appData' | 'workspace',
   contentHash: string,
-): Promise<SyncV2Entity | null> {
+): Promise<SyncEntity | null> {
   const db = await getDb()
-  const rows = await db.select<SyncV2Entity[]>(
-    `select entity.* from sync_v2_entities entity
+  const rows = await db.select<SyncEntity[]>(
+    `select entity.* from sync_entities entity
      where entity.scopeId = $1 and entity.kind = 'asset' and entity.name = $2
      order by entity.deleted asc, entity.updatedAt desc`,
     [scopeId, `${assetScope}:${localPath}`],
@@ -482,15 +518,15 @@ export async function getSyncV2AssetEntityByPath(
   }) ?? null
 }
 
-export async function getSyncV2AssetEntityForOwnerPath(
+export async function getSyncAssetEntityForOwnerPath(
   scopeId: string,
   ownerObjectId: string,
   localPath: string,
-): Promise<SyncV2Entity | null> {
+): Promise<SyncEntity | null> {
   const db = await getDb()
-  const rows = await db.select<SyncV2Entity[]>(
-    `select entity.* from sync_v2_resource_refs resource
-     join sync_v2_entities entity on entity.scopeId = resource.scopeId
+  const rows = await db.select<SyncEntity[]>(
+    `select entity.* from sync_resource_refs resource
+     join sync_entities entity on entity.scopeId = resource.scopeId
        and entity.objectId = resource.resourceObjectId
      where resource.scopeId = $1 and resource.ownerObjectId = $2
        and resource.localPath = $3 and entity.kind = 'asset'
@@ -500,23 +536,23 @@ export async function getSyncV2AssetEntityForOwnerPath(
   return rows[0] ?? null
 }
 
-export async function listUnreferencedSyncV2AssetEntities(
+export async function listUnreferencedSyncAssetEntities(
   scopeId: string,
   updatedBefore: number,
   limit = 100,
-): Promise<SyncV2Entity[]> {
+): Promise<SyncEntity[]> {
   const db = await getDb()
-  return db.select<SyncV2Entity[]>(
-    `select entity.* from sync_v2_entities entity
+  return db.select<SyncEntity[]>(
+    `select entity.* from sync_entities entity
      where entity.scopeId = $1 and entity.kind = 'asset' and entity.deleted = 0
        and entity.lifecycleRevision <> '0' and entity.updatedAt < $2
        and not exists (
-         select 1 from sync_v2_resource_refs resource
+         select 1 from sync_resource_refs resource
          where resource.scopeId = entity.scopeId
            and resource.resourceObjectId = entity.objectId
        )
        and not exists (
-         select 1 from sync_v2_outbox outbox
+         select 1 from sync_outbox outbox
          where outbox.scopeId = entity.scopeId and outbox.objectId = entity.objectId
        )
      order by entity.updatedAt limit $3`,
@@ -524,13 +560,13 @@ export async function listUnreferencedSyncV2AssetEntities(
   )
 }
 
-export async function listRetiredSyncV2Entities(
+export async function listRetiredSyncEntities(
   scopeId: string,
   limit = 50,
-): Promise<SyncV2Entity[]> {
+): Promise<SyncEntity[]> {
   const db = await getDb()
-  return db.select<SyncV2Entity[]>(
-    `select * from sync_v2_entities
+  return db.select<SyncEntity[]>(
+    `select * from sync_entities
      where scopeId = $1 and deleted = 1 and lifecycleRevision <> '0'
        and localKey like '__sync_replaced__/%'
        and coalesce(json_extract(basePayloadJson, '$.retiredIdentity'), 0) <> 1
@@ -539,39 +575,39 @@ export async function listRetiredSyncV2Entities(
   )
 }
 
-export async function getSyncV2Entity(scopeId: string, objectId: string): Promise<SyncV2Entity | null> {
+export async function getSyncEntity(scopeId: string, objectId: string): Promise<SyncEntity | null> {
   const db = await getDb()
-  const rows = await db.select<SyncV2Entity[]>(
-    'select * from sync_v2_entities where scopeId = $1 and objectId = $2 limit 1',
+  const rows = await db.select<SyncEntity[]>(
+    'select * from sync_entities where scopeId = $1 and objectId = $2 limit 1',
     [scopeId, objectId],
   )
   return rows[0] ?? null
 }
 
-export async function listSyncV2SubtreeEntities(scopeId: string, rootObjectId: string): Promise<SyncV2Entity[]> {
+export async function listSyncSubtreeEntities(scopeId: string, rootObjectId: string): Promise<SyncEntity[]> {
   const db = await getDb()
-  return db.select<SyncV2Entity[]>(
+  return db.select<SyncEntity[]>(
     `with recursive subtree(objectId) as (
-       select objectId from sync_v2_entities where scopeId = $1 and objectId = $2
+       select objectId from sync_entities where scopeId = $1 and objectId = $2
        union all
-       select entity.objectId from sync_v2_entities entity
+       select entity.objectId from sync_entities entity
        join subtree parent on entity.parentObjectId = parent.objectId
        where entity.scopeId = $1 and entity.deleted = 0
      )
-     select entity.* from sync_v2_entities entity
+     select entity.* from sync_entities entity
      join subtree on subtree.objectId = entity.objectId
      where entity.scopeId = $1 and entity.deleted = 0`,
     [scopeId, rootObjectId],
   )
 }
 
-export async function listSyncV2CrdtEntitiesNeedingMaterialization(
+export async function listSyncCrdtEntitiesNeedingMaterialization(
   scopeId: string,
   limit = 50,
-): Promise<SyncV2Entity[]> {
+): Promise<SyncEntity[]> {
   const db = await getDb()
-  return db.select<SyncV2Entity[]>(
-    `select * from sync_v2_entities
+  return db.select<SyncEntity[]>(
+    `select * from sync_entities
      where scopeId = $1 and deleted = 0 and documentId is not null
        and kind in ('note', 'tag', 'mark', 'canvas', 'conversation', 'memory', 'setting')
        and json_extract(basePayloadJson, '$.type') = 'crdt-object'
@@ -581,13 +617,13 @@ export async function listSyncV2CrdtEntitiesNeedingMaterialization(
   )
 }
 
-export async function listSyncV2StructuredSnapshotsMissingLocally(
+export async function listSyncStructuredSnapshotsMissingLocally(
   scopeId: string,
   limit = 100,
-): Promise<SyncV2Entity[]> {
+): Promise<SyncEntity[]> {
   const db = await getDb()
-  return db.select<SyncV2Entity[]>(
-    `select entity.* from sync_v2_entities entity
+  return db.select<SyncEntity[]>(
+    `select entity.* from sync_entities entity
      where entity.scopeId = $1 and entity.deleted = 0 and entity.basePayloadJson is not null
        and json_extract(entity.basePayloadJson, '$.type') in
          ('tag', 'mark', 'canvas', 'conversation', 'memory')
@@ -614,29 +650,29 @@ export async function listSyncV2StructuredSnapshotsMissingLocally(
   )
 }
 
-export async function markSyncV2EntityDocumentMaterialized(
+export async function markSyncEntityDocumentMaterialized(
   scopeId: string,
   objectId: string,
   documentSequence: string,
 ): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `update sync_v2_entities set materializedHash = $4, updatedAt = $5
+    `update sync_entities set materializedHash = $4, updatedAt = $5
      where scopeId = $1 and objectId = $2 and documentSequence = $3`,
     [scopeId, objectId, documentSequence, `crdt:${documentSequence}`, Date.now()],
   )
 }
 
-export async function moveSyncV2EntityLocalKey(scopeId: string, oldKey: string, newKey: string): Promise<boolean> {
+export async function moveSyncEntityLocalKey(scopeId: string, oldKey: string, newKey: string): Promise<boolean> {
   const db = await getDb()
   const segments = newKey.split('/').filter(Boolean)
   const parentKey = segments.length > 1 ? segments.slice(0, -1).join('/') : null
-  const parent = parentKey === null ? null : await getOrCreateSyncV2Entity({
+  const parent = parentKey === null ? null : await getOrCreateSyncEntity({
     scopeId, kind: 'folder', localKey: parentKey,
   })
   const parentObjectId = parent?.objectId ?? null
   const result = await db.execute(
-    `update sync_v2_entities set
+    `update sync_entities set
        localKey = case when localKey = $2 then $3 else $3 || substr(localKey, length($2) + 1) end,
        name = case when localKey = $2 then $4 else name end,
        parentObjectId = case when localKey = $2 then $5 else parentObjectId end,
@@ -647,10 +683,10 @@ export async function moveSyncV2EntityLocalKey(scopeId: string, oldKey: string, 
   return result.rowsAffected > 0
 }
 
-export async function upsertSyncV2Entity(entity: SyncV2Entity): Promise<void> {
+export async function upsertSyncEntity(entity: SyncEntity): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `insert into sync_v2_entities (
+    `insert into sync_entities (
        scopeId, objectId, kind, localKey, parentObjectId, name, lifecycleRevision,
        documentId, documentSequence, materializedHash, basePayloadJson, deleted, updatedAt
      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
@@ -673,25 +709,25 @@ export async function upsertSyncV2Entity(entity: SyncV2Entity): Promise<void> {
  * diagnostics, while commands that could recreate the superseded object are
  * removed atomically.
  */
-export async function retireSyncV2EntityIdentity(
+export async function retireSyncEntityIdentity(
   scopeId: string,
   objectId: string,
   replacementObjectId: string,
 ): Promise<void> {
   if (objectId === replacementObjectId) return
   const replacementKey = `__sync_replaced__/${objectId}`
-  await applySyncV2AtomicBatch([
+  await applySyncAtomicBatch([
     {
-      statement: `update sync_v2_entities set localKey=$3, deleted=1, updatedAt=$4
+      statement: `update sync_entities set localKey=$3, deleted=1, updatedAt=$4
         where scopeId=$1 and objectId=$2`,
       values: [scopeId, objectId, replacementKey, Date.now()],
     },
     {
-      statement: 'delete from sync_v2_outbox where scopeId=$1 and objectId=$2',
+      statement: 'delete from sync_outbox where scopeId=$1 and objectId=$2',
       values: [scopeId, objectId],
     },
     {
-      statement: 'delete from sync_v2_mutation_journal where scopeId=$1 and objectId=$2',
+      statement: 'delete from sync_mutation_journal where scopeId=$1 and objectId=$2',
       values: [scopeId, objectId],
     },
     {
@@ -705,32 +741,32 @@ export async function retireSyncV2EntityIdentity(
   ])
 }
 
-export async function getOrCreateSyncV2Entity(input: {
+export async function getOrCreateSyncEntity(input: {
   scopeId: string
   kind: string
   localKey: string
   objectId?: string
   stableWorkspaceId?: string
-}): Promise<SyncV2Entity> {
-  const existing = await getSyncV2EntityByLocalKey(input.scopeId, input.localKey)
+}): Promise<SyncEntity> {
+  const existing = await getSyncEntityByLocalKey(input.scopeId, input.localKey)
   const stableObjectId = input.stableWorkspaceId
-    ? await deterministicSyncV2ObjectId(input.stableWorkspaceId, input.kind, input.localKey)
+    ? await deterministicSyncObjectId(input.stableWorkspaceId, input.kind, input.localKey)
     : null
   if (existing && (!stableObjectId || existing.objectId === stableObjectId)) return existing
   if (existing && stableObjectId) {
-    await retireSyncV2EntityIdentity(input.scopeId, existing.objectId, stableObjectId)
+    await retireSyncEntityIdentity(input.scopeId, existing.objectId, stableObjectId)
   }
   const objectId = input.objectId ?? stableObjectId ?? crypto.randomUUID()
   const segments = input.localKey.split('/').filter(Boolean)
   const parentPath = ['note', 'folder'].includes(input.kind) && segments.length > 1
     ? segments.slice(0, -1).join('/') : null
   const parent = parentPath
-    ? await getOrCreateSyncV2Entity({
+    ? await getOrCreateSyncEntity({
         scopeId: input.scopeId, kind: 'folder', localKey: parentPath,
         stableWorkspaceId: input.stableWorkspaceId,
       })
     : null
-  const entity: SyncV2Entity = {
+  const entity: SyncEntity = {
     scopeId: input.scopeId,
     objectId,
     kind: input.kind,
@@ -748,7 +784,7 @@ export async function getOrCreateSyncV2Entity(input: {
   }
   const db = await getDb()
   await db.execute(
-    `insert into sync_v2_entities(scopeId,objectId,kind,localKey,parentObjectId,name,
+    `insert into sync_entities(scopeId,objectId,kind,localKey,parentObjectId,name,
        lifecycleRevision,documentId,documentSequence,materializedHash,basePayloadJson,deleted,updatedAt)
      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      on conflict do nothing`,
@@ -756,10 +792,10 @@ export async function getOrCreateSyncV2Entity(input: {
       entity.name, entity.lifecycleRevision, entity.documentId, entity.documentSequence,
       entity.materializedHash, entity.basePayloadJson, entity.deleted, Date.now()],
   )
-  return await getSyncV2Entity(input.scopeId, objectId) ?? entity
+  return await getSyncEntity(input.scopeId, objectId) ?? entity
 }
 
-async function deterministicSyncV2ObjectId(
+async function deterministicSyncObjectId(
   workspaceId: string,
   kind: string,
   localKey: string,
@@ -773,7 +809,7 @@ async function deterministicSyncV2ObjectId(
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
-export async function enqueueSyncV2Command(input: {
+export async function enqueueSyncCommand(input: {
   scopeId: string
   command: { commandId: string, type: string, objectId?: string, documentId?: string }
     & Record<string, unknown>
@@ -781,7 +817,7 @@ export async function enqueueSyncV2Command(input: {
   const db = await getDb()
   const now = Date.now()
   await db.execute(
-    `insert into sync_v2_outbox (
+    `insert into sync_outbox (
        scopeId, commandId, commandType, objectId, documentId, commandJson,
        attempts, blocked, lastError, createdAt, updatedAt
      ) values ($1, $2, $3, $4, $5, $6, 0, 0, null, $7, $7)
@@ -792,37 +828,37 @@ export async function enqueueSyncV2Command(input: {
   )
 }
 
-export async function listSyncV2Outbox(
+export async function listSyncOutbox(
   scopeId: string,
   limit = 100,
   options: { includeBlocked?: boolean } = {},
-): Promise<SyncV2OutboxEntry[]> {
+): Promise<SyncOutboxEntry[]> {
   const db = await getDb()
-  return db.select<SyncV2OutboxEntry[]>(
-    `select * from sync_v2_outbox where scopeId = $1
+  return db.select<SyncOutboxEntry[]>(
+    `select * from sync_outbox where scopeId = $1
        ${options.includeBlocked ? '' : 'and blocked = 0'}
      order by createdAt, id limit $2`,
     [scopeId, limit],
   )
 }
 
-export async function completeSyncV2Command(scopeId: string, commandId: string): Promise<void> {
+export async function completeSyncCommand(scopeId: string, commandId: string): Promise<void> {
   const db = await getDb()
-  await db.execute('delete from sync_v2_outbox where scopeId = $1 and commandId = $2', [scopeId, commandId])
+  await db.execute('delete from sync_outbox where scopeId = $1 and commandId = $2', [scopeId, commandId])
 }
 
-export async function failSyncV2Command(scopeId: string, commandId: string, error: string, blocked: boolean): Promise<void> {
+export async function failSyncCommand(scopeId: string, commandId: string, error: string, blocked: boolean): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `update sync_v2_outbox set attempts = attempts + 1, blocked = $3, lastError = $4, updatedAt = $5
+    `update sync_outbox set attempts = attempts + 1, blocked = $3, lastError = $4, updatedAt = $5
      where scopeId = $1 and commandId = $2`,
     [scopeId, commandId, blocked ? 1 : 0, error.slice(0, 2_000), Date.now()],
   )
 }
 
-export async function replaceReusedSyncV2Command(
+export async function replaceReusedSyncCommand(
   scopeId: string,
-  entry: SyncV2OutboxEntry,
+  entry: SyncOutboxEntry,
 ): Promise<boolean> {
   try {
     const command = JSON.parse(entry.commandJson) as Record<string, unknown>
@@ -838,7 +874,7 @@ export async function replaceReusedSyncV2Command(
     command.mutationIds = Array.from(mutationIds)
     const db = await getDb()
     const result = await db.execute(
-      `update sync_v2_outbox set commandId = $3, commandJson = $4,
+      `update sync_outbox set commandId = $3, commandJson = $4,
          attempts = 0, blocked = 0, lastError = null, updatedAt = $5
        where scopeId = $1 and commandId = $2`,
       [scopeId, entry.commandId, replacementId, JSON.stringify(command), Date.now()],
@@ -855,9 +891,9 @@ export async function replaceReusedSyncV2Command(
  * unchanged, so a concurrent content edit still becomes a typed
  * delete-vs-edit conflict instead of being discarded.
  */
-export async function rebaseSyncV2DeleteCommand(
+export async function rebaseSyncDeleteCommand(
   scopeId: string,
-  entry: SyncV2OutboxEntry,
+  entry: SyncOutboxEntry,
   revision: string,
 ): Promise<boolean> {
   if (!/^\d+$/.test(revision)) return false
@@ -878,7 +914,7 @@ export async function rebaseSyncV2DeleteCommand(
     command.mutationIds = Array.from(mutationIds)
     const db = await getDb()
     const result = await db.execute(
-      `update sync_v2_outbox set commandId = $3, commandJson = $4,
+      `update sync_outbox set commandId = $3, commandJson = $4,
          attempts = attempts + 1, blocked = 0, lastError = null, updatedAt = $5
        where scopeId = $1 and commandId = $2`,
       [scopeId, entry.commandId, replacementId, JSON.stringify(command), Date.now()],
@@ -889,7 +925,7 @@ export async function rebaseSyncV2DeleteCommand(
   }
 }
 
-export async function storeSyncV2Event(scopeId: string, event: {
+export async function storeSyncEvent(scopeId: string, event: {
   eventId: string
   sequence: string
   type: string
@@ -898,7 +934,7 @@ export async function storeSyncV2Event(scopeId: string, event: {
 }): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `insert into sync_v2_inbox (
+    `insert into sync_inbox (
        scopeId, eventId, sequence, eventType, objectId, documentId, eventJson,
        status, attempts, lastError, receivedAt, appliedAt
      ) values ($1, $2, $3, $4, $5, $6, $7, 'pending', 0, null, $8, null)
@@ -908,71 +944,71 @@ export async function storeSyncV2Event(scopeId: string, event: {
   )
 }
 
-export async function listUnappliedSyncV2Events(scopeId: string, limit = 500): Promise<Array<{
+export async function listUnappliedSyncEvents(scopeId: string, limit = 500): Promise<Array<{
   id: number
   eventId: string
   sequence: string
   eventType: string
   eventJson: string
-  status: SyncV2InboxStatus
+  status: SyncInboxStatus
 }>> {
   const db = await getDb()
   return db.select(
-    `select id, eventId, sequence, eventType, eventJson, status from sync_v2_inbox
+    `select id, eventId, sequence, eventType, eventJson, status from sync_inbox
      where scopeId = $1 and status != 'applied' order by cast(sequence as integer), id limit $2`,
     [scopeId, Math.max(1, Math.min(500, Math.trunc(limit)))],
   )
 }
 
-export async function completeSyncV2Event(scopeId: string, eventId: string): Promise<void> {
-  await applySyncV2AtomicBatch([
+export async function completeSyncEvent(scopeId: string, eventId: string): Promise<void> {
+  await applySyncAtomicBatch([
     {
-      statement: `update sync_v2_inbox set status = 'applied', lastError = null, appliedAt = $3
+      statement: `update sync_inbox set status = 'applied', lastError = null, appliedAt = $3
         where scopeId = $1 and eventId = $2`,
       values: [scopeId, eventId, Date.now()],
     },
     {
-      statement: 'delete from sync_v2_apply_journal where scopeId = $1 and eventId = $2',
+      statement: 'delete from sync_apply_journal where scopeId = $1 and eventId = $2',
       values: [scopeId, eventId],
     },
   ])
 }
 
-export interface SyncV2AtomicStatement {
+export interface SyncAtomicStatement {
   statement: string
   values?: unknown[]
 }
 
 /** Runs every supplied mutation on one native SQLite connection and transaction. */
-export async function applySyncV2AtomicBatch(operations: SyncV2AtomicStatement[]): Promise<number> {
+export async function applySyncAtomicBatch(operations: SyncAtomicStatement[]): Promise<number> {
   const result = await invoke<{ rowsAffected: number }>('apply_sync_atomic_batch', { operations })
   return result.rowsAffected
 }
 
-export async function failSyncV2Event(scopeId: string, eventId: string, error: string): Promise<void> {
+export async function failSyncEvent(scopeId: string, eventId: string, error: string): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `update sync_v2_inbox set status = 'failed', attempts = attempts + 1, lastError = $3
+    `update sync_inbox set status = 'failed', attempts = attempts + 1, lastError = $3
      where scopeId = $1 and eventId = $2`,
     [scopeId, eventId, error.slice(0, 2_000)],
   )
 }
 
-export async function deferSyncV2Event(scopeId: string, eventId: string, reason: string): Promise<void> {
-  await applySyncV2AtomicBatch([
+export async function deferSyncEvent(scopeId: string, eventId: string, reason: string): Promise<void> {
+  await applySyncAtomicBatch([
     {
-      statement: `update sync_v2_inbox set status = 'pending', lastError = $3
+      statement: `update sync_inbox set status = 'pending', lastError = $3
         where scopeId = $1 and eventId = $2`,
       values: [scopeId, eventId, reason.slice(0, 2_000)],
     },
     {
-      statement: 'delete from sync_v2_apply_journal where scopeId = $1 and eventId = $2',
+      statement: 'delete from sync_apply_journal where scopeId = $1 and eventId = $2',
       values: [scopeId, eventId],
     },
   ])
 }
 
-export async function updateSyncV2Cursor(
+export async function updateSyncCursor(
   scopeId: string,
   receivedCursor: string,
   latestServerSequence: string,
@@ -980,7 +1016,7 @@ export async function updateSyncV2Cursor(
   const db = await getDb()
   const now = Date.now()
   await db.execute(
-    `insert into sync_v2_state (
+    `insert into sync_state (
        scopeId, receivedCursor, latestServerSequence, lastSuccessfulSyncAt, updatedAt
      ) values ($1, $2, $3, null, $4)
      on conflict(scopeId) do update set
@@ -991,38 +1027,38 @@ export async function updateSyncV2Cursor(
   )
 }
 
-export async function markSyncV2Successful(scopeId: string): Promise<void> {
+export async function markSyncSuccessful(scopeId: string): Promise<void> {
   const db = await getDb()
   const now = Date.now()
   await db.execute(
-    `update sync_v2_state set lastSuccessfulSyncAt = $2,
+    `update sync_state set lastSuccessfulSyncAt = $2,
        lastFullyConvergedAt = $2, updatedAt = $2 where scopeId = $1`,
     [scopeId, now],
   )
 }
 
-export async function markSyncV2ServerConfirmed(scopeId: string): Promise<void> {
+export async function markSyncServerConfirmed(scopeId: string): Promise<void> {
   const db = await getDb()
   const now = Date.now()
   await db.execute(
-    `update sync_v2_state set lastServerConfirmedAt = $2, updatedAt = $2 where scopeId = $1`,
+    `update sync_state set lastServerConfirmedAt = $2, updatedAt = $2 where scopeId = $1`,
     [scopeId, now],
   )
   const cutoff = now - 7 * 24 * 60 * 60_000
   await db.execute(
-    `delete from sync_v2_inbox where scopeId = $1 and status = 'applied' and appliedAt < $2`,
+    `delete from sync_inbox where scopeId = $1 and status = 'applied' and appliedAt < $2`,
     [scopeId, cutoff],
   )
   await db.execute(
-    `delete from sync_v2_transfers where scopeId = $1 and state = 'complete' and updatedAt < $2`,
+    `delete from sync_transfers where scopeId = $1 and state = 'complete' and updatedAt < $2`,
     [scopeId, cutoff],
   )
 }
 
-export async function upsertSyncV2Conflict(conflict: SyncV2Conflict): Promise<void> {
+export async function upsertSyncConflict(conflict: SyncConflict): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `insert into sync_v2_conflicts (
+    `insert into sync_conflicts (
        scopeId, conflictId, objectId, kind, type, status, createdSequence,
        payloadJson, createdAt, resolvedAt
      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -1035,25 +1071,25 @@ export async function upsertSyncV2Conflict(conflict: SyncV2Conflict): Promise<vo
   )
 }
 
-export async function listSyncV2Conflicts(scopeId: string): Promise<SyncV2Conflict[]> {
+export async function listSyncConflicts(scopeId: string): Promise<SyncConflict[]> {
   const db = await getDb()
-  return db.select<SyncV2Conflict[]>(
-    `select * from sync_v2_conflicts where scopeId = $1 and status = 'unresolved' order by createdAt`,
+  return db.select<SyncConflict[]>(
+    `select * from sync_conflicts where scopeId = $1 and status = 'unresolved' order by createdAt`,
     [scopeId],
   )
 }
 
-export async function listOrphanedLocalSyncV2Conflicts(
+export async function listOrphanedLocalSyncConflicts(
   scopeId: string,
   limit = 50,
-): Promise<SyncV2Conflict[]> {
+): Promise<SyncConflict[]> {
   const db = await getDb()
-  return db.select<SyncV2Conflict[]>(
-    `select conflict.* from sync_v2_conflicts conflict
+  return db.select<SyncConflict[]>(
+    `select conflict.* from sync_conflicts conflict
      where conflict.scopeId = $1 and conflict.status = 'unresolved'
        and conflict.createdSequence = '0'
        and not exists (
-         select 1 from sync_v2_outbox outbox
+         select 1 from sync_outbox outbox
          where outbox.scopeId = conflict.scopeId and outbox.commandType = 'create-conflict'
            and outbox.blocked = 0
            and json_extract(outbox.commandJson, '$.conflictId') = conflict.conflictId
@@ -1063,63 +1099,87 @@ export async function listOrphanedLocalSyncV2Conflicts(
   )
 }
 
-export async function retireBlockedSyncV2ConflictCommand(
+export async function retireBlockedSyncConflictCommand(
   scopeId: string,
   conflictId: string,
 ): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `delete from sync_v2_outbox where scopeId = $1 and commandType = 'create-conflict'
+    `delete from sync_outbox where scopeId = $1 and commandType = 'create-conflict'
        and blocked = 1 and json_extract(commandJson, '$.conflictId') = $2`,
     [scopeId, conflictId],
   )
 }
 
-export async function getSyncV2Conflict(scopeId: string, conflictId: string): Promise<SyncV2Conflict | null> {
+export async function getSyncConflict(scopeId: string, conflictId: string): Promise<SyncConflict | null> {
   const db = await getDb()
-  const rows = await db.select<SyncV2Conflict[]>(
-    `select * from sync_v2_conflicts where scopeId = $1 and conflictId = $2 limit 1`,
+  const rows = await db.select<SyncConflict[]>(
+    `select * from sync_conflicts where scopeId = $1 and conflictId = $2 limit 1`,
     [scopeId, conflictId],
   )
   return rows[0] ?? null
 }
 
-export async function hasUnresolvedSyncV2ConflictForObject(scopeId: string, objectId: string): Promise<boolean> {
+export async function hasUnresolvedSyncConflictForObject(scopeId: string, objectId: string): Promise<boolean> {
   const db = await getDb()
   const rows = await db.select<Array<{ present: number }>>(
-    `select 1 as present from sync_v2_conflicts
+    `select 1 as present from sync_conflicts
      where scopeId = $1 and objectId = $2 and status = 'unresolved' limit 1`,
     [scopeId, objectId],
   )
   return rows.length > 0
 }
 
-export async function resolveLocalSyncV2Conflict(scopeId: string, conflictId: string): Promise<void> {
+export async function resolveLocalSyncConflict(scopeId: string, conflictId: string): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `update sync_v2_conflicts set status = 'resolved', resolvedAt = $3
+    `update sync_conflicts set status = 'resolved', resolvedAt = $3
      where scopeId = $1 and conflictId = $2`,
     [scopeId, conflictId, Date.now()],
   )
 }
 
-export async function getSyncV2HealthSnapshot(scopeId: string): Promise<SyncV2HealthSnapshot> {
+/**
+ * Dismisses a conflict that only exists locally and removes the command that
+ * would publish it. This is reserved for state records whose merged result is
+ * already materialized, such as legacy structured CRDT conflicts.
+ */
+export async function dismissPendingSyncConflict(scopeId: string, conflictId: string): Promise<void> {
+  await applySyncAtomicBatch([
+    {
+      statement: `delete from sync_outbox where scopeId = $1 and commandType = 'create-conflict'
+        and json_extract(commandJson, '$.conflictId') = $2
+        and exists (
+          select 1 from sync_conflicts where scopeId = $1 and conflictId = $2
+            and status = 'unresolved' and createdSequence = '0'
+        )`,
+      values: [scopeId, conflictId],
+    },
+    {
+      statement: `update sync_conflicts set status = 'resolved', resolvedAt = $3
+        where scopeId = $1 and conflictId = $2 and status = 'unresolved' and createdSequence = '0'`,
+      values: [scopeId, conflictId, Date.now()],
+    },
+  ])
+}
+
+export async function getSyncHealthSnapshot(scopeId: string): Promise<SyncHealthSnapshot> {
   const db = await getDb()
-  const rows = await db.select<SyncV2HealthSnapshot[]>(
+  const rows = await db.select<SyncHealthSnapshot[]>(
     `select
-       coalesce((select receivedCursor from sync_v2_state where scopeId = $1), '0') as receivedCursor,
-       coalesce((select latestServerSequence from sync_v2_state where scopeId = $1), '0') as latestServerSequence,
-       (select lastSuccessfulSyncAt from sync_v2_state where scopeId = $1) as lastSuccessfulSyncAt,
-       (select lastServerConfirmedAt from sync_v2_state where scopeId = $1) as lastServerConfirmedAt,
-       (select lastFullyConvergedAt from sync_v2_state where scopeId = $1) as lastFullyConvergedAt,
-       (select count(*) from sync_v2_mutation_journal where scopeId = $1) as pendingMutations,
-       (select count(*) from sync_v2_outbox where scopeId = $1 and blocked = 0) as pendingOutbox,
-       (select count(*) from sync_v2_outbox where scopeId = $1 and blocked = 1) as blockedOutbox,
-       (select count(*) from sync_v2_inbox where scopeId = $1 and status = 'pending') as pendingInbox,
-       (select count(*) from sync_v2_inbox where scopeId = $1 and status = 'failed') as failedInbox,
-       (select count(*) from sync_v2_conflicts where scopeId = $1 and status = 'unresolved') as unresolvedConflicts,
-       (select count(*) from sync_v2_transfers where scopeId = $1 and state in ('pending', 'running')) as pendingTransfers,
-       (select count(*) from sync_v2_transfers where scopeId = $1 and state = 'failed') as failedTransfers`,
+       coalesce((select receivedCursor from sync_state where scopeId = $1), '0') as receivedCursor,
+       coalesce((select latestServerSequence from sync_state where scopeId = $1), '0') as latestServerSequence,
+       (select lastSuccessfulSyncAt from sync_state where scopeId = $1) as lastSuccessfulSyncAt,
+       (select lastServerConfirmedAt from sync_state where scopeId = $1) as lastServerConfirmedAt,
+       (select lastFullyConvergedAt from sync_state where scopeId = $1) as lastFullyConvergedAt,
+       (select count(*) from sync_mutation_journal where scopeId = $1) as pendingMutations,
+       (select count(*) from sync_outbox where scopeId = $1 and blocked = 0) as pendingOutbox,
+       (select count(*) from sync_outbox where scopeId = $1 and blocked = 1) as blockedOutbox,
+       (select count(*) from sync_inbox where scopeId = $1 and status = 'pending') as pendingInbox,
+       (select count(*) from sync_inbox where scopeId = $1 and status = 'failed') as failedInbox,
+       (select count(*) from sync_conflicts where scopeId = $1 and status = 'unresolved') as unresolvedConflicts,
+       (select count(*) from sync_transfers where scopeId = $1 and state in ('pending', 'running')) as pendingTransfers,
+       (select count(*) from sync_transfers where scopeId = $1 and state = 'failed') as failedTransfers`,
     [scopeId],
   )
   return rows[0] ?? {
@@ -1130,67 +1190,67 @@ export async function getSyncV2HealthSnapshot(scopeId: string): Promise<SyncV2He
   }
 }
 
-export async function listSyncV2ProblemDetails(
+export async function listSyncProblemDetails(
   scopeId: string,
   limit = 20,
-): Promise<SyncV2ProblemDetail[]> {
+): Promise<SyncProblemDetail[]> {
   const db = await getDb()
-  return db.select<SyncV2ProblemDetail[]>(
+  return db.select<SyncProblemDetail[]>(
     `select category, operation, objectId, identity, lastError from (
        select 'outbox' as category, commandType as operation, objectId,
          commandId as identity, lastError, updatedAt
-       from sync_v2_outbox where scopeId = $1 and blocked = 1
+       from sync_outbox where scopeId = $1 and blocked = 1
        union all
        select 'inbox' as category, eventType as operation, objectId,
          eventId as identity, lastError, receivedAt as updatedAt
-       from sync_v2_inbox where scopeId = $1 and status = 'failed'
+       from sync_inbox where scopeId = $1 and status = 'failed'
        union all
        select 'transfer' as category, direction as operation, objectId,
          transferId as identity, lastError, updatedAt
-       from sync_v2_transfers where scopeId = $1 and state = 'failed'
+       from sync_transfers where scopeId = $1 and state = 'failed'
      ) problems order by updatedAt desc limit $2`,
     [scopeId, Math.max(1, Math.min(100, Math.trunc(limit)))],
   )
 }
 
-export async function getSyncV2ObjectStatus(scopeId: string, localKey: string): Promise<'conflict' | 'pending' | 'synced' | null> {
+export async function getSyncObjectStatus(scopeId: string, localKey: string): Promise<'conflict' | 'pending' | 'synced' | null> {
   const db = await getDb()
   const rows = await db.select<Array<{ objectId: string, pending: number, conflicts: number, issues: number }>>(
     `select entity.objectId,
-       ((select count(*) from sync_v2_outbox outbox where outbox.scopeId = entity.scopeId
+       ((select count(*) from sync_outbox outbox where outbox.scopeId = entity.scopeId
          and (outbox.objectId = entity.objectId or outbox.objectId in
-           (select resourceObjectId from sync_v2_resource_refs resource
+           (select resourceObjectId from sync_resource_refs resource
             where resource.scopeId = entity.scopeId and resource.ownerObjectId = entity.objectId)))
         + (select count(*) from note_gen_server_sync_outbox legacy where legacy.workspaceId = entity.scopeId
           and legacy.objectId = entity.objectId)
-       + (select count(*) from sync_v2_mutation_journal mutation where mutation.scopeId = entity.scopeId
+       + (select count(*) from sync_mutation_journal mutation where mutation.scopeId = entity.scopeId
           and mutation.objectId = entity.objectId)
-        + (select count(*) from sync_v2_transfers transfer where transfer.scopeId = entity.scopeId
+        + (select count(*) from sync_transfers transfer where transfer.scopeId = entity.scopeId
           and transfer.direction = 'upload' and transfer.state in ('pending','running') and
           (transfer.objectId = entity.objectId or transfer.objectId in
-            (select resourceObjectId from sync_v2_resource_refs resource
+            (select resourceObjectId from sync_resource_refs resource
              where resource.scopeId = entity.scopeId and resource.ownerObjectId = entity.objectId)))) as pending,
-       (select count(*) from sync_v2_conflicts conflict where conflict.scopeId = entity.scopeId
+       (select count(*) from sync_conflicts conflict where conflict.scopeId = entity.scopeId
          and conflict.status = 'unresolved' and
          (conflict.objectId = entity.objectId or conflict.objectId in
-           (select resourceObjectId from sync_v2_resource_refs resource
+           (select resourceObjectId from sync_resource_refs resource
             where resource.scopeId = entity.scopeId and resource.ownerObjectId = entity.objectId))) as conflicts,
-       ((select count(*) from sync_v2_outbox blocked where blocked.scopeId = entity.scopeId
+       ((select count(*) from sync_outbox blocked where blocked.scopeId = entity.scopeId
           and blocked.blocked = 1 and
           (blocked.objectId = entity.objectId or blocked.objectId in
-            (select resourceObjectId from sync_v2_resource_refs resource
+            (select resourceObjectId from sync_resource_refs resource
              where resource.scopeId = entity.scopeId and resource.ownerObjectId = entity.objectId)))
-        + (select count(*) from sync_v2_inbox failed where failed.scopeId = entity.scopeId
+        + (select count(*) from sync_inbox failed where failed.scopeId = entity.scopeId
           and failed.status = 'failed' and
           (failed.objectId = entity.objectId or failed.objectId in
-            (select resourceObjectId from sync_v2_resource_refs resource
+            (select resourceObjectId from sync_resource_refs resource
              where resource.scopeId = entity.scopeId and resource.ownerObjectId = entity.objectId)))
-        + (select count(*) from sync_v2_transfers transfer where transfer.scopeId = entity.scopeId
+        + (select count(*) from sync_transfers transfer where transfer.scopeId = entity.scopeId
           and transfer.state = 'failed' and
           (transfer.objectId = entity.objectId or transfer.objectId in
-            (select resourceObjectId from sync_v2_resource_refs resource
+            (select resourceObjectId from sync_resource_refs resource
              where resource.scopeId = entity.scopeId and resource.ownerObjectId = entity.objectId)))) as issues
-     from sync_v2_entities entity where entity.scopeId = $1 and entity.localKey = $2 limit 1`,
+     from sync_entities entity where entity.scopeId = $1 and entity.localKey = $2 limit 1`,
     [scopeId, localKey],
   )
   const row = rows[0]
@@ -1200,7 +1260,7 @@ export async function getSyncV2ObjectStatus(scopeId: string, localKey: string): 
   return 'synced'
 }
 
-export async function setSyncV2Transfer(input: {
+export async function setSyncTransfer(input: {
   scopeId: string
   transferId: string
   objectId: string | null
@@ -1213,13 +1273,13 @@ export async function setSyncV2Transfer(input: {
 }): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `insert into sync_v2_transfers(scopeId, transferId, objectId, blobId, direction, state,
+    `insert into sync_transfers(scopeId, transferId, objectId, blobId, direction, state,
        completedBytes, totalBytes, attempts, lastError, updatedAt)
      values($1,$2,$3,$4,$5,$6,$7,$8,case when $6='failed' then 1 else 0 end,$9,$10)
      on conflict(scopeId, transferId) do update set state=excluded.state,
-       blobId=coalesce(excluded.blobId,sync_v2_transfers.blobId),
+       blobId=coalesce(excluded.blobId,sync_transfers.blobId),
        completedBytes=excluded.completedBytes,totalBytes=excluded.totalBytes,
-       attempts=case when excluded.state='failed' then sync_v2_transfers.attempts+1 else sync_v2_transfers.attempts end,
+       attempts=case when excluded.state='failed' then sync_transfers.attempts+1 else sync_transfers.attempts end,
        lastError=excluded.lastError, updatedAt=excluded.updatedAt`,
     [input.scopeId, input.transferId, input.objectId, input.blobId ?? null,
       input.direction, input.state, String(input.completedBytes ?? 0), String(input.totalBytes ?? 0),
@@ -1227,25 +1287,25 @@ export async function setSyncV2Transfer(input: {
   )
 }
 
-export async function completeSyncV2TransfersForObject(
+export async function completeSyncTransfersForObject(
   scopeId: string,
   objectId: string,
 ): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `update sync_v2_transfers set state = 'complete', lastError = null, updatedAt = $3
+    `update sync_transfers set state = 'complete', lastError = null, updatedAt = $3
      where scopeId = $1 and objectId = $2 and state in ('pending','running','failed')`,
     [scopeId, objectId, Date.now()],
   )
 }
 
-export async function expireStaleSyncV2AssetBindings(
+export async function expireStaleSyncAssetBindings(
   scopeId: string,
   updatedBefore: number,
 ): Promise<number> {
   const db = await getDb()
   const result = await db.execute(
-    `update sync_v2_transfers set state = 'failed', attempts = attempts + 1,
+    `update sync_transfers set state = 'failed', attempts = attempts + 1,
        lastError = '附件引用等待上传超时；请重试同步，或删除正文中的失效附件引用', updatedAt = $3
      where scopeId = $1 and transferId like 'asset-binding:%'
        and state in ('pending','running') and updatedAt < $2`,
@@ -1254,7 +1314,7 @@ export async function expireStaleSyncV2AssetBindings(
   return result.rowsAffected
 }
 
-export async function getSyncV2Transfer(scopeId: string, transferId: string): Promise<{
+export async function getSyncTransfer(scopeId: string, transferId: string): Promise<{
   state: 'pending' | 'running' | 'complete' | 'failed'
   attempts: number
   lastError: string | null
@@ -1265,41 +1325,41 @@ export async function getSyncV2Transfer(scopeId: string, transferId: string): Pr
     attempts: number
     lastError: string | null
   }>>(
-    `select state, attempts, lastError from sync_v2_transfers
+    `select state, attempts, lastError from sync_transfers
      where scopeId = $1 and transferId = $2 limit 1`,
     [scopeId, transferId],
   )
   return rows[0] ?? null
 }
 
-export async function retrySyncV2Problems(scopeId: string): Promise<void> {
+export async function retrySyncProblems(scopeId: string): Promise<void> {
   const db = await getDb()
   const now = Date.now()
-  const blocked = await db.select<SyncV2OutboxEntry[]>(
-    `select * from sync_v2_outbox where scopeId = $1 and blocked = 1 order by createdAt, id`,
+  const blocked = await db.select<SyncOutboxEntry[]>(
+    `select * from sync_outbox where scopeId = $1 and blocked = 1 order by createdAt, id`,
     [scopeId],
   )
-  const operations: SyncV2AtomicStatement[] = []
+  const operations: SyncAtomicStatement[] = []
   for (const entry of blocked) {
     if (entry.lastError === 'command_id_reused'
       || entry.lastError === 'revision_conflict'
       || entry.lastError === 'conflict_changed') {
       operations.push({
-        statement: 'delete from sync_v2_outbox where scopeId = $1 and commandId = $2',
+        statement: 'delete from sync_outbox where scopeId = $1 and commandId = $2',
         values: [scopeId, entry.commandId],
       })
       continue
     }
     const hasConflict = entry.objectId
       ? (await db.select<Array<{ present: number }>>(
-          `select 1 as present from sync_v2_conflicts
+          `select 1 as present from sync_conflicts
            where scopeId = $1 and objectId = $2 and status = 'unresolved' limit 1`,
           [scopeId, entry.objectId],
         )).length > 0
       : false
     if (hasConflict) {
       operations.push({
-        statement: 'delete from sync_v2_outbox where scopeId = $1 and commandId = $2',
+        statement: 'delete from sync_outbox where scopeId = $1 and commandId = $2',
         values: [scopeId, entry.commandId],
       })
       continue
@@ -1309,36 +1369,36 @@ export async function retrySyncV2Problems(scopeId: string): Promise<void> {
     // conflict record remains available for the user to recompute/resolve.
     if (entry.lastError === 'conflict_changed' && entry.commandType === 'create-conflict') {
       operations.push({
-        statement: 'delete from sync_v2_outbox where scopeId = $1 and commandId = $2 and blocked = 1',
+        statement: 'delete from sync_outbox where scopeId = $1 and commandId = $2 and blocked = 1',
         values: [scopeId, entry.commandId],
       })
       continue
     }
     operations.push({
-      statement: `update sync_v2_outbox set blocked = 0, attempts = 0,
+      statement: `update sync_outbox set blocked = 0, attempts = 0,
         lastError = null, updatedAt = $3 where scopeId = $1 and commandId = $2 and blocked = 1`,
       values: [scopeId, entry.commandId, now],
     })
   }
   operations.push({
-    statement: `update sync_v2_inbox set status = 'pending', lastError = null
+    statement: `update sync_inbox set status = 'pending', lastError = null
       where scopeId = $1 and status = 'failed'`,
     values: [scopeId],
   }, {
-    statement: `update sync_v2_transfers set state = 'pending', attempts = 0,
+    statement: `update sync_transfers set state = 'pending', attempts = 0,
       lastError = null, updatedAt = $2 where scopeId = $1 and state = 'failed'`,
     values: [scopeId, now],
   })
-  await applySyncV2AtomicBatch(operations)
+  await applySyncAtomicBatch(operations)
 }
 
-export async function listRecentActiveSyncV2TransferBlobIds(
+export async function listRecentActiveSyncTransferBlobIds(
   scopeId: string,
   updatedAfter: number,
 ): Promise<string[]> {
   const db = await getDb()
   const rows = await db.select<Array<{ blobId: string }>>(
-    `select distinct blobId from sync_v2_transfers
+    `select distinct blobId from sync_transfers
      where scopeId = $1 and blobId is not null
        and state in ('pending','running','failed') and updatedAt >= $2`,
     [scopeId, updatedAfter],
@@ -1346,29 +1406,29 @@ export async function listRecentActiveSyncV2TransferBlobIds(
   return rows.map(row => row.blobId)
 }
 
-export async function replaceSyncV2ResourceRefs(input: {
+export async function replaceSyncResourceRefs(input: {
   scopeId: string
   ownerObjectId: string
   resources: Array<{ resourceObjectId: string, localPath: string }>
 }): Promise<void> {
   const now = Date.now()
-  const operations: SyncV2AtomicStatement[] = [{
-    statement: 'delete from sync_v2_resource_refs where scopeId = $1 and ownerObjectId = $2',
+  const operations: SyncAtomicStatement[] = [{
+    statement: 'delete from sync_resource_refs where scopeId = $1 and ownerObjectId = $2',
     values: [input.scopeId, input.ownerObjectId],
   }]
   for (const resource of input.resources) {
     operations.push({
-      statement: `insert into sync_v2_resource_refs
+      statement: `insert into sync_resource_refs
         (scopeId,ownerObjectId,resourceObjectId,localPath,updatedAt)
         values($1,$2,$3,$4,$5)`,
       values: [input.scopeId, input.ownerObjectId, resource.resourceObjectId,
         resource.localPath, now],
     })
   }
-  await applySyncV2AtomicBatch(operations)
+  await applySyncAtomicBatch(operations)
 }
 
-export async function recordSyncV2Mutation(input: {
+export async function recordSyncMutation(input: {
   scopeId: string
   mutationId: string
   objectId: string | null
@@ -1378,7 +1438,7 @@ export async function recordSyncV2Mutation(input: {
   const db = await getDb()
   const now = Date.now()
   await db.execute(
-    `insert into sync_v2_mutation_journal(scopeId, mutationId, objectId, kind, payloadJson,
+    `insert into sync_mutation_journal(scopeId, mutationId, objectId, kind, payloadJson,
        state, lastError, createdAt, updatedAt)
      values($1,$2,$3,$4,$5,'materialized',null,$6,$6)
      on conflict(scopeId, mutationId) do nothing`,
@@ -1386,30 +1446,30 @@ export async function recordSyncV2Mutation(input: {
   )
 }
 
-export async function markSyncV2MutationQueued(scopeId: string, mutationId: string): Promise<void> {
+export async function markSyncMutationQueued(scopeId: string, mutationId: string): Promise<void> {
   const db = await getDb()
   await db.execute(
-    `update sync_v2_mutation_journal set state='queued', updatedAt=$3
+    `update sync_mutation_journal set state='queued', updatedAt=$3
      where scopeId=$1 and mutationId=$2`, [scopeId, mutationId, Date.now()],
   )
 }
 
-export async function completeSyncV2Mutation(scopeId: string, mutationId: string): Promise<void> {
+export async function completeSyncMutation(scopeId: string, mutationId: string): Promise<void> {
   const db = await getDb()
   await db.execute(
-    'delete from sync_v2_mutation_journal where scopeId=$1 and mutationId=$2',
+    'delete from sync_mutation_journal where scopeId=$1 and mutationId=$2',
     [scopeId, mutationId],
   )
 }
 
 /**
- * A queued mutation must be referenced by either the staging outbox or a v2
+ * A queued mutation must be referenced by either the staging outbox or a durable
  * command. If neither reference exists, its replacing command was already
  * acknowledged (or a newer mutation for the same object superseded it).
  */
-export async function retireSettledSyncV2Mutations(scopeId: string): Promise<number> {
-  return await applySyncV2AtomicBatch([{
-    statement: `delete from sync_v2_mutation_journal as mutation
+export async function retireSettledSyncMutations(scopeId: string): Promise<number> {
+  return await applySyncAtomicBatch([{
+    statement: `delete from sync_mutation_journal as mutation
       where mutation.scopeId = $1 and mutation.state = 'queued'
         and not exists (
           select 1 from note_gen_server_sync_outbox staging
@@ -1417,7 +1477,7 @@ export async function retireSettledSyncV2Mutations(scopeId: string): Promise<num
             and staging.operationId = mutation.mutationId
         )
         and not exists (
-          select 1 from sync_v2_outbox command
+          select 1 from sync_outbox command
           where command.scopeId = mutation.scopeId
             and (command.commandId = mutation.mutationId
               or instr(command.commandJson, '"' || mutation.mutationId || '"') > 0)

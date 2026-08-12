@@ -13,61 +13,61 @@ import {
   retireStaleBlockedNoteGenServerOutbox,
 } from '@/db/note-gen-server-sync'
 import {
-  beginSyncV2EventApply,
-  completeSyncV2Command,
-  completeSyncV2TransfersForObject,
-  completeSyncV2Mutation,
-  completeSyncV2Event,
-  deferSyncV2Event,
-  clearSyncV2BootstrapProgress,
-  enqueueSyncV2Command,
-  expireStaleSyncV2AssetBindings,
-  failSyncV2Command,
-  failSyncV2Event,
-  getSyncV2Entity,
-  getSyncV2EntityByLocalKey,
-  getSyncV2Conflict,
-  getSyncV2BootstrapProgress,
-  getLocalSyncV2Document,
-  getSyncV2HealthSnapshot,
-  getSyncV2Transfer,
-  getSyncV2AssetEntityByPath,
-  getSyncV2AssetEntityForOwnerPath,
-  hasUnresolvedSyncV2ConflictForObject,
-  isSyncV2FullyConverged,
-  isSyncV2BootstrapComplete,
-  listSyncV2SubtreeEntities,
-  listSyncV2CrdtEntitiesNeedingMaterialization,
-  listSyncV2Conflicts,
-  listSyncV2StructuredSnapshotsMissingLocally,
-  listOrphanedLocalSyncV2Conflicts,
-  listSyncV2Outbox,
-  listRecoverableSyncV2Mutations,
-  listRetiredSyncV2Entities,
-  listUnreferencedSyncV2AssetEntities,
-  listRecentActiveSyncV2TransferBlobIds,
-  listUnappliedSyncV2Events,
-  markSyncV2Successful,
-  markSyncV2ServerConfirmed,
-  markSyncV2EntityDocumentMaterialized,
-  markSyncV2BootstrapComplete,
-  recoverSyncV2ApplyJournal,
-  rebaseSyncV2DeleteCommand,
-  replaceReusedSyncV2Command,
-  saveSyncV2BootstrapProgress,
-  replaceSyncV2ResourceRefs,
-  retireSettledSyncV2Mutations,
-  retireBlockedSyncV2ConflictCommand,
-  retireSyncV2EntityIdentity,
-  storeSyncV2Event,
-  setSyncV2Transfer,
-  resolveLocalSyncV2Conflict,
-  updateSyncV2Cursor,
-  upsertSyncV2Conflict,
-  upsertSyncV2Entity,
-  upsertLocalSyncV2Document,
-  type SyncV2Entity,
-  type SyncV2HealthSnapshot,
+  beginSyncEventApply,
+  completeSyncCommand,
+  completeSyncTransfersForObject,
+  completeSyncMutation,
+  completeSyncEvent,
+  deferSyncEvent,
+  clearSyncBootstrapProgress,
+  enqueueSyncCommand,
+  expireStaleSyncAssetBindings,
+  failSyncCommand,
+  failSyncEvent,
+  getSyncEntity,
+  getSyncEntityByLocalKey,
+  getSyncConflict,
+  getSyncBootstrapProgress,
+  getLocalSyncDocument,
+  getSyncHealthSnapshot,
+  getSyncTransfer,
+  getSyncAssetEntityByPath,
+  getSyncAssetEntityForOwnerPath,
+  hasUnresolvedSyncConflictForObject,
+  isSyncFullyConverged,
+  isSyncBootstrapComplete,
+  listSyncSubtreeEntities,
+  listSyncCrdtEntitiesNeedingMaterialization,
+  listSyncConflicts,
+  listSyncStructuredSnapshotsMissingLocally,
+  listOrphanedLocalSyncConflicts,
+  listSyncOutbox,
+  listRecoverableSyncMutations,
+  listRetiredSyncEntities,
+  listUnreferencedSyncAssetEntities,
+  listRecentActiveSyncTransferBlobIds,
+  listUnappliedSyncEvents,
+  markSyncSuccessful,
+  markSyncServerConfirmed,
+  markSyncEntityDocumentMaterialized,
+  markSyncBootstrapComplete,
+  recoverSyncApplyJournal,
+  rebaseSyncDeleteCommand,
+  replaceReusedSyncCommand,
+  saveSyncBootstrapProgress,
+  replaceSyncResourceRefs,
+  retireSettledSyncMutations,
+  retireBlockedSyncConflictCommand,
+  retireSyncEntityIdentity,
+  storeSyncEvent,
+  setSyncTransfer,
+  resolveLocalSyncConflict,
+  updateSyncCursor,
+  upsertSyncConflict,
+  upsertSyncEntity,
+  upsertLocalSyncDocument,
+  type SyncEntity,
+  type SyncHealthSnapshot,
 } from '@/db/note-gen-server-sync-index'
 import emitter from '@/lib/emitter'
 import { ensureSafeWorkspaceRelativePath, getFilePathOptions, getWorkspacePath } from '@/lib/workspace'
@@ -85,21 +85,21 @@ import {
   type NoteGenServerPreparedAssetResource,
 } from './note-gen-server-assets'
 import {
-  bootstrapSyncV2,
-  createSyncV2NameBlindIndex,
-  getSyncV2StableBlindIndexKey,
-  getSyncV2StableBlindIndexKeyVersion,
-  decryptSyncV2Payload,
-  encryptSyncV2Payload,
-  pullSyncV2Events,
-  pushSyncV2Commands,
-  type SyncV2Command,
-  type SyncV2Event,
-  type SyncV2BootstrapObject,
-  type SyncV2ObjectKind,
+  bootstrapSync,
+  createSyncNameBlindIndex,
+  getSyncStableBlindIndexKey,
+  getSyncStableBlindIndexKeyVersion,
+  decryptSyncPayload,
+  encryptSyncPayload,
+  pullSyncEvents,
+  pushSyncCommands,
+  type SyncCommand,
+  type SyncEvent,
+  type SyncBootstrapObject,
+  type SyncObjectKind,
 } from './note-gen-server-sync-protocol'
 
-export interface NoteGenServerSyncV2CycleResult extends SyncV2HealthSnapshot {
+export interface NoteGenServerSyncCycleResult extends SyncHealthSnapshot {
   pushed: number
   pulled: number
   applied: number
@@ -118,10 +118,10 @@ interface RuntimeInput {
   keyVersion: number
 }
 
-export class SyncV2KeyMissingError extends Error {
+export class SyncKeyMissingError extends Error {
   constructor(readonly keyVersion: number) {
     super(`缺少 Workspace Key v${keyVersion}`)
-    this.name = 'SyncV2KeyMissingError'
+    this.name = 'SyncKeyMissingError'
   }
 }
 
@@ -133,7 +133,7 @@ const BLOB_DOWNLOAD_RETENTION_MS = 7 * 24 * 60 * 60_000
 const ORPHAN_ASSET_GRACE_MS = 7 * 24 * 60 * 60_000
 const ASSET_BINDING_TIMEOUT_MS = 24 * 60 * 60_000
 
-export function resetNoteGenServerSyncV2Reconciliation(scopeId?: string): void {
+export function resetNoteGenServerSyncReconciliation(scopeId?: string): void {
   if (scopeId) {
     reconciledWorkspaces.delete(scopeId)
     lastLocalReconciliationAt.delete(scopeId)
@@ -143,21 +143,21 @@ export function resetNoteGenServerSyncV2Reconciliation(scopeId?: string): void {
   lastLocalReconciliationAt.clear()
 }
 
-export async function runNoteGenServerSyncV2Cycle(input: RuntimeInput): Promise<NoteGenServerSyncV2CycleResult> {
+export async function runNoteGenServerSyncCycle(input: RuntimeInput): Promise<NoteGenServerSyncCycleResult> {
   await retireStaleBlockedNoteGenServerOutbox(input.syncScopeId)
   await cleanupStaleBlobDownloads(input.syncScopeId)
-  await expireStaleSyncV2AssetBindings(input.syncScopeId, Date.now() - ASSET_BINDING_TIMEOUT_MS)
-  await recoverSyncV2ApplyJournal(input.syncScopeId)
-  await recoverReusedSyncV2Commands(input.syncScopeId)
+  await expireStaleSyncAssetBindings(input.syncScopeId, Date.now() - ASSET_BINDING_TIMEOUT_MS)
+  await recoverSyncApplyJournal(input.syncScopeId)
+  await recoverReusedSyncCommands(input.syncScopeId)
   // Capture the device's existing workspace before the first remote snapshot
   // can materialize over it. Stable-key collisions then become explicit
   // initial-import/structured conflicts instead of timestamp-based winners.
-  if (!await isSyncV2BootstrapComplete(input.syncScopeId)) await reconcileLocalWorkspace(input)
+  if (!await isSyncBootstrapComplete(input.syncScopeId)) await reconcileLocalWorkspace(input)
   await ensureBootstrap(input)
   await reconcileCrdtMaterialization(input)
   await reconcileMissingStructuredSnapshots(input)
   await requeueOrphanedLocalConflicts(input)
-  await recoverSyncV2Mutations(input)
+  await recoverSyncMutations(input)
   // Capture local business/file state before applying newly received events.
   // Otherwise the first cycle after resume can materialize a remote deletion
   // before an existing local value has reached the durable staging outbox,
@@ -168,26 +168,31 @@ export async function runNoteGenServerSyncV2Cycle(input: RuntimeInput): Promise<
   await enqueueOrphanAssetDeletes(input)
   await enqueueRetiredIdentityDeletes(input)
   await importPendingOperations(input)
-  const pushed = await flushV2Outbox(input)
+  const pushed = await flushSyncOutbox(input)
   const confirmedReceived = await receiveEvents(input)
   const confirmedApplied = await applyInbox(input)
   await resolveLegacyNoteCrdtSnapshotConflicts(input)
+  // A create-conflict command can become stale while the authoritative object
+  // revision is being pulled. Rebuild that local conflict against the newly
+  // applied revision before the follow-up push instead of leaving a permanently
+  // blocked immutable command for the user to retry.
+  await requeueOrphanedLocalConflicts(input)
   await importPendingOperations(input)
-  const followUpPushed = await flushV2Outbox(input)
+  const followUpPushed = await flushSyncOutbox(input)
   const finalReceived = followUpPushed.count > 0 ? await receiveEvents(input) : 0
   const finalApplied = finalReceived > 0 ? await applyInbox(input) : { count: 0, conflicts: [] }
-  await retireSettledSyncV2Mutations(input.syncScopeId)
-  await markSyncV2ServerConfirmed(input.syncScopeId)
-  let health = await getSyncV2HealthSnapshot(input.syncScopeId)
+  await retireSettledSyncMutations(input.syncScopeId)
+  await markSyncServerConfirmed(input.syncScopeId)
+  let health = await getSyncHealthSnapshot(input.syncScopeId)
   const staging = await getNoteGenServerSyncQueueStats(input.syncScopeId)
   health = { ...health, pendingOutbox: health.pendingOutbox + staging.pendingOutbox,
     blockedOutbox: health.blockedOutbox + staging.blockedOutbox,
     pendingInbox: health.pendingInbox + staging.storedInbox,
     failedInbox: health.failedInbox + staging.failedInbox }
-  const converged = isSyncV2FullyConverged(health)
+  const converged = isSyncFullyConverged(health)
   if (converged) {
-    await markSyncV2Successful(input.syncScopeId)
-    health = await getSyncV2HealthSnapshot(input.syncScopeId)
+    await markSyncSuccessful(input.syncScopeId)
+    health = await getSyncHealthSnapshot(input.syncScopeId)
   }
   return { ...health, pushed: pushed.count + followUpPushed.count,
     pulled: initialReceived + confirmedReceived + finalReceived,
@@ -196,18 +201,18 @@ export async function runNoteGenServerSyncV2Cycle(input: RuntimeInput): Promise<
       ...followUpPushed.conflicts, ...finalApplied.conflicts], converged }
 }
 
-async function recoverReusedSyncV2Commands(scopeId: string): Promise<void> {
-  const entries = await listSyncV2Outbox(scopeId, 10_000, { includeBlocked: true })
+async function recoverReusedSyncCommands(scopeId: string): Promise<void> {
+  const entries = await listSyncOutbox(scopeId, 10_000, { includeBlocked: true })
   for (const entry of entries) {
-    if (entry.blocked !== 1 || !isRetiredSyncV2CommandError(entry.lastError)) continue
+    if (entry.blocked !== 1 || !isRetiredSyncCommandError(entry.lastError)) continue
     // These errors mean the immutable command is stale. The accepted remote
     // revision and any durable conflict record already preserve the useful
     // state; changing the command ID merely creates an infinite retry queue.
-    await completeSyncV2Command(scopeId, entry.commandId)
+    await completeSyncCommand(scopeId, entry.commandId)
     try {
       const command = JSON.parse(entry.commandJson) as { mutationIds?: unknown[] }
       for (const mutationId of command.mutationIds ?? []) {
-        if (typeof mutationId === 'string') await completeSyncV2Mutation(scopeId, mutationId)
+        if (typeof mutationId === 'string') await completeSyncMutation(scopeId, mutationId)
       }
     } catch {
       // Malformed legacy metadata must not keep a stale command alive.
@@ -215,19 +220,20 @@ async function recoverReusedSyncV2Commands(scopeId: string): Promise<void> {
   }
 }
 
-function isRetiredSyncV2CommandError(value: string | null): boolean {
+function isRetiredSyncCommandError(value: string | null): boolean {
   return value === 'command_id_reused'
     || value === 'revision_conflict'
     || value === 'conflict_changed'
+    || value === 'same_name_still_conflicts'
 }
 
 async function reconcileCrdtMaterialization(input: RuntimeInput): Promise<void> {
-  const entities = await listSyncV2CrdtEntitiesNeedingMaterialization(input.syncScopeId)
+  const entities = await listSyncCrdtEntitiesNeedingMaterialization(input.syncScopeId)
   for (const entity of entities) await materializeCrdtEntity(input, entity, false)
 }
 
 async function reconcileMissingStructuredSnapshots(input: RuntimeInput): Promise<void> {
-  let entities = await listSyncV2StructuredSnapshotsMissingLocally(input.syncScopeId)
+  let entities = await listSyncStructuredSnapshotsMissingLocally(input.syncScopeId)
   if (entities.length === 0) return
   const dependencyRank = (kind: string) => kind === 'tag' ? 0 : kind === 'mark' ? 1 : kind === 'canvas' ? 2 : 1
   entities = [...entities].sort((left, right) => dependencyRank(left.kind) - dependencyRank(right.kind))
@@ -271,8 +277,8 @@ async function reconcileMissingStructuredSnapshots(input: RuntimeInput): Promise
 }
 
 async function requeueOrphanedLocalConflicts(input: RuntimeInput): Promise<void> {
-  for (const conflict of await listOrphanedLocalSyncV2Conflicts(input.syncScopeId)) {
-    const entity = await getSyncV2Entity(input.syncScopeId, conflict.objectId)
+  for (const conflict of await listOrphanedLocalSyncConflicts(input.syncScopeId)) {
+    const entity = await getSyncEntity(input.syncScopeId, conflict.objectId)
     const payload = parseJson(conflict.payloadJson)
     if (!entity || !payload) continue
     const identity = `${conflict.conflictId}:${entity.lifecycleRevision}:${entity.documentSequence}`
@@ -282,28 +288,28 @@ async function requeueOrphanedLocalConflicts(input: RuntimeInput): Promise<void>
     const commandId = await createDeterministicServerObjectId(
       input.workspaceId, 'requeued-conflict-command', identity,
     )
-    const encrypted = await encryptSyncV2Payload(input.workspaceKey, payload, {
+    const encrypted = await encryptSyncPayload(input.workspaceKey, payload, {
       workspaceId: input.workspaceId, objectId: entity.objectId, kind: entity.kind,
       keyVersion: input.keyVersion, purpose: 'conflict', identity: conflictId,
     })
-    await enqueueSyncV2Command({ scopeId: input.syncScopeId, command: {
+    await enqueueSyncCommand({ scopeId: input.syncScopeId, command: {
       type: 'create-conflict', commandId, conflictId, objectId: entity.objectId,
-      kind: entity.kind as SyncV2ObjectKind, conflictType: conflict.type,
+      kind: entity.kind as SyncObjectKind, conflictType: conflict.type,
       expectedRevision: entity.lifecycleRevision === '0' ? null : entity.lifecycleRevision,
       expectedDocumentSequence: entity.documentId ? entity.documentSequence : null,
       keyVersion: input.keyVersion, ...encrypted,
     } })
-    await upsertSyncV2Conflict({
+    await upsertSyncConflict({
       ...conflict, conflictId, createdAt: Date.now(), payloadJson: JSON.stringify(payload),
     })
-    await retireBlockedSyncV2ConflictCommand(input.syncScopeId, conflict.conflictId)
-    await resolveLocalSyncV2Conflict(input.syncScopeId, conflict.conflictId)
+    await retireBlockedSyncConflictCommand(input.syncScopeId, conflict.conflictId)
+    await resolveLocalSyncConflict(input.syncScopeId, conflict.conflictId)
   }
 }
 
 async function materializeCrdtEntity(
   input: RuntimeInput,
-  entity: SyncV2Entity,
+  entity: SyncEntity,
   refreshView: boolean,
 ): Promise<void> {
   if (entity.kind === 'note') {
@@ -328,7 +334,7 @@ async function materializeCrdtEntity(
         emitter.emit('sync-content-updated', { path, content: snapshot.markdown })
       }
     }
-    await markSyncV2EntityDocumentMaterialized(
+    await markSyncEntityDocumentMaterialized(
       input.syncScopeId, entity.objectId, entity.documentSequence,
     )
     return
@@ -339,14 +345,14 @@ async function materializeCrdtEntity(
     })
   ))
   if (materialized) {
-    await markSyncV2EntityDocumentMaterialized(
+    await markSyncEntityDocumentMaterialized(
       input.syncScopeId, entity.objectId, entity.documentSequence,
     )
   }
 }
 
 async function resolveLegacyNoteCrdtSnapshotConflicts(input: RuntimeInput): Promise<void> {
-  for (const conflict of await listSyncV2Conflicts(input.syncScopeId)) {
+  for (const conflict of await listSyncConflicts(input.syncScopeId)) {
     if (conflict.kind !== 'note' || conflict.type !== 'initial-import'
       || conflict.createdSequence === '0') continue
     const payload = parseJson(conflict.payloadJson) as {
@@ -354,13 +360,13 @@ async function resolveLegacyNoteCrdtSnapshotConflicts(input: RuntimeInput): Prom
       remote?: unknown
     } | null
     if (payload?.base !== '' || payload.remote !== '') continue
-    const entity = await getSyncV2Entity(input.syncScopeId, conflict.objectId)
+    const entity = await getSyncEntity(input.syncScopeId, conflict.objectId)
     const lifecycle = parseJson(entity?.basePayloadJson ?? '') as { type?: unknown } | null
     if (!entity || lifecycle?.type !== 'crdt-object') continue
     const commandId = await createDeterministicServerObjectId(
       input.workspaceId, 'resolve-legacy-note-crdt-conflict', conflict.conflictId,
     )
-    await enqueueSyncV2Command({ scopeId: input.syncScopeId, command: {
+    await enqueueSyncCommand({ scopeId: input.syncScopeId, command: {
       type: 'resolve-conflict', commandId, conflictId: conflict.conflictId,
       expectedCreatedSequence: conflict.createdSequence,
     } })
@@ -382,11 +388,11 @@ async function reconcileLocalWorkspace(input: RuntimeInput): Promise<void> {
 }
 
 async function enqueueOrphanAssetDeletes(input: RuntimeInput): Promise<void> {
-  const candidates = await listUnreferencedSyncV2AssetEntities(
+  const candidates = await listUnreferencedSyncAssetEntities(
     input.syncScopeId, Date.now() - ORPHAN_ASSET_GRACE_MS,
   )
   for (const entity of candidates) {
-    if (await hasUnresolvedSyncV2ConflictForObject(input.syncScopeId, entity.objectId)) continue
+    if (await hasUnresolvedSyncConflictForObject(input.syncScopeId, entity.objectId)) continue
     const payload = parseJson(entity.basePayloadJson) as {
       resourceId?: string
       blobId?: string
@@ -397,20 +403,20 @@ async function enqueueOrphanAssetDeletes(input: RuntimeInput): Promise<void> {
     if (payload?.resourceId !== entity.objectId) continue
     const commandId = crypto.randomUUID()
     const conflictId = crypto.randomUUID()
-    const envelope = await encryptSyncV2Payload(input.workspaceKey, payload ?? {
+    const envelope = await encryptSyncPayload(input.workspaceKey, payload ?? {
       schemaVersion: 2, type: 'asset', resourceId: entity.objectId,
     }, {
       workspaceId: input.workspaceId, objectId: entity.objectId, kind: 'asset',
       keyVersion: input.keyVersion, purpose: 'object', identity: entity.objectId,
     })
-    const conflictEnvelope = await encryptSyncV2Payload(input.workspaceKey, {
+    const conflictEnvelope = await encryptSyncPayload(input.workspaceKey, {
       schemaVersion: 2, type: 'delete-orphan-asset', resourceId: entity.objectId,
       path: payload?.localPath ?? entity.name,
     }, {
       workspaceId: input.workspaceId, objectId: entity.objectId, kind: 'asset',
       keyVersion: input.keyVersion, purpose: 'conflict', identity: conflictId,
     })
-    await enqueueSyncV2Command({ scopeId: input.syncScopeId, command: {
+    await enqueueSyncCommand({ scopeId: input.syncScopeId, command: {
       commandId, type: 'delete-object', objectId: entity.objectId, kind: 'asset',
       parentObjectId: null, nameCiphertext: envelope.ciphertext,
       baseRevision: entity.lifecycleRevision, expectedDocumentSequence: '0',
@@ -423,7 +429,7 @@ async function enqueueOrphanAssetDeletes(input: RuntimeInput): Promise<void> {
 }
 
 async function enqueueRetiredIdentityDeletes(input: RuntimeInput): Promise<void> {
-  for (const entity of await listRetiredSyncV2Entities(input.syncScopeId)) {
+  for (const entity of await listRetiredSyncEntities(input.syncScopeId)) {
     const identity = `${entity.objectId}:${entity.lifecycleRevision}:${entity.documentSequence}`
     const commandId = await createDeterministicServerObjectId(
       input.workspaceId, 'retire-superseded-sync-identity', identity,
@@ -436,18 +442,18 @@ async function enqueueRetiredIdentityDeletes(input: RuntimeInput): Promise<void>
       documentId: entity.documentId, retiredIdentity: true,
     }
     const [encrypted, conflictEnvelope] = await Promise.all([
-      encryptSyncV2Payload(input.workspaceKey, payload, {
+      encryptSyncPayload(input.workspaceKey, payload, {
         workspaceId: input.workspaceId, objectId: entity.objectId, kind: entity.kind,
         keyVersion: input.keyVersion, purpose: 'object', identity: entity.objectId,
       }),
-      encryptSyncV2Payload(input.workspaceKey, {
+      encryptSyncPayload(input.workspaceKey, {
         schemaVersion: 2, type: 'retire-superseded-identity', objectId: entity.objectId,
       }, {
         workspaceId: input.workspaceId, objectId: entity.objectId, kind: entity.kind,
         keyVersion: input.keyVersion, purpose: 'conflict', identity: conflictId,
       }),
     ])
-    await enqueueSyncV2Command({ scopeId: input.syncScopeId, command: {
+    await enqueueSyncCommand({ scopeId: input.syncScopeId, command: {
       type: 'delete-object', commandId, objectId: entity.objectId, kind: entity.kind,
       parentObjectId: entity.parentObjectId, nameCiphertext: encrypted.ciphertext,
       baseRevision: entity.lifecycleRevision,
@@ -465,15 +471,15 @@ async function cleanupStaleBlobDownloads(scopeId: string): Promise<void> {
   lastBlobDownloadCleanupAt = now
   const cutoff = now - BLOB_DOWNLOAD_RETENTION_MS
   try {
-    const active = new Set(await listRecentActiveSyncV2TransferBlobIds(scopeId, cutoff))
+    const active = new Set(await listRecentActiveSyncTransferBlobIds(scopeId, cutoff))
     await cleanupStaleNoteGenServerBlobDownloads(active, cutoff)
   } catch (error) {
     console.warn('Failed to clean stale NoteGen Server Blob downloads:', error)
   }
 }
 
-async function recoverSyncV2Mutations(input: RuntimeInput): Promise<void> {
-  const recoverable = await listRecoverableSyncV2Mutations(input.syncScopeId)
+async function recoverSyncMutations(input: RuntimeInput): Promise<void> {
+  const recoverable = await listRecoverableSyncMutations(input.syncScopeId)
   if (recoverable.length === 0) return
   const kinds = new Set(recoverable.map(item => item.kind))
   if ([...kinds].some(kind => kind === 'note' || kind === 'folder')) {
@@ -496,12 +502,12 @@ async function recoverSyncV2Mutations(input: RuntimeInput): Promise<void> {
   // A successful full rescan either recreated an equivalent durable outbox
   // command or proved that the local state already matches its baseline.
   for (const mutation of recoverable) {
-    await completeSyncV2Mutation(input.syncScopeId, mutation.mutationId)
+    await completeSyncMutation(input.syncScopeId, mutation.mutationId)
   }
 }
 
 type DeferredBootstrapObject = {
-  object: SyncV2BootstrapObject
+  object: SyncBootstrapObject
   payload: unknown
   resolvedParentObjectId: string | null
   snapshotSequence: string
@@ -609,7 +615,7 @@ async function materializeBootstrapObject(
     createdAt: new Date().toISOString(),
   }, object.kind, payload)
   if (!object.nameBlindIndexPresent && ['note', 'folder'].includes(object.kind)
-    && !await hasUnresolvedSyncV2ConflictForObject(input.syncScopeId, object.objectId)) {
+    && !await hasUnresolvedSyncConflictForObject(input.syncScopeId, object.objectId)) {
     const logicalKey = logicalKeyForPayload(payload, object.objectId)
     const name = logicalKey.split('/').filter(Boolean).at(-1) ?? logicalKey
     const commandId = await createDeterministicServerObjectId(
@@ -619,11 +625,11 @@ async function materializeBootstrapObject(
       input.workspaceId, 'blind-index-conflict', `${object.objectId}:${object.currentRevision}`,
     )
     const [envelope, conflictEnvelope] = await Promise.all([
-      encryptSyncV2Payload(input.workspaceKey, payload, {
+      encryptSyncPayload(input.workspaceKey, payload, {
         workspaceId: input.workspaceId, objectId: object.objectId, kind: object.kind,
         keyVersion: input.keyVersion, purpose: 'object', identity: object.objectId,
       }),
-      encryptSyncV2Payload(input.workspaceKey, {
+      encryptSyncPayload(input.workspaceKey, {
         schemaVersion: 2, type: 'same-name', objectId: object.objectId,
         parentObjectId: resolvedParentObjectId, path: logicalKey, name,
       }, {
@@ -631,14 +637,14 @@ async function materializeBootstrapObject(
         keyVersion: input.keyVersion, purpose: 'conflict', identity: conflictId,
       }),
     ])
-    await enqueueSyncV2Command({ scopeId: input.syncScopeId, command: {
+    await enqueueSyncCommand({ scopeId: input.syncScopeId, command: {
       type: 'upsert-object', commandId, objectId: object.objectId, kind: object.kind,
       parentObjectId: resolvedParentObjectId, nameCiphertext: envelope.ciphertext,
-      nameBlindIndex: await createSyncV2NameBlindIndex({
-        key: getSyncV2StableBlindIndexKey(input.workspaceKeys, input.workspaceKey),
+      nameBlindIndex: await createSyncNameBlindIndex({
+        key: getSyncStableBlindIndexKey(input.workspaceKeys, input.workspaceKey),
         workspaceId: input.workspaceId, parentObjectId: resolvedParentObjectId, name,
       }),
-      nameBlindIndexKeyVersion: getSyncV2StableBlindIndexKeyVersion(input.workspaceKeys),
+      nameBlindIndexKeyVersion: getSyncStableBlindIndexKeyVersion(input.workspaceKeys),
       nameConflictId: conflictId, nameConflictCiphertext: conflictEnvelope.ciphertext,
       nameConflictCiphertextHash: conflictEnvelope.ciphertextHash,
       baseRevision: object.currentRevision, blobRefs: object.blobRefs,
@@ -646,7 +652,7 @@ async function materializeBootstrapObject(
     } })
   }
   if (object.document) {
-    await upsertLocalSyncV2Document({
+    await upsertLocalSyncDocument({
       scopeId: input.syncScopeId, documentId: object.document.documentId,
       objectId: object.objectId, kind: object.kind,
       latestDocumentSequence: object.document.latestDocumentSequence,
@@ -656,7 +662,7 @@ async function materializeBootstrapObject(
       checkpointCiphertext: object.document.checkpointCiphertext,
       checkpointCiphertextHash: object.document.checkpointCiphertextHash,
     })
-    const entity = await getSyncV2Entity(input.syncScopeId, object.objectId)
+    const entity = await getSyncEntity(input.syncScopeId, object.objectId)
     if (entity && payload && typeof payload === 'object'
       && (payload as Record<string, unknown>).type === 'crdt-object') {
       await materializeCrdtEntity(input, entity, false)
@@ -670,8 +676,8 @@ async function materializeMissingReferenceConflict(
 ): Promise<void> {
   const { object, payload } = entry
   const logicalKey = logicalKeyForPayload(payload, object.objectId)
-  const current = await getSyncV2Entity(input.syncScopeId, object.objectId)
-  const entity: SyncV2Entity = current ?? {
+  const current = await getSyncEntity(input.syncScopeId, object.objectId)
+  const entity: SyncEntity = current ?? {
     scopeId: input.syncScopeId, objectId: object.objectId, kind: object.kind,
     localKey: `__sync_pending__/${object.objectId}`,
     parentObjectId: entry.resolvedParentObjectId,
@@ -699,21 +705,21 @@ async function materializeMissingReferenceConflict(
     } : {}),
     remote: payload,
   }
-  const encrypted = await encryptSyncV2Payload(input.workspaceKey, conflictPayload, {
+  const encrypted = await encryptSyncPayload(input.workspaceKey, conflictPayload, {
     workspaceId: input.workspaceId, objectId: object.objectId, kind: object.kind,
     keyVersion: input.keyVersion, purpose: 'conflict', identity: conflictId,
   })
-  await enqueueSyncV2Command({ scopeId: input.syncScopeId, command: {
+  await enqueueSyncCommand({ scopeId: input.syncScopeId, command: {
     type: 'create-conflict', commandId, conflictId, objectId: object.objectId, kind: object.kind,
     conflictType: 'reference-target-deleted', expectedRevision: object.currentRevision,
     expectedDocumentSequence: entity.documentSequence, keyVersion: input.keyVersion, ...encrypted,
   } })
-  await upsertSyncV2Conflict({
+  await upsertSyncConflict({
     scopeId: input.syncScopeId, conflictId, objectId: object.objectId, kind: object.kind,
     type: 'reference-target-deleted', status: 'unresolved', createdSequence: '0',
     payloadJson: JSON.stringify(conflictPayload), createdAt: Date.now(), resolvedAt: null,
   })
-  await upsertSyncV2Entity({
+  await upsertSyncEntity({
     ...entity,
     lifecycleRevision: object.currentRevision,
     basePayloadJson: JSON.stringify(payload),
@@ -721,8 +727,8 @@ async function materializeMissingReferenceConflict(
 }
 
 async function ensureBootstrap(input: RuntimeInput): Promise<void> {
-  if (await isSyncV2BootstrapComplete(input.syncScopeId)) return
-  const savedProgress = await getSyncV2BootstrapProgress(input.syncScopeId)
+  if (await isSyncBootstrapComplete(input.syncScopeId)) return
+  const savedProgress = await getSyncBootstrapProgress(input.syncScopeId)
   let afterObjectId = savedProgress?.afterObjectId ?? undefined
   let bootstrapId = savedProgress?.bootstrapId
   let snapshotSequence = savedProgress?.snapshotSequence ?? '0'
@@ -733,9 +739,9 @@ async function ensureBootstrap(input: RuntimeInput): Promise<void> {
   ])
   let restartedExpiredSnapshot = false
   do {
-    let page: Awaited<ReturnType<typeof bootstrapSyncV2>>
+    let page: Awaited<ReturnType<typeof bootstrapSync>>
     try {
-      page = await bootstrapSyncV2({
+      page = await bootstrapSync({
         baseUrl: input.baseUrl, accessToken: input.session.accessToken,
         workspaceId: input.workspaceId, ...(bootstrapId ? { bootstrapId } : {}),
         ...(afterObjectId ? { afterObjectId } : {}),
@@ -748,7 +754,7 @@ async function ensureBootstrap(input: RuntimeInput): Promise<void> {
       if (!restartedExpiredSnapshot && error instanceof NoteGenServerRequestError
         && error.code === 'bootstrap_expired') {
         restartedExpiredSnapshot = true
-        await clearSyncV2BootstrapProgress(input.syncScopeId)
+        await clearSyncBootstrapProgress(input.syncScopeId)
         bootstrapId = undefined
         afterObjectId = undefined
         snapshotSequence = '0'
@@ -759,7 +765,7 @@ async function ensureBootstrap(input: RuntimeInput): Promise<void> {
     }
     if ((bootstrapId !== undefined && bootstrapId !== page.bootstrapId)
       || (snapshotSequence !== '0' && snapshotSequence !== page.snapshotSequence)) {
-      await clearSyncV2BootstrapProgress(input.syncScopeId)
+      await clearSyncBootstrapProgress(input.syncScopeId)
       throw new Error('服务端 Bootstrap 快照在分页期间发生变化')
     }
     bootstrapId = page.bootstrapId
@@ -767,11 +773,11 @@ async function ensureBootstrap(input: RuntimeInput): Promise<void> {
     for (const object of page.objects) {
       try {
         bootstrapKinds.add(object.kind)
-        const migratedEntity = await getSyncV2Entity(input.syncScopeId, object.objectId)
+        const migratedEntity = await getSyncEntity(input.syncScopeId, object.objectId)
         const resolvedParentObjectId = object.parentObjectId ?? migratedEntity?.parentObjectId ?? null
         const key = input.workspaceKeys.get(object.keyVersion)
-        if (!key) throw new SyncV2KeyMissingError(object.keyVersion)
-        const payload = await decryptSyncV2Payload(key, object.ciphertext, {
+        if (!key) throw new SyncKeyMissingError(object.keyVersion)
+        const payload = await decryptSyncPayload(key, object.ciphertext, {
           workspaceId: input.workspaceId, objectId: object.objectId, kind: object.kind,
           keyVersion: object.keyVersion, purpose: 'object', identity: object.objectId,
         }, false, true)
@@ -804,7 +810,7 @@ async function ensureBootstrap(input: RuntimeInput): Promise<void> {
     }
     afterObjectId = page.nextObjectId ?? undefined
     if (deferredObjects.length === 0 && page.hasMore && afterObjectId) {
-      await saveSyncV2BootstrapProgress(input.syncScopeId, {
+      await saveSyncBootstrapProgress(input.syncScopeId, {
         bootstrapId: page.bootstrapId,
         snapshotSequence: page.snapshotSequence,
         afterObjectId,
@@ -817,7 +823,7 @@ async function ensureBootstrap(input: RuntimeInput): Promise<void> {
   await import('./note-gen-server-domains').then(module => (
     module.refreshNoteGenServerBootstrapViews(bootstrapKinds)
   ))
-  await markSyncV2BootstrapComplete(input.syncScopeId, snapshotSequence)
+  await markSyncBootstrapComplete(input.syncScopeId, snapshotSequence)
 }
 
 async function importPendingOperations(input: RuntimeInput): Promise<void> {
@@ -827,14 +833,14 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
     .sort((a, b) => a.relativePath.split('/').length - b.relativePath.split('/').length)
   for (const rootEntry of folderDeletes) {
     if (consumedObjectIds.has(rootEntry.objectId)) continue
-    const subtree = (await listSyncV2SubtreeEntities(input.syncScopeId, rootEntry.objectId))
+    const subtree = (await listSyncSubtreeEntities(input.syncScopeId, rootEntry.objectId))
       .filter(entity => entity.lifecycleRevision !== '0')
     if (subtree.length === 0) {
       await deleteNoteGenServerOutboxEntry(rootEntry.id, rootEntry.operationId)
       continue
     }
     const conflictId = crypto.randomUUID()
-    const conflictEnvelope = await encryptSyncV2Payload(input.workspaceKey, {
+    const conflictEnvelope = await encryptSyncPayload(input.workspaceKey, {
       schemaVersion: 2, type: 'delete-subtree-vs-edit', rootObjectId: rootEntry.objectId,
       path: rootEntry.relativePath, objectIds: subtree.map(entity => entity.objectId),
       deletionRequestedLocally: true,
@@ -847,7 +853,7 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
       const payload = parseJson(entity.basePayloadJson) ?? {
         schemaVersion: 2, type: 'deleted-object', localKey: entity.localKey,
       }
-      const envelope = await encryptSyncV2Payload(input.workspaceKey, payload, {
+      const envelope = await encryptSyncPayload(input.workspaceKey, payload, {
         workspaceId: input.workspaceId, objectId: entity.objectId, kind: entity.kind,
         keyVersion: input.keyVersion, purpose: 'object', identity: entity.objectId,
       })
@@ -858,7 +864,7 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
       })
       consumedObjectIds.add(entity.objectId)
     }
-    await enqueueSyncV2Command({ scopeId: input.syncScopeId, command: {
+    await enqueueSyncCommand({ scopeId: input.syncScopeId, command: {
       commandId: rootEntry.operationId, type: 'delete-subtree', rootObjectId: rootEntry.objectId,
       conflictId, conflictKeyVersion: input.keyVersion,
       conflictCiphertext: conflictEnvelope.ciphertext,
@@ -884,15 +890,15 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
   const stagedAssetResources = new Map<string, NoteGenServerPreparedAssetResource>()
   for (const entry of orderedEntries) {
     if (consumedObjectIds.has(entry.objectId)) continue
-    if (await hasUnresolvedSyncV2ConflictForObject(input.syncScopeId, entry.objectId)) {
+    if (await hasUnresolvedSyncConflictForObject(input.syncScopeId, entry.objectId)) {
       // The conflict envelope already durably preserves this local intent.
       // Keeping the staging entry makes every reconciliation cycle rediscover
       // and retry the same mutation while the user has done nothing.
       await deleteNoteGenServerOutboxEntry(entry.id, entry.operationId)
-      await completeSyncV2Mutation(input.syncScopeId, entry.operationId)
+      await completeSyncMutation(input.syncScopeId, entry.operationId)
       continue
     }
-    const entity = await getSyncV2Entity(input.syncScopeId, entry.objectId)
+    const entity = await getSyncEntity(input.syncScopeId, entry.objectId)
     const localPayload = entry.payloadJson ? JSON.parse(entry.payloadJson) : {}
     const transferId = `object-upload:${entry.operationId}`
     const existingBinding = getAssetBinding(parseJson(entity?.basePayloadJson ?? null))
@@ -911,7 +917,7 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
       resources: NoteGenServerPreparedAssetResource[]
     }
     try {
-      await setSyncV2Transfer({ scopeId: input.syncScopeId, transferId, objectId: entry.objectId,
+      await setSyncTransfer({ scopeId: input.syncScopeId, transferId, objectId: entry.objectId,
         direction: 'upload', state: entry.action === 'delete' ? 'complete'
           : stageAssetBinding ? 'pending' : 'running' })
       prepared = entry.action === 'delete'
@@ -941,7 +947,7 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
               }
             },
             onTransferProgress: async progress => {
-              await setSyncV2Transfer({
+              await setSyncTransfer({
                 scopeId: input.syncScopeId, transferId: `blob-upload:${progress.blobId}`,
                 objectId: entry.objectId, blobId: progress.blobId, direction: 'upload',
                 state: progress.completedBytes >= progress.totalBytes ? 'complete' : 'running',
@@ -952,13 +958,13 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
       if (!stageAssetBinding && entry.action === 'upsert' && hasAssets) {
         prepared.payload = withAssetBinding(prepared.payload, entry.operationId, 'ready')
       }
-      await setSyncV2Transfer({ scopeId: input.syncScopeId, transferId, objectId: entry.objectId,
+      await setSyncTransfer({ scopeId: input.syncScopeId, transferId, objectId: entry.objectId,
         direction: 'upload', state: stageAssetBinding ? 'pending' : 'complete' })
     } catch (error) {
       const message = errorMessage(error)
-      await setSyncV2Transfer({ scopeId: input.syncScopeId, transferId, objectId: entry.objectId,
+      await setSyncTransfer({ scopeId: input.syncScopeId, transferId, objectId: entry.objectId,
         direction: 'upload', state: 'failed', error: message })
-      const failedTransfer = await getSyncV2Transfer(input.syncScopeId, transferId)
+      const failedTransfer = await getSyncTransfer(input.syncScopeId, transferId)
       const permanentlyFailed = !stageAssetBinding && entry.action === 'upsert' && hasAssets
         && failedTransfer !== null && failedTransfer.attempts >= 3
         && entity !== null && entity.lifecycleRevision !== '0'
@@ -987,7 +993,7 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
           stagedAssetResources.set(resource.resourceId, resource)
         }
       }
-      await replaceSyncV2ResourceRefs({
+      await replaceSyncResourceRefs({
         scopeId: input.syncScopeId,
         ownerObjectId: entry.objectId,
         resources: prepared.resources.map(resource => ({
@@ -996,15 +1002,15 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
         })),
       })
     } else if (entry.action === 'upsert' && !stageAssetBinding && !hasAssets) {
-      await replaceSyncV2ResourceRefs({
+      await replaceSyncResourceRefs({
         scopeId: input.syncScopeId, ownerObjectId: entry.objectId, resources: [],
       })
     }
-    const envelope = await encryptSyncV2Payload(input.workspaceKey, prepared.payload, {
+    const envelope = await encryptSyncPayload(input.workspaceKey, prepared.payload, {
       workspaceId: input.workspaceId, objectId: entry.objectId, kind: entry.kind,
       keyVersion: input.keyVersion, purpose: 'object', identity: entry.objectId,
     })
-    let command: SyncV2Command
+    let command: SyncCommand
     if (entry.action === 'delete') {
       if (!entity || entity.lifecycleRevision === '0') {
         await deleteNoteGenServerOutboxEntry(entry.id, entry.operationId)
@@ -1012,7 +1018,7 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
       }
       const conflictId = crypto.randomUUID()
       const basePayload = parseJson(entity.basePayloadJson) as { relativePath?: string, content?: string } | null
-      const conflictEnvelope = await encryptSyncV2Payload(input.workspaceKey, {
+      const conflictEnvelope = await encryptSyncPayload(input.workspaceKey, {
         schemaVersion: 2, type: 'delete-vs-edit',
         path: basePayload?.relativePath ?? entry.relativePath,
         base: basePayload?.content ?? '', local: basePayload?.content ?? '', remote: null,
@@ -1034,7 +1040,7 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
       const parentObjectId = entity?.parentObjectId ?? null
       const name = entry.relativePath.split('/').filter(Boolean).at(-1) ?? entry.relativePath
       const nameConflictId = crypto.randomUUID()
-      const nameConflictEnvelope = await encryptSyncV2Payload(input.workspaceKey, {
+      const nameConflictEnvelope = await encryptSyncPayload(input.workspaceKey, {
         schemaVersion: 2, type: 'same-name', objectId: entry.objectId,
         parentObjectId, path: entry.relativePath, name,
       }, {
@@ -1047,11 +1053,11 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
         nameCiphertext: envelope.ciphertext, baseRevision: entity?.lifecycleRevision === '0'
           ? null : entity?.lifecycleRevision ?? entry.baseRevision,
         ...(['note', 'folder'].includes(entry.kind) ? {
-          nameBlindIndex: await createSyncV2NameBlindIndex({
-            key: getSyncV2StableBlindIndexKey(input.workspaceKeys, input.workspaceKey),
+          nameBlindIndex: await createSyncNameBlindIndex({
+            key: getSyncStableBlindIndexKey(input.workspaceKeys, input.workspaceKey),
             workspaceId: input.workspaceId, parentObjectId, name,
           }),
-          nameBlindIndexKeyVersion: getSyncV2StableBlindIndexKeyVersion(input.workspaceKeys),
+          nameBlindIndexKeyVersion: getSyncStableBlindIndexKeyVersion(input.workspaceKeys),
           nameConflictId,
           nameConflictCiphertext: nameConflictEnvelope.ciphertext,
           nameConflictCiphertextHash: nameConflictEnvelope.ciphertextHash,
@@ -1061,18 +1067,18 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
         keyVersion: input.keyVersion, ...envelope,
       }
     }
-    await enqueueSyncV2Command({ scopeId: input.syncScopeId, command })
+    await enqueueSyncCommand({ scopeId: input.syncScopeId, command })
   }
 }
 
-async function flushV2Outbox(input: RuntimeInput): Promise<{ count: number, conflicts: string[] }> {
+async function flushSyncOutbox(input: RuntimeInput): Promise<{ count: number, conflicts: string[] }> {
   let count = 0
   const conflicts: string[] = []
   while (true) {
-    const entries = await listSyncV2Outbox(input.syncScopeId, 100)
+    const entries = await listSyncOutbox(input.syncScopeId, 100)
     if (entries.length === 0) break
-    const commands = entries.map(entry => JSON.parse(entry.commandJson) as SyncV2Command)
-    const results = await pushSyncV2Commands({
+    const commands = entries.map(entry => JSON.parse(entry.commandJson) as SyncCommand)
+    const results = await pushSyncCommands({
       baseUrl: input.baseUrl, accessToken: input.session.accessToken,
       workspaceId: input.workspaceId, commands,
       ...(input.syncEpoch === undefined ? {} : { expectedSyncEpoch: input.syncEpoch }),
@@ -1083,18 +1089,18 @@ async function flushV2Outbox(input: RuntimeInput): Promise<{ count: number, conf
       if (!outbox || !command) continue
       if (result.status === 'rejected') {
         if (result.code === 'command_id_reused') {
-          if (await replaceReusedSyncV2Command(input.syncScopeId, outbox)) continue
+          if (await replaceReusedSyncCommand(input.syncScopeId, outbox)) continue
         }
         if (command.type === 'delete-object' && result.code === 'revision_conflict'
           && result.revision
-          && await rebaseSyncV2DeleteCommand(input.syncScopeId, outbox, result.revision)) {
+          && await rebaseSyncDeleteCommand(input.syncScopeId, outbox, result.revision)) {
           continue
         }
         if (result.code === 'revision_conflict') {
           // A stale immutable command cannot become valid by retrying it. Drop
           // it without surfacing a permanent block; staged local intent is
           // reconstructed after the authoritative remote revision is pulled.
-          await completeSyncV2Command(input.syncScopeId, result.commandId)
+          await completeSyncCommand(input.syncScopeId, result.commandId)
           continue
         }
         if (command.type === 'create-conflict' && result.code === 'conflict_id_reused') {
@@ -1103,22 +1109,36 @@ async function flushV2Outbox(input: RuntimeInput): Promise<{ count: number, conf
           // conflict can legitimately produce different ciphertext. Retire
           // this command and immediately requeue the local conflict under a
           // fresh derived identity instead of permanently blocking sync.
-          await completeSyncV2Command(input.syncScopeId, result.commandId)
+          await completeSyncCommand(input.syncScopeId, result.commandId)
           await requeueOrphanedLocalConflicts(input)
+          continue
+        }
+        if (command.type === 'create-conflict' && result.code === 'conflict_changed') {
+          // Conflict creation is conditional on the object's old lifecycle or
+          // document revision. The next pull/reconciliation pass recreates it
+          // from the durable local conflict using the current remote revision.
+          await completeSyncCommand(input.syncScopeId, result.commandId)
+          conflicts.push(command.objectId ?? result.commandId)
           continue
         }
         if (command.type === 'commit-checkpoint' && result.code === 'checkpoint_not_current') {
           // Checkpoints are immutable encrypted commands. Retrying one with an
           // obsolete coverage sequence can never succeed; a later session
           // checkpoint will be generated from the converged Yjs state.
-          await completeSyncV2Command(input.syncScopeId, result.commandId)
+          await completeSyncCommand(input.syncScopeId, result.commandId)
           continue
         }
         if (command.type === 'resolve-conflict' && result.code === 'required_command_not_applied') {
-          await completeSyncV2Command(input.syncScopeId, result.commandId)
+          await completeSyncCommand(input.syncScopeId, result.commandId)
           continue
         }
-        await failSyncV2Command(input.syncScopeId, result.commandId,
+        if (command.type === 'resolve-conflict'
+          && (result.code === 'conflict_changed' || result.code === 'same_name_still_conflicts')) {
+          await completeSyncCommand(input.syncScopeId, result.commandId)
+          conflicts.push(command.objectId ?? result.commandId)
+          continue
+        }
+        await failSyncCommand(input.syncScopeId, result.commandId,
           result.code ?? 'command_rejected', result.retryable !== true)
         // Durable command responses do not have an HTTP status, but these
         // codes carry the same account-action contract as a route response.
@@ -1136,7 +1156,7 @@ async function flushV2Outbox(input: RuntimeInput): Promise<{ count: number, conf
       if (result.status === 'conflict' && result.code !== 'delete_edit_conflict') {
         if (command.type === 'delete-object' && result.code === 'revision_conflict'
           && result.revision
-          && await rebaseSyncV2DeleteCommand(input.syncScopeId, outbox, result.revision)) {
+          && await rebaseSyncDeleteCommand(input.syncScopeId, outbox, result.revision)) {
           // Lifecycle revisions are optimistic concurrency guards. Rebase the
           // deletion automatically, while retaining expectedDocumentSequence
           // so a real delete-vs-edit race still produces a resolvable conflict.
@@ -1145,36 +1165,41 @@ async function flushV2Outbox(input: RuntimeInput): Promise<{ count: number, conf
         if (command.type === 'upsert-object' && result.code === 'revision_conflict') {
           // The corresponding remote object event is durable and will create
           // the typed local conflict without discarding the staged local value.
-          await completeSyncV2Command(input.syncScopeId, result.commandId)
+          await completeSyncCommand(input.syncScopeId, result.commandId)
           conflicts.push(command.objectId ?? result.commandId)
           continue
         }
         if (command.type === 'resolve-conflict'
           && (result.code === 'conflict_changed' || result.code === 'same_name_still_conflicts')) {
-          await completeSyncV2Command(input.syncScopeId, result.commandId)
+          await completeSyncCommand(input.syncScopeId, result.commandId)
           conflicts.push(command.objectId ?? result.commandId)
           continue
         }
-        await failSyncV2Command(input.syncScopeId, result.commandId,
+        if (command.type === 'create-conflict' && result.code === 'conflict_changed') {
+          await completeSyncCommand(input.syncScopeId, result.commandId)
+          conflicts.push(command.objectId ?? result.commandId)
+          continue
+        }
+        await failSyncCommand(input.syncScopeId, result.commandId,
           result.code ?? 'command_conflict', true)
         conflicts.push(command.objectId ?? result.commandId)
         continue
       }
       if (command.type === 'create-conflict' && result.status === 'applied'
         && result.sequence && result.conflictId) {
-        const localConflict = await getSyncV2Conflict(input.syncScopeId, result.conflictId)
+        const localConflict = await getSyncConflict(input.syncScopeId, result.conflictId)
         if (localConflict && localConflict.createdSequence === '0') {
-          await upsertSyncV2Conflict({
+          await upsertSyncConflict({
             ...localConflict,
             createdSequence: result.sequence,
           })
         }
       }
-      await completeSyncV2Command(input.syncScopeId, result.commandId)
-      await completeSyncV2Mutation(input.syncScopeId, result.commandId)
+      await completeSyncCommand(input.syncScopeId, result.commandId)
+      await completeSyncMutation(input.syncScopeId, result.commandId)
       if (Array.isArray(command.mutationIds)) {
         for (const mutationId of command.mutationIds) {
-          if (typeof mutationId === 'string') await completeSyncV2Mutation(input.syncScopeId, mutationId)
+          if (typeof mutationId === 'string') await completeSyncMutation(input.syncScopeId, mutationId)
         }
       }
       const stagedOperation = command.objectId
@@ -1199,7 +1224,7 @@ async function flushV2Outbox(input: RuntimeInput): Promise<{ count: number, conf
       }
       count += 1
     }
-    const remaining = await listSyncV2Outbox(input.syncScopeId, 100)
+    const remaining = await listSyncOutbox(input.syncScopeId, 100)
     if (entries.length === remaining.length
       && entries.every((entry, index) => entry.commandId === remaining[index]?.commandId)) break
   }
@@ -1220,7 +1245,7 @@ async function enqueuePreparedAssetResource(
   ownerOperationId: string,
   resource: NoteGenServerPreparedAssetResource,
 ): Promise<void> {
-  const entity = await getSyncV2Entity(input.syncScopeId, resource.resourceId)
+  const entity = await getSyncEntity(input.syncScopeId, resource.resourceId)
   if (!entity) throw new Error(`附件资源缺少本地身份映射：${resource.localPath}`)
   const existing = parseJson(entity.basePayloadJson) as {
     contentHash?: string
@@ -1251,7 +1276,7 @@ async function enqueuePreparedAssetResource(
       ...(resource.scope === 'workspace' ? { scope: resource.scope } : {}),
     }],
   }
-  const envelope = await encryptSyncV2Payload(input.workspaceKey, payload, {
+  const envelope = await encryptSyncPayload(input.workspaceKey, payload, {
     workspaceId: input.workspaceId,
     objectId: resource.resourceId,
     kind: 'asset',
@@ -1262,7 +1287,7 @@ async function enqueuePreparedAssetResource(
   const commandId = await createDeterministicServerObjectId(
     input.workspaceId, 'asset-command', `${ownerOperationId}:${resource.resourceId}`,
   )
-  await enqueueSyncV2Command({
+  await enqueueSyncCommand({
     scopeId: input.syncScopeId,
     command: {
       commandId,
@@ -1277,7 +1302,7 @@ async function enqueuePreparedAssetResource(
       ...envelope,
     },
   })
-  await setSyncV2Transfer({
+  await setSyncTransfer({
     scopeId: input.syncScopeId,
     transferId: `resource-upload:${ownerOperationId}:${resource.resourceId}`,
     objectId: resource.resourceId,
@@ -1290,19 +1315,19 @@ async function enqueuePreparedAssetResource(
 }
 
 async function receiveEvents(input: RuntimeInput): Promise<number> {
-  const health = await getSyncV2HealthSnapshot(input.syncScopeId)
+  const health = await getSyncHealthSnapshot(input.syncScopeId)
   let after = health.receivedCursor
   let received = 0
   while (true) {
-    const page = await pullSyncV2Events({
+    const page = await pullSyncEvents({
       baseUrl: input.baseUrl, accessToken: input.session.accessToken,
       workspaceId: input.workspaceId, after,
       ...(input.syncEpoch === undefined ? {} : { expectedSyncEpoch: input.syncEpoch }),
     })
-    for (const event of page.events) await storeSyncV2Event(input.syncScopeId, event)
+    for (const event of page.events) await storeSyncEvent(input.syncScopeId, event)
     after = page.nextCursor
     received += page.events.length
-    await updateSyncV2Cursor(input.syncScopeId, after, page.latestSequence)
+    await updateSyncCursor(input.syncScopeId, after, page.latestSequence)
     if (!page.hasMore) break
   }
   return received
@@ -1311,30 +1336,30 @@ async function receiveEvents(input: RuntimeInput): Promise<number> {
 async function applyInbox(input: RuntimeInput): Promise<{ count: number, conflicts: string[] }> {
   let count = 0
   const conflicts: string[] = []
-  let rows = await listUnappliedSyncV2Events(input.syncScopeId)
+  let rows = await listUnappliedSyncEvents(input.syncScopeId)
   while (rows.length > 0) {
     const deferred = [] as typeof rows
     const deferredReferences = new Map<string, Array<{ kind: 'tag' | 'mark', id: string }>>()
     let appliedThisPass = 0
     for (const row of rows) {
-      const event = JSON.parse(row.eventJson) as SyncV2Event
+      const event = JSON.parse(row.eventJson) as SyncEvent
       try {
-        await beginSyncV2EventApply(input.syncScopeId, event.eventId, row.eventJson)
+        await beginSyncEventApply(input.syncScopeId, event.eventId, row.eventJson)
         const conflict = await applyEvent(input, event)
         if (conflict) conflicts.push(conflict)
-        await completeSyncV2Event(input.syncScopeId, event.eventId)
+        await completeSyncEvent(input.syncScopeId, event.eventId)
         count += 1
         appliedThisPass += 1
       } catch (error) {
         const missingReferences = getMissingStructuredReferences(error)
         if (missingReferences) {
-          await deferSyncV2Event(input.syncScopeId, event.eventId, errorMessage(error))
+          await deferSyncEvent(input.syncScopeId, event.eventId, errorMessage(error))
           deferred.push(row)
           deferredReferences.set(event.eventId, missingReferences)
           continue
         }
-        await failSyncV2Event(input.syncScopeId, event.eventId, errorMessage(error))
-        if (error instanceof SyncV2KeyMissingError) throw error
+        await failSyncEvent(input.syncScopeId, event.eventId, errorMessage(error))
+        if (error instanceof SyncKeyMissingError) throw error
       }
     }
     if (deferred.length === 0) break
@@ -1370,27 +1395,27 @@ function getMissingStructuredReferences(
   return valid.length > 0 ? valid : null
 }
 
-async function applyEvent(input: RuntimeInput, event: SyncV2Event): Promise<string | null> {
+async function applyEvent(input: RuntimeInput, event: SyncEvent): Promise<string | null> {
   if (event.type === 'document.updated' || event.type === 'document.checkpointed') {
     if (!event.objectId || !event.documentId || !event.ciphertext || !event.keyVersion) return null
     const kind = String(event.metadata.kind ?? 'note')
     const identity = event.type === 'document.updated'
       ? String(event.metadata.updateId) : String(event.metadata.checkpointId)
     const key = input.workspaceKeys.get(event.keyVersion)
-    if (!key) throw new SyncV2KeyMissingError(event.keyVersion)
-    const update = await decryptSyncV2Payload<Uint8Array>(key, event.ciphertext, {
+    if (!key) throw new SyncKeyMissingError(event.keyVersion)
+    const update = await decryptSyncPayload<Uint8Array>(key, event.ciphertext, {
       workspaceId: input.workspaceId, objectId: event.objectId, kind,
       keyVersion: event.keyVersion, purpose: event.type === 'document.updated' ? 'update' : 'checkpoint', identity,
     }, true)
     emitter.emit('note-gen-server-document-update', {
       documentId: event.documentId, update, checkpoint: event.type === 'document.checkpointed',
     })
-    const entity = await getSyncV2Entity(input.syncScopeId, event.objectId)
+    const entity = await getSyncEntity(input.syncScopeId, event.objectId)
     const updatedEntity = entity ? { ...entity, documentId: event.documentId,
       documentSequence: event.documentSequence ?? entity.documentSequence } : null
-    if (updatedEntity) await upsertSyncV2Entity(updatedEntity)
-    const localDocument = await getLocalSyncV2Document(input.syncScopeId, event.documentId)
-    await upsertLocalSyncV2Document({
+    if (updatedEntity) await upsertSyncEntity(updatedEntity)
+    const localDocument = await getLocalSyncDocument(input.syncScopeId, event.documentId)
+    await upsertLocalSyncDocument({
       scopeId: input.syncScopeId, documentId: event.documentId, objectId: event.objectId,
       kind, latestDocumentSequence: event.documentSequence ?? localDocument?.latestDocumentSequence ?? '0',
       checkpointDocumentSequence: event.type === 'document.checkpointed'
@@ -1410,7 +1435,7 @@ async function applyEvent(input: RuntimeInput, event: SyncV2Event): Promise<stri
   if (event.type === 'conflict.resolved') {
     const conflictId = String(event.metadata.conflictId ?? '')
     if (conflictId) {
-      const localConflict = await getSyncV2Conflict(input.syncScopeId, conflictId)
+      const localConflict = await getSyncConflict(input.syncScopeId, conflictId)
       if (localConflict) {
         const payload = parseJson(localConflict.payloadJson) as {
           type?: string, path?: string, deletionRequestedLocally?: boolean
@@ -1428,7 +1453,7 @@ async function applyEvent(input: RuntimeInput, event: SyncV2Event): Promise<stri
           }
         }
       }
-      await resolveLocalSyncV2Conflict(input.syncScopeId, conflictId)
+      await resolveLocalSyncConflict(input.syncScopeId, conflictId)
       if (event.objectId) {
         const stale = await getNoteGenServerOutboxForObject(input.syncScopeId, event.objectId)
         if (stale) await deleteNoteGenServerOutboxEntry(stale.id, stale.operationId)
@@ -1439,22 +1464,22 @@ async function applyEvent(input: RuntimeInput, event: SyncV2Event): Promise<stri
   }
   if (event.type !== 'object.upserted' && event.type !== 'object.deleted') return null
   if (!event.objectId || !event.ciphertext || !event.keyVersion) throw new Error('对象事件缺少密文')
-  const kind = String(event.metadata.kind) as SyncV2ObjectKind
+  const kind = String(event.metadata.kind) as SyncObjectKind
   const key = input.workspaceKeys.get(event.keyVersion)
-  if (!key) throw new SyncV2KeyMissingError(event.keyVersion)
-  const payload = await decryptSyncV2Payload<unknown>(key, event.ciphertext, {
+  if (!key) throw new SyncKeyMissingError(event.keyVersion)
+  const payload = await decryptSyncPayload<unknown>(key, event.ciphertext, {
     workspaceId: input.workspaceId, objectId: event.objectId, kind,
     keyVersion: event.keyVersion, purpose: 'object', identity: event.objectId,
   })
   return await materializeObject(input, event, kind, payload)
 }
 
-async function applyConflictCreated(input: RuntimeInput, event: SyncV2Event): Promise<string | null> {
+async function applyConflictCreated(input: RuntimeInput, event: SyncEvent): Promise<string | null> {
   if (!event.objectId || !event.ciphertext || !event.keyVersion) throw new Error('冲突事件缺少密文')
   const conflictId = String(event.metadata.conflictId ?? '')
   const kind = String(event.metadata.kind ?? 'note')
   const conflictType = String(event.metadata.conflictType ?? 'content')
-  const existing = conflictId ? await getSyncV2Conflict(input.syncScopeId, conflictId) : null
+  const existing = conflictId ? await getSyncConflict(input.syncScopeId, conflictId) : null
   if (existing && existing.objectId === event.objectId
     && existing.kind === kind && existing.type === conflictType) {
     // Older servers could emit the same durable conflict again when a client
@@ -1464,11 +1489,11 @@ async function applyConflictCreated(input: RuntimeInput, event: SyncV2Event): Pr
   }
   const key = input.workspaceKeys.get(event.keyVersion)
   if (!key || !conflictId) throw new Error('冲突事件无法解密')
-  const payload = await decryptSyncV2Payload(key, event.ciphertext, {
+  const payload = await decryptSyncPayload(key, event.ciphertext, {
     workspaceId: input.workspaceId, objectId: event.objectId, kind,
     keyVersion: event.keyVersion, purpose: 'conflict', identity: conflictId,
   })
-  await upsertSyncV2Conflict({
+  await upsertSyncConflict({
     scopeId: input.syncScopeId, conflictId, objectId: event.objectId, kind,
     type: conflictType, status: 'unresolved',
     createdSequence: event.sequence, payloadJson: JSON.stringify(payload),
@@ -1479,10 +1504,10 @@ async function applyConflictCreated(input: RuntimeInput, event: SyncV2Event): Pr
 }
 
 async function materializeObject(
-  input: RuntimeInput, event: SyncV2Event, kind: SyncV2ObjectKind, payload: unknown,
+  input: RuntimeInput, event: SyncEvent, kind: SyncObjectKind, payload: unknown,
 ): Promise<string | null> {
   const revision = String(event.metadata.revision ?? '0')
-  const current = await getSyncV2Entity(input.syncScopeId, event.objectId!)
+  const current = await getSyncEntity(input.syncScopeId, event.objectId!)
   const logicalKey = kind === 'asset' && payload && typeof payload === 'object'
     ? assetEntityLocalKey(
         typeof (payload as Record<string, unknown>).localPath === 'string'
@@ -1492,9 +1517,9 @@ async function materializeObject(
         event.objectId!,
       )
     : logicalKeyForPayload(payload, current?.localKey ?? event.objectId!)
-  const localKeyOwner = await getSyncV2EntityByLocalKey(input.syncScopeId, logicalKey)
+  const localKeyOwner = await getSyncEntityByLocalKey(input.syncScopeId, logicalKey)
   const identityCollision = localKeyOwner?.objectId !== event.objectId ? localKeyOwner : null
-  const entity: SyncV2Entity = current ?? {
+  const entity: SyncEntity = current ?? {
     scopeId: input.syncScopeId, objectId: event.objectId!, kind,
     localKey: identityCollision ? `__sync_pending__/${event.objectId!}` : logicalKey,
     parentObjectId: null, name: logicalKey.split('/').at(-1) ?? logicalKey,
@@ -1506,7 +1531,7 @@ async function materializeObject(
   const blobRefs = Array.isArray(event.metadata.blobRefs) ? event.metadata.blobRefs as string[] : []
   const assetBinding = getAssetBinding(payload)
   if (assetBinding) {
-    await setSyncV2Transfer({
+    await setSyncTransfer({
       scopeId: input.syncScopeId,
       transferId: `asset-binding:${event.objectId}:${assetBinding.operationId}`,
       objectId: event.objectId!, direction: 'download',
@@ -1520,7 +1545,7 @@ async function materializeObject(
   }
   if (!deleted && blobRefs.length > 0) {
     const transferId = `object-download:${event.eventId}`
-    await setSyncV2Transfer({
+    await setSyncTransfer({
       scopeId: input.syncScopeId, transferId, objectId: event.objectId!,
       direction: 'download', state: 'running',
     })
@@ -1533,7 +1558,7 @@ async function materializeObject(
           ? (parseJson(current?.basePayloadJson ?? null) as { contentHash?: string } | null)?.contentHash
           : undefined,
         onTransferProgress: async progress => {
-          await setSyncV2Transfer({
+          await setSyncTransfer({
             scopeId: input.syncScopeId, transferId: `blob-download:${progress.blobId}`,
             objectId: event.objectId!, blobId: progress.blobId, direction: 'download',
             state: progress.completedBytes >= progress.totalBytes ? 'complete' : 'running',
@@ -1541,27 +1566,27 @@ async function materializeObject(
           })
         },
       })
-      await setSyncV2Transfer({
+      await setSyncTransfer({
         scopeId: input.syncScopeId, transferId, objectId: event.objectId!,
         direction: 'download', state: 'complete',
       })
       if (kind === 'asset') {
-        await completeSyncV2TransfersForObject(input.syncScopeId, event.objectId!)
+        await completeSyncTransfersForObject(input.syncScopeId, event.objectId!)
       }
       if (assetBinding) {
-        await setSyncV2Transfer({
+        await setSyncTransfer({
           scopeId: input.syncScopeId,
           transferId: `asset-binding:${event.objectId}:${assetBinding.operationId}`,
           objectId: event.objectId!, direction: 'download', state: 'complete',
         })
       }
     } catch (error) {
-      await setSyncV2Transfer({
+      await setSyncTransfer({
         scopeId: input.syncScopeId, transferId, objectId: event.objectId!,
         direction: 'download', state: 'failed', error: errorMessage(error),
       })
       if (assetBinding) {
-        await setSyncV2Transfer({
+        await setSyncTransfer({
           scopeId: input.syncScopeId,
           transferId: `asset-binding:${event.objectId}:${assetBinding.operationId}`,
           objectId: event.objectId!, direction: 'download', state: 'failed',
@@ -1578,7 +1603,7 @@ async function materializeObject(
           remoteContentHash: error.remoteContentHash,
           remote: payload,
         }, 'asset-content')
-        await upsertSyncV2Entity({
+        await upsertSyncEntity({
           ...entity,
           kind,
           localKey: logicalKey,
@@ -1612,10 +1637,10 @@ async function materializeObject(
       await deleteNoteGenServerOutboxEntry(staleOperation.id, staleOperation.operationId)
     }
     await deleteNoteGenServerSyncObject(input.syncScopeId, event.objectId!)
-    await replaceSyncV2ResourceRefs({
+    await replaceSyncResourceRefs({
       scopeId: input.syncScopeId, ownerObjectId: event.objectId!, resources: [],
     })
-    await upsertSyncV2Entity({
+    await upsertSyncEntity({
       ...entity,
       kind,
       localKey: `__sync_replaced__/${event.objectId!}`,
@@ -1651,7 +1676,7 @@ async function materializeObject(
         remotePath,
         name: remotePath.split('/').at(-1) ?? remotePath,
       }, 'same-name')
-      await upsertSyncV2Entity({
+      await upsertSyncEntity({
         ...entity,
         lifecycleRevision: revision,
         basePayloadJson: JSON.stringify(payload),
@@ -1667,7 +1692,7 @@ async function materializeObject(
         localPath, remotePath, basePath: base.relativePath,
         base: base.content ?? '', local: local ?? '', remote: note.content ?? '',
       }, 'concurrent-rename')
-      await upsertSyncV2Entity({ ...entity, lifecycleRevision: revision, basePayloadJson: JSON.stringify(payload) })
+      await upsertSyncEntity({ ...entity, lifecycleRevision: revision, basePayloadJson: JSON.stringify(payload) })
       await settlePendingOperationForConflict(input.syncScopeId, event.objectId!, revision)
       return conflictId
     }
@@ -1679,7 +1704,7 @@ async function materializeObject(
         schemaVersion: 2, type: deleted ? 'delete-vs-edit' : conflictType, path,
         base: base?.content ?? '', local, remote: deleted ? null : note.content ?? '',
       }, deleted ? 'delete-vs-edit' : conflictType)
-      await upsertSyncV2Entity({ ...entity, kind,
+      await upsertSyncEntity({ ...entity, kind,
         localKey: identityCollision ? entity.localKey : path, lifecycleRevision: revision,
         basePayloadJson: JSON.stringify(payload), deleted: 0 })
       await settlePendingOperationForConflict(input.syncScopeId, event.objectId!, revision)
@@ -1709,7 +1734,7 @@ async function materializeObject(
         previousPath === path ? Promise.resolve(false)
           : exists(previousOptions.path, previousOptions.baseDir ? { baseDir: previousOptions.baseDir } : undefined),
         exists(options.path, options.baseDir ? { baseDir: options.baseDir } : undefined),
-        getSyncV2EntityByLocalKey(input.syncScopeId, path),
+        getSyncEntityByLocalKey(input.syncScopeId, path),
       ])
       const folderIdentityCollision = targetEntity !== null && targetEntity.objectId !== entity.objectId
       if (!resolvingConflict && ((previousPresent && targetPresent) || (!current && targetPresent)
@@ -1727,13 +1752,13 @@ async function materializeObject(
           parentObjectId: remoteParentObjectId,
           path, name: path.split('/').at(-1) ?? path,
         }, 'same-name')
-        await upsertSyncV2Entity({ ...conflictEntity, lifecycleRevision: revision,
+        await upsertSyncEntity({ ...conflictEntity, lifecycleRevision: revision,
           basePayloadJson: JSON.stringify(payload) })
         await settlePendingOperationForConflict(input.syncScopeId, event.objectId!, revision)
         return conflictId
       }
       if (resolvingConflict && folderIdentityCollision) {
-        await retireSyncV2EntityIdentity(input.syncScopeId, targetEntity.objectId, entity.objectId)
+        await retireSyncEntityIdentity(input.syncScopeId, targetEntity.objectId, entity.objectId)
       }
       if (previousPresent) {
         const parentPath = path.split('/').slice(0, -1).join('/')
@@ -1749,7 +1774,7 @@ async function materializeObject(
             ...(options.baseDir ? { newPathBaseDir: options.baseDir } : {}),
           } : undefined)
         await import('@/db/note-gen-server-sync-index').then(module => (
-          module.moveSyncV2EntityLocalKey(input.syncScopeId, previousPath, path)
+          module.moveSyncEntityLocalKey(input.syncScopeId, previousPath, path)
         ))
       } else if (!targetPresent) {
         await mkdir(options.path, { ...(options.baseDir ? { baseDir: options.baseDir } : {}), recursive: true })
@@ -1767,7 +1792,7 @@ async function materializeObject(
             schemaVersion: 2, type: 'delete-subtree', path, childNames: children.map(child => child.name),
             base: entity.basePayloadJson, local: { path, childCount: children.length }, remote: null,
           }, 'delete-subtree')
-          await upsertSyncV2Entity({ ...entity, lifecycleRevision: revision, basePayloadJson: JSON.stringify(payload) })
+          await upsertSyncEntity({ ...entity, lifecycleRevision: revision, basePayloadJson: JSON.stringify(payload) })
           await settlePendingOperationForConflict(input.syncScopeId, event.objectId!, revision)
           return conflictId
         }
@@ -1791,7 +1816,7 @@ async function materializeObject(
         schemaVersion: 2, type: 'structured-concurrent', logicalKey,
         base: parseJson(entity.basePayloadJson), local: JSON.parse(pending.payloadJson), remote: payload,
       }, 'structured-concurrent')
-      await upsertSyncV2Entity({ ...entity, kind,
+      await upsertSyncEntity({ ...entity, kind,
         localKey: identityCollision ? entity.localKey : logicalKey, lifecycleRevision: revision,
         basePayloadJson: JSON.stringify(payload) })
       await settlePendingOperationForConflict(input.syncScopeId, event.objectId!, revision)
@@ -1802,7 +1827,7 @@ async function materializeObject(
       ? null : typeof event.metadata.parentObjectId === 'string'
         ? event.metadata.parentObjectId : entity.parentObjectId
     if (identityCollision) {
-      await retireSyncV2EntityIdentity(input.syncScopeId, identityCollision.objectId, entity.objectId)
+      await retireSyncEntityIdentity(input.syncScopeId, identityCollision.objectId, entity.objectId)
     }
     const atomicApplied = await domains.applyNoteGenServerDomainChangeAtomic({
       syncScopeId: input.syncScopeId, eventId: event.eventId,
@@ -1827,14 +1852,14 @@ async function materializeObject(
     })
   }
   if (kind !== 'asset') {
-    await replaceSyncV2ResourceRefs({
+    await replaceSyncResourceRefs({
       scopeId: input.syncScopeId, ownerObjectId: event.objectId!, resources: resourceRefs,
     })
   }
   if (identityCollision) {
-    await retireSyncV2EntityIdentity(input.syncScopeId, identityCollision.objectId, entity.objectId)
+    await retireSyncEntityIdentity(input.syncScopeId, identityCollision.objectId, entity.objectId)
   }
-  await upsertSyncV2Entity({ ...entity, kind, localKey: logicalKey,
+  await upsertSyncEntity({ ...entity, kind, localKey: logicalKey,
     ...(kind === 'asset' && payload && typeof payload === 'object'
       ? { name: `${(payload as Record<string, unknown>).scope === 'workspace' ? 'workspace' : 'appData'}:${
           typeof (payload as Record<string, unknown>).localPath === 'string'
@@ -1860,7 +1885,7 @@ async function materializeObject(
 }
 
 async function findMissingStructuredReferences(
-  kind: SyncV2ObjectKind,
+  kind: SyncObjectKind,
   payload: unknown,
 ): Promise<Array<{ kind: 'tag' | 'mark', id: string }>> {
   if (!payload || typeof payload !== 'object') return []
@@ -1913,7 +1938,7 @@ async function settlePendingOperationForConflict(
 }
 
 async function queueContentConflict(
-  input: RuntimeInput, entity: SyncV2Entity, expectedRevision: string, payload: unknown,
+  input: RuntimeInput, entity: SyncEntity, expectedRevision: string, payload: unknown,
   conflictType = 'markdown-three-way',
 ): Promise<string> {
   const conflictIdentity = [
@@ -1933,16 +1958,16 @@ async function queueContentConflict(
     'content-conflict-command',
     conflictIdentity,
   )
-  const encrypted = await encryptSyncV2Payload(input.workspaceKey, payload, {
+  const encrypted = await encryptSyncPayload(input.workspaceKey, payload, {
     workspaceId: input.workspaceId, objectId: entity.objectId, kind: entity.kind,
     keyVersion: input.keyVersion, purpose: 'conflict', identity: conflictId,
   })
-  await enqueueSyncV2Command({ scopeId: input.syncScopeId, command: {
+  await enqueueSyncCommand({ scopeId: input.syncScopeId, command: {
     type: 'create-conflict', commandId, conflictId, objectId: entity.objectId, kind: entity.kind,
     conflictType, expectedRevision,
     expectedDocumentSequence: entity.documentSequence, keyVersion: input.keyVersion, ...encrypted,
   } })
-  await upsertSyncV2Conflict({
+  await upsertSyncConflict({
     scopeId: input.syncScopeId, conflictId, objectId: entity.objectId, kind: entity.kind,
     type: conflictType, status: 'unresolved', createdSequence: '0',
     payloadJson: JSON.stringify(payload), createdAt: Date.now(), resolvedAt: null,
@@ -1970,13 +1995,13 @@ async function getOrCreateAssetResourceEntity(
   localPath: string,
   scope: 'appData' | 'workspace',
   contentHash: string,
-): Promise<SyncV2Entity> {
-  const owned = await getSyncV2AssetEntityForOwnerPath(scopeId, ownerObjectId, localPath)
+): Promise<SyncEntity> {
+  const owned = await getSyncAssetEntityForOwnerPath(scopeId, ownerObjectId, localPath)
   if (owned) return owned
-  const existing = await getSyncV2AssetEntityByPath(scopeId, localPath, scope, contentHash)
+  const existing = await getSyncAssetEntityByPath(scopeId, localPath, scope, contentHash)
   if (existing) return existing
   const objectId = crypto.randomUUID()
-  const entity: SyncV2Entity = {
+  const entity: SyncEntity = {
     scopeId,
     objectId,
     kind: 'asset',
@@ -1990,7 +2015,7 @@ async function getOrCreateAssetResourceEntity(
     basePayloadJson: null,
     deleted: 0,
   }
-  await upsertSyncV2Entity(entity)
+  await upsertSyncEntity(entity)
   return entity
 }
 

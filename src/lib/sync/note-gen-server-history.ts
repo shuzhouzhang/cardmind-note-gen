@@ -1,16 +1,16 @@
 import {
-  enqueueSyncV2Command,
-  getSyncV2Entity,
+  enqueueSyncCommand,
+  getSyncEntity,
 } from '@/db/note-gen-server-sync-index'
 
 import {
-  createSyncV2NameBlindIndex,
-  decryptSyncV2Payload,
-  encryptSyncV2Payload,
-  getSyncV2StableBlindIndexKey,
-  getSyncV2StableBlindIndexKeyVersion,
-  getSyncV2ObjectVersion,
-  type SyncV2HistoricalObjectVersion,
+  createSyncNameBlindIndex,
+  decryptSyncPayload,
+  encryptSyncPayload,
+  getSyncStableBlindIndexKey,
+  getSyncStableBlindIndexKeyVersion,
+  getSyncObjectVersion,
+  type SyncHistoricalObjectVersion,
 } from './note-gen-server-sync-protocol'
 
 interface HistoricalRestoreInput {
@@ -31,15 +31,15 @@ interface HistoricalRestoreInput {
  * revisions. Exact asset revisions are restored first, then the owner is
  * rebound to those resources. Existing history is never rewritten.
  */
-export async function enqueueSyncV2HistoricalRestore(
+export async function enqueueSyncHistoricalRestore(
   input: HistoricalRestoreInput,
 ): Promise<{ commandIds: string[], resourceObjectIds: string[], payload: unknown }> {
-  const historical = await getSyncV2ObjectVersion(input)
+  const historical = await getSyncObjectVersion(input)
   const historicalKey = input.workspaceKeys.get(historical.object.keyVersion)
   if (!historicalKey) {
     throw new Error(`历史恢复缺少 Workspace Key v${historical.object.keyVersion}`)
   }
-  const payload = await decryptSyncV2Payload(historicalKey, historical.object.ciphertext, {
+  const payload = await decryptSyncPayload(historicalKey, historical.object.ciphertext, {
     workspaceId: input.workspaceId,
     objectId: historical.object.objectId,
     kind: historical.object.kind,
@@ -51,7 +51,7 @@ export async function enqueueSyncV2HistoricalRestore(
   for (const resource of historical.resources) {
     const entity = await requireCurrentEntity(input.syncScopeId, resource)
     const commandId = crypto.randomUUID()
-    await enqueueSyncV2Command({ scopeId: input.syncScopeId, command: {
+    await enqueueSyncCommand({ scopeId: input.syncScopeId, command: {
       commandId,
       type: 'upsert-object',
       objectId: resource.objectId,
@@ -74,7 +74,7 @@ export async function enqueueSyncV2HistoricalRestore(
   const recreatingPurgedObject = historical.object.currentRevision === null
   const currentName = owner.localKey.split('/').filter(Boolean).at(-1) ?? owner.localKey
   const nameConflictId = recreatingPurgedObject ? crypto.randomUUID() : null
-  const nameConflict = nameConflictId ? await encryptSyncV2Payload(input.workspaceKey, {
+  const nameConflict = nameConflictId ? await encryptSyncPayload(input.workspaceKey, {
     schemaVersion: 2,
     type: 'same-name',
     objectId: historical.object.objectId,
@@ -89,7 +89,7 @@ export async function enqueueSyncV2HistoricalRestore(
     purpose: 'conflict',
     identity: nameConflictId,
   }) : null
-  await enqueueSyncV2Command({ scopeId: input.syncScopeId, command: {
+  await enqueueSyncCommand({ scopeId: input.syncScopeId, command: {
     commandId: ownerCommandId,
     type: 'upsert-object',
     objectId: historical.object.objectId,
@@ -103,13 +103,13 @@ export async function enqueueSyncV2HistoricalRestore(
       parentObjectId: owner.parentObjectId,
       nameCiphertext: historical.object.nameCiphertext,
       ...(['note', 'folder'].includes(historical.object.kind) ? {
-        nameBlindIndex: await createSyncV2NameBlindIndex({
-          key: getSyncV2StableBlindIndexKey(input.workspaceKeys, input.workspaceKey),
+        nameBlindIndex: await createSyncNameBlindIndex({
+          key: getSyncStableBlindIndexKey(input.workspaceKeys, input.workspaceKey),
           workspaceId: input.workspaceId,
           parentObjectId: owner.parentObjectId,
           name: currentName,
         }),
-        nameBlindIndexKeyVersion: getSyncV2StableBlindIndexKeyVersion(input.workspaceKeys),
+        nameBlindIndexKeyVersion: getSyncStableBlindIndexKeyVersion(input.workspaceKeys),
         nameConflictId: nameConflictId!,
         nameConflictCiphertext: nameConflict!.ciphertext,
         nameConflictCiphertextHash: nameConflict!.ciphertextHash,
@@ -131,9 +131,9 @@ export async function enqueueSyncV2HistoricalRestore(
 
 async function requireCurrentEntity(
   syncScopeId: string,
-  historical: SyncV2HistoricalObjectVersion,
+  historical: SyncHistoricalObjectVersion,
 ) {
-  const entity = await getSyncV2Entity(syncScopeId, historical.objectId)
+  const entity = await getSyncEntity(syncScopeId, historical.objectId)
   if (!entity) throw new Error(`历史恢复缺少当前对象索引：${historical.objectId}`)
   if (entity.kind !== historical.kind) throw new Error(`历史恢复对象类型不一致：${historical.objectId}`)
   return entity

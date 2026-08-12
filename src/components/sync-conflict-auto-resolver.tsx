@@ -4,14 +4,15 @@ import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
 import {
-  enqueueSyncV2Command,
-  listSyncV2Conflicts,
-  type SyncV2Conflict,
+  dismissPendingSyncConflict,
+  enqueueSyncCommand,
+  listSyncConflicts,
+  type SyncConflict,
 } from '@/db/note-gen-server-sync-index'
 import emitter from '@/lib/emitter'
 import { materializeMerge, mergeMarkdownThreeWay } from '@/lib/sync/markdown-three-way-merge'
 import {
-  getNoteGenServerBackgroundV2Context,
+  getNoteGenServerSyncContext,
   syncNoteGenServerNow,
   subscribeNoteGenServerBackgroundStatus,
 } from '@/lib/sync/note-gen-server-background'
@@ -51,9 +52,9 @@ export function SyncConflictAutoResolver() {
       try {
         do {
           rerun.current = false
-          const context = getNoteGenServerBackgroundV2Context()
+          const context = getNoteGenServerSyncContext()
           if (!context) return
-          const conflicts = await listSyncV2Conflicts(context.syncScopeId)
+          const conflicts = await listSyncConflicts(context.syncScopeId)
           const candidates = conflicts.filter(conflict => (
             isAutomaticMarkdownConflict(conflict) && !attempted.current.has(conflict.conflictId)
           ))
@@ -64,12 +65,21 @@ export function SyncConflictAutoResolver() {
             && conflict.createdSequence !== '0'
             && !attempted.current.has(conflict.conflictId)
           ))
+          const locallyDismissed = conflicts.filter(conflict => (
+            conflict.type === 'structured-concurrent'
+            && conflict.createdSequence === '0'
+            && !attempted.current.has(conflict.conflictId)
+          ))
           const handledObjects = new Set<string>()
 
           try {
+            for (const conflict of locallyDismissed) {
+              attempted.current.add(conflict.conflictId)
+              await dismissPendingSyncConflict(context.syncScopeId, conflict.conflictId)
+            }
             for (const conflict of automaticallyDismissed) {
               attempted.current.add(conflict.conflictId)
-              await enqueueSyncV2Command({ scopeId: context.syncScopeId, command: {
+              await enqueueSyncCommand({ scopeId: context.syncScopeId, command: {
                 type: 'resolve-conflict', commandId: crypto.randomUUID(),
                 conflictId: conflict.conflictId,
                 expectedCreatedSequence: conflict.createdSequence,
@@ -99,7 +109,7 @@ export function SyncConflictAutoResolver() {
 
             try {
               await resolveMarkdownSyncConflict({ conflict, content, relatedConflicts: related })
-              const remaining = await listSyncV2Conflicts(context.syncScopeId)
+              const remaining = await listSyncConflicts(context.syncScopeId)
               const resolved = !remaining.some(item => item.conflictId === conflict.conflictId)
               if (!disposed && resolved) {
                 toast.success(parts.some(part => part.type === 'conflict')
@@ -139,7 +149,7 @@ export function SyncConflictAutoResolver() {
   return null
 }
 
-function isAutomaticMarkdownConflict(conflict: SyncV2Conflict): boolean {
+function isAutomaticMarkdownConflict(conflict: SyncConflict): boolean {
   return conflict.kind === 'note'
     && conflict.createdSequence !== '0'
     && AUTOMATIC_MARKDOWN_CONFLICT_TYPES.has(conflict.type)
@@ -158,7 +168,7 @@ function parseMarkdownPayload(value: string): MarkdownConflictPayload | null {
   }
 }
 
-function isLocalDeleteVsEdit(conflict: SyncV2Conflict): boolean {
+function isLocalDeleteVsEdit(conflict: SyncConflict): boolean {
   if (conflict.type !== 'delete-vs-edit') return false
   try {
     const payload = JSON.parse(conflict.payloadJson) as Record<string, unknown>

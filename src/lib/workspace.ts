@@ -6,6 +6,14 @@ function normalizeFsPath(path: string): string {
   return path.trim().replace(/\\/g, '/').replace(/\/+/g, '/')
 }
 
+function normalizeFsPathForContainment(path: string): string {
+  const normalized = normalizeFsPath(path).replace(/\/$/, '')
+  // iOS APIs may describe the same data container through either /var or its
+  // /private/var alias. Capability checks need the AppData-relative form in
+  // both cases, so canonicalize only for containment comparison.
+  return normalized.startsWith('/private/var/') ? normalized.slice('/private'.length) : normalized
+}
+
 export function isAbsoluteFsPath(path: string): boolean {
   return path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith('\\\\')
 }
@@ -48,6 +56,20 @@ export async function getFilePathOptions(relativePath: string): Promise<{ path: 
   const workspace = await getWorkspacePath()
 
   if (workspace.isCustom) {
+    // Mobile workspace selection can persist the app's own default article
+    // directory as an absolute path. Passing that path back to plugin-fs as an
+    // unrestricted absolute path is rejected by the iOS scope checker. Keep
+    // paths inside AppData relative to BaseDirectory.AppData so they use the
+    // capability's explicit $APPDATA scope.
+    const appDataPath = normalizeFsPathForContainment(await appDataDir())
+    const workspacePath = normalizeFsPathForContainment(workspace.path)
+    if (workspacePath === appDataPath || workspacePath.startsWith(`${appDataPath}/`)) {
+      const workspaceRelativePath = workspacePath.slice(appDataPath.length).replace(/^\/+/, '')
+      return {
+        path: [workspaceRelativePath, relativePath].filter(Boolean).join('/'),
+        baseDir: BaseDirectory.AppData,
+      }
+    }
     // 对于自定义工作区，返回绝对路径，不设置baseDir
     const fullPath = await join(workspace.path, relativePath)
     return { path: fullPath }

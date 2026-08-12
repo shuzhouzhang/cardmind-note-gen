@@ -60,7 +60,7 @@ export interface ServerCapabilities {
   capabilitySchema?: number
   instanceCapabilityRevision?: string
   registrationPolicyRevision?: string
-  requiredSyncFeatures?: string[]
+  requiredSyncFeatures?: readonly string[]
   registration?: {
     policy: 'bootstrap' | 'disabled' | 'invitation' | 'public'
     methods: string[]
@@ -262,8 +262,8 @@ export async function loadServerSession(instanceId: string, expectedDeviceId?: s
     let raw: string | null
     try {
       raw = await invoke<string | null>(secureStorage.getCommand, { key })
-    } catch {
-      return null
+    } catch (cause) {
+      throw new Error(`无法从系统安全存储恢复同步登录：${unknownErrorMessage(cause)}`)
     }
     const credential = parseMobileServerRefreshCredential(raw)
     if (credential !== null && credential.instanceId === instanceId
@@ -303,10 +303,19 @@ export async function saveServerSession(instanceId: string, session: ServerSessi
   const key = mobileSessionKey(instanceId)
   try {
     await invoke(secureStorage.setCommand, { key, value: JSON.stringify(credential) })
+    const persisted = await invoke<string | null>(secureStorage.getCommand, { key })
+    const verified = parseMobileServerRefreshCredential(persisted)
+    if (verified?.instanceId !== instanceId
+      || verified.deviceId !== session.deviceId
+      || verified.refreshToken !== session.refreshToken) {
+      throw new Error('写入后校验失败')
+    }
     mobilePersistedSessionKey = key
-  } catch {
-    // A locked mobile secure store only disables persistence. The current
-    // in-memory authorization remains usable until the app exits.
+  } catch (cause) {
+    // A successful device authorization without a durable refresh credential
+    // looks healthy until the app restarts. Fail the connection immediately so
+    // the user is never told that a non-persistent session is fully connected.
+    throw new Error(`无法将同步登录保存到系统安全存储：${unknownErrorMessage(cause)}`)
   }
 }
 
@@ -470,17 +479,30 @@ function isRefreshToken(value: string): boolean {
 
 function mobileSecureStorage(): { setCommand: string, getCommand: string, deleteCommand: string } | null {
   if (!isTauriRuntime()) return null
+  let current: ReturnType<typeof platform> | null = null
   try {
-    const current = platform()
-    if (current === 'android') return {
-      setCommand: 'set_android_secure_value', getCommand: 'get_android_secure_value', deleteCommand: 'delete_android_secure_value',
-    }
-    if (current === 'ios') return {
-      setCommand: 'set_ios_secure_value', getCommand: 'get_ios_secure_value', deleteCommand: 'delete_ios_secure_value',
-    }
+    current = platform()
   } catch {
-    // Secure storage is optional. Never fall back to Store/localStorage.
+    // The OS plugin can be queried before its injected global is ready.
   }
+  if (current !== 'android' && current !== 'ios' && current !== 'macos') {
+    // The user agent is only used to select a local native command; it is never
+    // used as an authentication decision. iPadOS can expose a Macintosh UA.
+    if (/iPhone|iPad|iPod/i.test(navigator.userAgent)
+      || (/Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1)) current = 'ios'
+    else if (/Android/i.test(navigator.userAgent)) current = 'android'
+    else if (/Macintosh|Mac OS X/i.test(navigator.userAgent)) current = 'macos'
+  }
+  if (current === 'android') return {
+    setCommand: 'set_android_secure_value', getCommand: 'get_android_secure_value', deleteCommand: 'delete_android_secure_value',
+  }
+  if (current === 'ios') return {
+    setCommand: 'set_ios_secure_value', getCommand: 'get_ios_secure_value', deleteCommand: 'delete_ios_secure_value',
+  }
+  if (current === 'macos') return {
+    setCommand: 'set_macos_secure_value', getCommand: 'get_macos_secure_value', deleteCommand: 'delete_macos_secure_value',
+  }
+  // Never fall back to Store/localStorage for bearer credentials.
   return null
 }
 
@@ -1173,8 +1195,13 @@ export async function uploadServerBlob(input: {
   await serverRequest(
     normalizeServerOrigin(input.baseUrl),
     `/v1/workspaces/${input.workspaceId}/blobs/uploads/${upload.uploadId}/complete`,
-    { method: 'POST', accessToken: input.accessToken, body: input.expectedSyncEpoch === undefined
-      ? undefined : { expectedSyncEpoch: input.expectedSyncEpoch } },
+    {
+      method: 'POST',
+      accessToken: input.accessToken,
+      // Fastify represents a missing JSON body as null before schema validation. Always
+      // send an object so deployments that require the completion schema can accept it.
+      body: input.expectedSyncEpoch === undefined ? {} : { expectedSyncEpoch: input.expectedSyncEpoch },
+    },
   )
 }
 
@@ -1544,6 +1571,16 @@ function fromBase64Url(value: string): Uint8Array {
 
 function isTauriRuntime(): boolean {
   return '__TAURI_INTERNALS__' in globalThis
+}
+
+function unknownErrorMessage(cause: unknown): string {
+  if (cause instanceof Error && cause.message) return cause.message
+  if (typeof cause === 'string' && cause.trim()) return cause
+  try {
+    return JSON.stringify(cause)
+  } catch {
+    return String(cause)
+  }
 }
 
 function parseStoredSession(value: string | null): StoredServerSession | null {

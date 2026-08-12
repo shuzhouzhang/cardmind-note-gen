@@ -1,5 +1,5 @@
 import { getDb } from './index'
-import { applySyncV2AtomicBatch } from './note-gen-server-sync-index'
+import { applySyncAtomicBatch } from './note-gen-server-sync-index'
 
 export type NoteGenServerOutboxAction = 'upsert' | 'delete'
 
@@ -56,7 +56,7 @@ export interface NoteGenServerSyncQueueStats {
   failedInbox: number
 }
 
-export async function initNoteGenServerSyncDb() {
+export async function initNoteGenServerQueueDb() {
   const db = await getDb()
   await db.execute(`
     create table if not exists note_gen_server_sync_state (
@@ -302,19 +302,19 @@ export async function listNoteGenServerSyncObjects(workspaceId: string): Promise
 export async function upsertNoteGenServerSyncObject(object: NoteGenServerSyncObject): Promise<void> {
   const now = Date.now()
   const collisionWhere = `workspaceId=$1 and relativePath=$2 and objectId!=$3`
-  await applySyncV2AtomicBatch([
+  await applySyncAtomicBatch([
     {
-      statement: `delete from sync_v2_outbox where scopeId=$1 and objectId in (
+      statement: `delete from sync_outbox where scopeId=$1 and objectId in (
         select objectId from note_gen_server_sync_objects where ${collisionWhere})`,
       values: [object.workspaceId, object.relativePath, object.objectId],
     },
     {
-      statement: `delete from sync_v2_mutation_journal where scopeId=$1 and objectId in (
+      statement: `delete from sync_mutation_journal where scopeId=$1 and objectId in (
         select objectId from note_gen_server_sync_objects where ${collisionWhere})`,
       values: [object.workspaceId, object.relativePath, object.objectId],
     },
     {
-      statement: `update sync_v2_entities set localKey='__sync_replaced__/' || objectId,
+      statement: `update sync_entities set localKey='__sync_replaced__/' || objectId,
         deleted=1, updatedAt=$4 where scopeId=$1 and objectId in (
           select objectId from note_gen_server_sync_objects where ${collisionWhere})`,
       values: [object.workspaceId, object.relativePath, object.objectId, now],
@@ -367,8 +367,8 @@ export async function enqueueNoteGenServerOutbox(input: {
   contentHash: string | null
 }): Promise<void> {
   const now = Date.now()
-  await applySyncV2AtomicBatch([{
-    statement: `delete from sync_v2_mutation_journal
+  await applySyncAtomicBatch([{
+    statement: `delete from sync_mutation_journal
       where scopeId = $1 and mutationId != $3 and mutationId = (
         select operationId from note_gen_server_sync_outbox
         where workspaceId = $1 and objectId = $2 limit 1
