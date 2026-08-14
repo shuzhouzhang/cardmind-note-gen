@@ -146,6 +146,23 @@ export async function pullSyncEvents(input: {
   )
 }
 
+export async function acknowledgeSyncEvents(input: {
+  baseUrl: string
+  accessToken: string
+  workspaceId: string
+  through: string
+  expectedSyncEpoch?: string
+}): Promise<{ acknowledgedSequence: string, syncEpoch?: string }> {
+  return serverRequest(
+    normalizeServerOrigin(input.baseUrl),
+    `/v1/workspaces/${input.workspaceId}/sync/ack`,
+    { method: 'POST', accessToken: input.accessToken, body: {
+      through: input.through,
+      ...(input.expectedSyncEpoch === undefined ? {} : { expectedSyncEpoch: input.expectedSyncEpoch }),
+    } },
+  )
+}
+
 export interface SyncBootstrapObject {
   objectId: string
   kind: SyncObjectKind

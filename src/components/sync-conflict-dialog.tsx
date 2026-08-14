@@ -1,8 +1,9 @@
 'use client'
 
-import { Check, GitMerge, Trash2 } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, GitMerge, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import * as Y from 'yjs'
 import { Editor } from '@tiptap/core'
 import Collaboration from '@tiptap/extension-collaboration'
@@ -64,6 +65,7 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
   onOpenChange: (open: boolean) => void
   presentation?: 'dialog' | 'page'
 }) {
+  const t = useTranslations('settings.sync.noteGenServer.conflicts')
   const router = useRouter()
   const pathname = usePathname()
   const context = getNoteGenServerSyncContext()
@@ -586,18 +588,18 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
       <ConflictResolverContent presentation={presentation}>
         {presentation === 'page' ? (
           <header>
-            <h1 className="flex items-center gap-2 text-xl font-semibold"><GitMerge />解决同步冲突</h1>
+            <h1 className="flex items-center gap-2 text-xl font-semibold"><GitMerge />{t('title')}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {conflicts.length > 0 ? `第 ${index + 1} 项，共 ${conflicts.length} 项 · ` : ''}
-              {conflict ? conflictDisplayName(conflict, payload?.path) : '没有待处理的同步冲突'}
+              {conflicts.length > 0 ? `${t('progress', { current: index + 1, count: conflicts.length })} · ` : ''}
+              {conflict ? conflictDisplayName(conflict, payload?.path) : t('empty')}
             </p>
           </header>
         ) : (
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><GitMerge />解决同步冲突</DialogTitle>
+            <DialogTitle className="flex items-center gap-2"><GitMerge />{t('title')}</DialogTitle>
             <DialogDescription>{conflict
-              ? conflictDisplayName(conflict, payload?.path)
-              : '没有待处理的同步冲突'}</DialogDescription>
+              ? `${t('progress', { current: index + 1, count: conflicts.length })} · ${conflictDisplayName(conflict, payload?.path)}`
+              : t('empty')}</DialogDescription>
           </DialogHeader>
         )}
         {resolutionError ? (
@@ -719,12 +721,38 @@ export function SyncConflictDialog({ open, onOpenChange, presentation = 'dialog'
           </ScrollArea>
         ) : null}
         {presentation === 'page' ? (
-          <footer className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t bg-background py-3">
-            {actions}
+          <footer className="sticky bottom-0 flex flex-wrap items-center justify-between gap-2 border-t bg-background py-3">
+            <ConflictNavigation index={index} count={conflicts.length} disabled={saving} onChange={setIndex} />
+            <div className="flex flex-wrap justify-end gap-2">{actions}</div>
           </footer>
-        ) : <DialogFooter>{actions}</DialogFooter>}
+        ) : <DialogFooter className="sm:justify-between">
+          <ConflictNavigation index={index} count={conflicts.length} disabled={saving} onChange={setIndex} />
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">{actions}</div>
+        </DialogFooter>}
       </ConflictResolverContent>
     </ConflictResolverRoot>
+  )
+}
+
+function ConflictNavigation({ index, count, disabled, onChange }: {
+  index: number
+  count: number
+  disabled: boolean
+  onChange: (index: number) => void
+}) {
+  const t = useTranslations('settings.sync.noteGenServer.conflicts')
+  if (count <= 1) return <span />
+  return (
+    <div className="flex items-center gap-1">
+      <Button type="button" size="sm" variant="outline" disabled={disabled || index === 0}
+        onClick={() => onChange(index - 1)} aria-label={t('previous')}>
+        <ChevronLeft data-icon="inline-start" />{t('previous')}
+      </Button>
+      <Button type="button" size="sm" variant="outline" disabled={disabled || index >= count - 1}
+        onClick={() => onChange(index + 1)} aria-label={t('next')}>
+        {t('next')}<ChevronRight data-icon="inline-end" />
+      </Button>
+    </div>
   )
 }
 

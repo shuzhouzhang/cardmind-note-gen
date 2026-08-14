@@ -41,7 +41,7 @@ interface PendingOnboardingSecret {
   accountId: string
   deviceId: string
   workspaceId: string
-  creationIdempotencyKey: string
+  creationIdempotencyKey?: string
   recoveryKey: string
   expiresAt: number
 }
@@ -86,6 +86,9 @@ export interface ServerCapabilities {
     maxRequestBytes: number
     maxBlobBytes: number
     blobPartBytes: number
+    changeRetentionDays?: number
+    versionRetentionDays?: number
+    tombstoneRetentionDays?: number
   }
   web?: {
     accountUrl: string
@@ -108,6 +111,11 @@ export interface ResolvedServerCapabilities extends ServerCapabilities {
    * endpoints and must not treat this as permission to proceed. */
   readiness: 'ready' | 'unavailable'
 }
+
+const supportedRequiredSyncFeatures = new Set([
+  'syncEpochFencing',
+  'durableCursorAcknowledgement',
+])
 
 /**
  * Normalizes additive schema-2 discovery without making legacy servers look
@@ -357,11 +365,9 @@ export async function clearServerSession(): Promise<void> {
   mobilePersistedSessionKey = null
 }
 
-/**
- * Records a just-created E2EE recovery key only when Android/iOS secure
- * storage is available. A false result is expected on desktop/web and keeps
- * the existing foreground-only confirmation flow intact.
- */
+/** Records an unconfirmed E2EE recovery key only in platform secure storage.
+ * It covers both onboarding and a later managed-to-E2EE conversion. A false
+ * result keeps the existing foreground-only confirmation flow intact. */
 export async function savePendingServerWorkspaceRecoverySecret(input: {
   profile: Pick<NoteGenServerProfile, 'instanceId' | 'deviceId' | 'workspaceId' | 'onboarding'>
   accountId: string
@@ -369,14 +375,15 @@ export async function savePendingServerWorkspaceRecoverySecret(input: {
 }): Promise<boolean> {
   const workspaceId = input.profile.workspaceId
   const creationIdempotencyKey = input.profile.onboarding?.creationIdempotencyKey
-  if (!workspaceId || !creationIdempotencyKey || !isServerInstanceId(input.profile.instanceId)
+  if (!workspaceId || !isServerInstanceId(input.profile.instanceId)
     || !isServerInstanceId(input.profile.deviceId) || !isServerInstanceId(input.accountId)
     || !isServerInstanceId(workspaceId) || !isBase64UrlSecret(input.recoveryKey)) return false
   const storage = mobileSecureStorage()
   if (storage === null) return false
   const value: PendingOnboardingSecret = {
     version: 1, instanceId: input.profile.instanceId, accountId: input.accountId,
-    deviceId: input.profile.deviceId, workspaceId, creationIdempotencyKey,
+    deviceId: input.profile.deviceId, workspaceId,
+    ...(creationIdempotencyKey === undefined ? {} : { creationIdempotencyKey }),
     recoveryKey: input.recoveryKey, expiresAt: Date.now() + PENDING_ONBOARDING_SECRET_TTL_MS,
   }
   try {
@@ -389,7 +396,7 @@ export async function savePendingServerWorkspaceRecoverySecret(input: {
   }
 }
 
-/** Reads a matching non-expired mobile pending record and removes malformed,
+/** Reads a matching non-expired pending record and removes malformed,
  * expired, or cross-account values before they can influence onboarding. */
 export async function loadPendingServerWorkspaceRecoverySecret(input: {
   profile: Pick<NoteGenServerProfile, 'instanceId' | 'deviceId' | 'workspaceId' | 'onboarding'>
@@ -398,7 +405,7 @@ export async function loadPendingServerWorkspaceRecoverySecret(input: {
   const storage = mobileSecureStorage()
   const creationIdempotencyKey = input.profile.onboarding?.creationIdempotencyKey
   const workspaceId = input.profile.workspaceId
-  if (storage === null || !creationIdempotencyKey || !workspaceId) return null
+  if (storage === null || !workspaceId) return null
   const key = pendingOnboardingSecretKey(input.profile.instanceId, input.accountId, input.profile.deviceId)
   let raw: string | null
   try {
@@ -514,7 +521,8 @@ function parsePendingOnboardingSecret(raw: string | null): PendingOnboardingSecr
     const record = value as Partial<PendingOnboardingSecret>
     if (record.version !== 1 || !isServerInstanceId(record.instanceId ?? '') || !isServerInstanceId(record.accountId ?? '')
       || !isServerInstanceId(record.deviceId ?? '') || !isServerInstanceId(record.workspaceId ?? '')
-      || typeof record.creationIdempotencyKey !== 'string' || !isBase64UrlSecret(record.recoveryKey ?? '')
+      || (record.creationIdempotencyKey !== undefined && typeof record.creationIdempotencyKey !== 'string')
+      || !isBase64UrlSecret(record.recoveryKey ?? '')
       || !Number.isSafeInteger(record.expiresAt) || (record.expiresAt ?? 0) <= Date.now()) return null
     return record as PendingOnboardingSecret
   } catch {
@@ -561,6 +569,18 @@ export async function discoverServer(baseUrl: string): Promise<ResolvedServerCap
   }
   if (capabilities.features?.assetObjects !== true) {
     throw new Error('服务器缺少附件资源对象能力，请先升级 NoteGen Sync Server')
+  }
+  const unsupportedFeatures = capabilities.requiredSyncFeatures.filter(
+    feature => !supportedRequiredSyncFeatures.has(feature),
+  )
+  if (unsupportedFeatures.length > 0) {
+    throw new NoteGenServerRequestError(
+      `当前 NoteGen 版本不支持服务器要求的同步能力：${unsupportedFeatures.join('、')}。请先升级 NoteGen。`,
+      409,
+      'protocol_incompatible',
+      false,
+      { unsupportedFeatures },
+    )
   }
   try {
     const ready = await serverRequest<{ status: string }>(normalized, '/health/ready', { timeoutMs: 5_000 })

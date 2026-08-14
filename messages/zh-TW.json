@@ -1322,7 +1322,21 @@
         "accountUsage": "帳號用量",
         "storageUsage": "儲存空間：{used} / {limit}",
         "storageUsageUnlimited": "儲存空間：{used}",
+        "storageBreakdown": "目前內容 {active} · 上傳預留 {reserved} · 歷史保留 {retained}",
+        "retentionDescription": "歷史資料最長保留約 {days} 天；刪除內容後，用量可能不會立即下降。",
         "monthlyTransfer": "本月：上傳 {ingress} · 下載 {egress}",
+        "rebuildingTitle": "正在重建同步索引",
+        "rebuildingDescription": "正在建立安全快照；已處理 {count} 個物件{restarted}。",
+        "rebuildingRestarted": "，快照過期後已自動重新開始",
+        "restoreConfirmTitle": "接受伺服器復原並重新同步？",
+        "restoreConfirmDescription": "伺服器資料已復原到另一個時間點。NoteGen 會保留本機待同步內容、重新下載安全快照，並將無法自動合併的變更保存為衝突。目前約有 {count} 項待處理；上次完整同步時間為 {time}。建議先備份目前的筆記目錄。",
+        "neverFullySynced": "尚未完成過完整同步",
+        "notNow": "暫不處理",
+        "restoreConfirmAction": "接受並重建同步索引",
+        "disconnectConfirmTitle": "中斷同步伺服器？",
+        "disconnectConfirmDescription": "本機筆記不會刪除，但尚未上傳的修改不會出現在其他裝置。目前傳送、接收、失敗與衝突共 {count} 項；上次完整同步時間為 {time}。中斷後會清除本機連線設定、撤銷目前裝置工作階段，並將主要同步平台切回本機儲存。",
+        "keepSyncing": "繼續保持同步",
+        "disconnectAction": "仍然中斷",
         "recoveryConfirmLabel": "輸入恢復金鑰末尾 6 碼：{suffix}",
         "hostedRegistrationInBrowser": "此伺服器要求在瀏覽器帳號頁面完成電子郵件註冊與驗證。",
         "openAccountPortal": "開啟帳號入口",
@@ -1337,7 +1351,39 @@
           "transfer": "附件傳輸失敗"
         },
         "problemReason": {
-          "commandIdReused": "此命令編號曾對應另一份同步內容。用戶端會保留本次操作並改用新編號安全重試。"
+          "commandIdReused": "此命令編號曾對應另一份同步內容。用戶端會保留本次操作並改用新編號安全重試。",
+          "objectTooLarge": "物件超過伺服器限制。請縮小內容或附件後再重試。",
+          "blobNotReady": "內文引用的附件尚未上傳完成。請重新選擇或上傳附件。",
+          "resourceNotReady": "物件引用了遺失的附件。請開啟內容並移除或重新加入附件。",
+          "keyVersionNotFound": "伺服器缺少此資料使用的加密金鑰版本。請重新解鎖工作區或聯絡管理員。",
+          "folderNotEmpty": "資料夾仍包含使用中的內容。請重新整理後再刪除。",
+          "ciphertextHashMismatch": "本機加密資料完整性驗證失敗。請保留本機檔案並重新產生同步操作。",
+          "documentIdentityMismatch": "文件身分與本機記錄不一致。請匯出診斷並保留檔案。",
+          "quotaExceeded": "伺服器儲存空間已滿。請管理空間後再重試。"
+        },
+        "conflicts": {
+          "title": "解決同步衝突",
+          "progress": "第 {current} 項，共 {count} 項",
+          "empty": "沒有待處理的同步衝突",
+          "previous": "上一項",
+          "next": "下一項"
+        },
+        "platformSwitch": {
+          "title": "同步工作尚未完成",
+          "description": "目前有 {count} 項待處理內容，或尚未確認遠端狀態。切換平台不會自動移轉這些內容。",
+          "outgoing": "待傳送與本機變更", "incoming": "待接收與失敗", "attachments": "附件與衝突",
+          "cancel": "取消", "keepAndSwitch": "保留待處理內容並切換", "syncAndSwitch": "同步完成後切換",
+          "notConfirmed": "未能確認伺服器已收到本輪修改，請檢查網路或同步問題後重試。",
+          "connectionUnavailable": "同步伺服器連線不可用，無法確認遠端狀態。", "switchFailed": "切換同步平台失敗"
+        },
+        "statusPanel": {
+          "actionRequired": "同步需要處理", "workspaceMismatch": "目前工作區與同步設定不一致。", "unsafeChanges": "部分內容尚未安全同步。", "view": "查看", "workspaceLocked": "同步工作區尚未解鎖",
+          "ariaLabel": "同步狀態：{label}，{count} 項待同步", "rebuildProgress": "已處理 {count} 個物件{restarted}", "rebuildRestarted": "；快照過期後已自動重新開始",
+          "problemOutbox": "傳送操作遭封鎖", "problemInbox": "接收資料套用失敗", "problemTransfer": "附件傳輸失敗",
+          "pendingMutations": "本機待保存", "pendingOutbox": "待傳送", "pendingInbox": "待套用", "transfers": "附件傳輸", "inProgress": "進行中", "problems": "衝突與失敗", "serverConfirmed": "遠端確認", "fullySynced": "完整同步", "notConfirmed": "尚未確認",
+          "retry": "重試", "viewProblems": "查看問題", "viewResolution": "查看處理方法", "exportDiagnostics": "匯出診斷",
+          "synced": "已同步", "saving": "正在儲存", "syncing": "同步中", "rebuilding": "正在重建同步索引", "pending": "待同步", "offline": "離線，可繼續編輯", "attention": "需要處理", "paused": "已暫停", "idle": "同步未啟動",
+          "objectTooLarge": "內容超過伺服器限制。", "resourceNotReady": "附件遺失或尚未完成。", "quotaExceeded": "伺服器空間已滿。", "keyVersionNotFound": "缺少加密金鑰版本。", "folderNotEmpty": "資料夾內容已變更。"
         },
         "syncSummary": "本輪傳送 {pushed} 項、接收 {pulled} 項、建立 {conflicts} 個衝突副本。",
         "initialSyncTitle": "同步進行中",

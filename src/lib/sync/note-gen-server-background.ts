@@ -58,22 +58,40 @@ interface RuntimeState {
 
 export interface NoteGenServerBackgroundStatus {
   phase: 'idle' | 'saving' | 'pending' | 'syncing' | 'synced' | 'offline'
-    | 'needs-attention' | 'paused' | 'workspace-mismatch' | 'error'
+    | 'rebuilding' | 'needs-attention' | 'paused' | 'workspace-mismatch' | 'error'
   result?: NoteGenServerSyncCycleResult
   problems?: SyncProblemDetail[]
   error?: string
   reason?: string
+  progress?: { processedObjects: number, restarted: boolean }
+  transferProgress?: { completedBytes: number, totalBytes: number }
   updatedAt: number
 }
 
 /** Safe-to-preview diagnostic summary. Deliberately excludes bearer material,
  * IDs, paths, object names, message bodies and Workspace keys. */
 export interface NoteGenServerDiagnosticSummary {
-  formatVersion: 1
+  formatVersion: 2
   phase: NoteGenServerBackgroundStatus['phase']
   pauseReason: string | null
+  status: {
+    reason: string | null
+    error: string | null
+    updatedAt: number
+    progress: NoteGenServerBackgroundStatus['progress'] | null
+    transferProgress: NoteGenServerBackgroundStatus['transferProgress'] | null
+    problems: Array<Pick<SyncProblemDetail, 'category' | 'operation' | 'lastError'>>
+  }
   server: { configured: boolean, deploymentMode: 'hosted' | 'self-hosted' | null, serverVersion: string | null, syncEpochKnown: boolean }
   queue: { pendingMutations: number, pendingOutbox: number, blockedOutbox: number, pendingInbox: number, failedInbox: number, unresolvedConflicts: number, pendingTransfers: number, failedTransfers: number }
+  acknowledgement: { cursor: string, attemptedAt: number | null, error: string | null }
+}
+
+export interface NoteGenServerSyncAttempt {
+  startedAt: number
+  attempted: boolean
+  result: NoteGenServerSyncCycleResult | null
+  status: NoteGenServerBackgroundStatus
 }
 
 type SessionListener = (session: ServerSession | null) => void
@@ -147,6 +165,12 @@ let primaryEnabled = false
 let articleSavedListenerRegistered = false
 let lifecycleListenersRegistered = false
 let resumeInFlight: Promise<void> | null = null
+let workspaceReconciliationTimer: ReturnType<typeof setTimeout> | null = null
+let workspaceReconciliationInFlight: Promise<void> | null = null
+let workspaceReconciliationRequested = false
+let lastWorkspaceReconciliationAt = 0
+const workspaceReconciliationDebounceMs = 750
+const workspaceReconciliationMinimumIntervalMs = 10_000
 
 export function isNoteGenServerPrimaryEnabled(): boolean {
   return primaryEnabled
@@ -192,7 +216,7 @@ async function initializeRuntime(): Promise<void> {
         // Never silently rewrite the persisted epoch: keeping the last
         // accepted value preserves evidence for the staged re-bootstrap flow.
         syncPausedReason = 'sync_epoch_changed'
-        notifyStatus({ phase: 'paused', reason: 'sync_epoch_changed', error: '服务器恢复后需要重新同步，已保留本地待同步数据', updatedAt: Date.now() })
+        notifyStatus({ phase: 'paused', reason: 'sync_epoch_changed', result: currentStatus.result, error: '服务器恢复后需要重新同步，已保留本地待同步数据', updatedAt: Date.now() })
         return
       }
       if (profile.syncEpoch === undefined) {
@@ -433,9 +457,21 @@ export async function getNoteGenServerDiagnosticSummary(): Promise<NoteGenServer
   const profile = state?.profile ?? await loadServerProfile()
   const health = state?.syncScopeId ? await getSyncHealthSnapshot(state.syncScopeId) : null
   return {
-    formatVersion: 1,
+    formatVersion: 2,
     phase: currentStatus.phase,
     pauseReason: syncPausedReason,
+    status: {
+      reason: currentStatus.reason ?? null,
+      error: currentStatus.error ?? null,
+      updatedAt: currentStatus.updatedAt,
+      progress: currentStatus.progress ?? null,
+      transferProgress: currentStatus.transferProgress ?? null,
+      problems: (currentStatus.problems ?? []).map(problem => ({
+        category: problem.category,
+        operation: problem.operation,
+        lastError: problem.lastError,
+      })),
+    },
     server: {
       configured: profile !== null,
       deploymentMode: null,
@@ -449,6 +485,11 @@ export async function getNoteGenServerDiagnosticSummary(): Promise<NoteGenServer
           pendingInbox: health.pendingInbox, failedInbox: health.failedInbox, unresolvedConflicts: health.unresolvedConflicts,
           pendingTransfers: health.pendingTransfers, failedTransfers: health.failedTransfers,
         },
+    acknowledgement: {
+      cursor: health?.acknowledgedCursor ?? '0',
+      attemptedAt: health?.lastAckAttemptAt ?? null,
+      error: health?.lastAckError ?? null,
+    },
   }
 }
 
@@ -484,12 +525,24 @@ export function unlockNoteGenServerBackgroundWorkspace(input: {
  * has settled. This is used after first pairing/unlock so the UI cannot report
  * a connected account before the initial remote pull has completed.
  */
-export async function syncNoteGenServerNow(): Promise<void> {
-  if (!primaryEnabled) return
-  await triggerNoteGenServerBackgroundSync()
+export async function syncNoteGenServerNow(): Promise<NoteGenServerSyncAttempt> {
+  const startedAt = Date.now()
+  const ready = primaryEnabled && syncPausedReason === null
+    && Boolean(state?.profile.workspaceId && state.syncScopeId && state.workspaceKey
+      && state.workspaceKeys && state.keyVersion)
+  if (!ready) {
+    return { startedAt, attempted: false, result: null, status: currentStatus }
+  }
+  const directResult = await triggerNoteGenServerBackgroundSync()
   while (syncRunning || syncRequested || syncStartsInFlight > 0) {
     if (syncRunning) await waitForCurrentSyncCycle()
     else await new Promise<void>(resolve => setTimeout(resolve, 0))
+  }
+  return {
+    startedAt,
+    attempted: true,
+    result: directResult ?? currentStatus.result ?? null,
+    status: currentStatus,
   }
 }
 
@@ -659,6 +712,7 @@ export function pauseNoteGenServerForRestoreEpoch(): void {
   syncPausedReason = 'sync_epoch_changed'
   notifyStatus({
     phase: 'paused', reason: 'sync_epoch_changed',
+    result: currentStatus.result,
     error: '服务器恢复后需要重新同步，已保留本地待同步数据', updatedAt: Date.now(),
   })
 }
@@ -744,6 +798,7 @@ export function stopNoteGenServerBackgroundRuntime(): void {
     module.destroyNoteGenServerCollaborationSessions()
   ))
   unwatchWorkspace?.()
+  clearWorkspaceReconciliationSchedule()
   refreshTimer = null
   unwatchWorkspace = null
   initialization = null
@@ -829,6 +884,7 @@ function clearUnlockedWorkspaceRuntime(): void {
   syncRequestedShowProgress = false
   syncDelayMs = normalSyncDelayMs
   socketReconnectDelayMs = 1_000
+  clearWorkspaceReconciliationSchedule()
 }
 
 async function waitForCurrentSyncCycle(): Promise<void> {
@@ -938,6 +994,25 @@ async function runCurrentSyncCycle(): Promise<NoteGenServerSyncCycleResult> {
     workspaceKey: state.workspaceKey,
     workspaceKeys: state.workspaceKeys,
     keyVersion: state.keyVersion,
+    onBootstrapProgress: progress => {
+      if (progress.complete) return
+      notifyStatus({
+        phase: 'rebuilding',
+        reason: progress.reason,
+        result: currentStatus.result,
+        progress: { processedObjects: progress.processedObjects, restarted: progress.restarted },
+        error: progress.reason === 'cursor-expired'
+          ? '同步记录已过保留期，正在安全重建本地同步索引'
+          : '正在建立本地同步索引',
+        updatedAt: Date.now(),
+      })
+    },
+    onTransferProgress: progress => notifyStatus({
+      phase: 'syncing',
+      result: currentStatus.result,
+      transferProgress: progress,
+      updatedAt: Date.now(),
+    }),
   })
 }
 
@@ -987,7 +1062,7 @@ function connectEventSocket(): void {
       }
       if (message.type === 'sync.epoch-changed' && message.code === 'sync_epoch_changed') {
         syncPausedReason = 'sync_epoch_changed'
-        notifyStatus({ phase: 'paused', reason: 'sync_epoch_changed', error: '服务器恢复后需要重新同步，已保留本地待同步数据', updatedAt: Date.now() })
+        notifyStatus({ phase: 'paused', reason: 'sync_epoch_changed', result: currentStatus.result, error: '服务器恢复后需要重新同步，已保留本地待同步数据', updatedAt: Date.now() })
         socket.close()
       } else if (message.type === 'workspace.changed' && message.workspaceId === state?.profile.workspaceId) {
         void handleWorkspaceChangedNotice(message.latestSequence)
@@ -1180,13 +1255,45 @@ async function handleWorkspaceFileEvent(
     }
   }
   if (requiresWorkspaceReconciliation) {
-    try {
-      queuedChange = await queueCurrentNoteGenServerMarkdownWorkspace() > 0 || queuedChange
-    } catch (error) {
-      notifyStatus({ phase: 'error', error: errorMessage(error), updatedAt: Date.now() })
-    }
+    scheduleWorkspaceReconciliation()
   }
   if (queuedChange) void triggerNoteGenServerBackgroundSync()
+}
+
+function scheduleWorkspaceReconciliation(): void {
+  if (!primaryEnabled || !getNoteGenServerSyncContext()) return
+  workspaceReconciliationRequested = true
+  if (workspaceReconciliationTimer) clearTimeout(workspaceReconciliationTimer)
+  const earliestStartAt = lastWorkspaceReconciliationAt + workspaceReconciliationMinimumIntervalMs
+  const delay = Math.max(workspaceReconciliationDebounceMs, earliestStartAt - Date.now())
+  workspaceReconciliationTimer = setTimeout(() => {
+    workspaceReconciliationTimer = null
+    if (workspaceReconciliationInFlight) return
+    workspaceReconciliationInFlight = runWorkspaceReconciliation().finally(() => {
+      workspaceReconciliationInFlight = null
+      if (workspaceReconciliationRequested) scheduleWorkspaceReconciliation()
+    })
+  }, delay)
+}
+
+async function runWorkspaceReconciliation(): Promise<void> {
+  workspaceReconciliationRequested = false
+  if (!primaryEnabled || !getNoteGenServerSyncContext()) return
+  lastWorkspaceReconciliationAt = Date.now()
+  try {
+    if (await queueCurrentNoteGenServerMarkdownWorkspace() > 0) {
+      notifyStatus({ phase: 'pending', updatedAt: Date.now() })
+      void triggerNoteGenServerBackgroundSync()
+    }
+  } catch (error) {
+    notifyStatus({ phase: 'error', error: errorMessage(error), updatedAt: Date.now() })
+  }
+}
+
+function clearWorkspaceReconciliationSchedule(): void {
+  if (workspaceReconciliationTimer) clearTimeout(workspaceReconciliationTimer)
+  workspaceReconciliationTimer = null
+  workspaceReconciliationRequested = false
 }
 
 function ensureArticleSavedListener(): void {

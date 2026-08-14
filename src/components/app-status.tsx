@@ -17,8 +17,12 @@ import emitter from "@/lib/emitter";
 import { isMobileDevice } from "@/lib/check";
 import useArticleStore from "@/stores/article";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useSettingsDialogStore } from "@/stores/settings-dialog";
+import { toast } from "sonner";
 import {
   getNoteGenServerSyncContext,
+  getNoteGenServerDiagnosticSummary,
   subscribeNoteGenServerBackgroundStatus,
   retryNoteGenServerBackgroundSync,
   triggerNoteGenServerBackgroundSync,
@@ -287,6 +291,7 @@ export default function AppStatus({ compact = false }: { compact?: boolean }) {
 }
 
 function NoteGenServerStatus({ compact }: { compact: boolean }) {
+  const t = useTranslations('settings.sync.noteGenServer.statusPanel')
   const router = useRouter()
   const isMobile = isMobileDevice()
   const [status, setStatus] = useState<NoteGenServerBackgroundStatus>({ phase: 'idle', updatedAt: Date.now() })
@@ -313,7 +318,29 @@ function NoteGenServerStatus({ compact }: { compact: boolean }) {
       unsubscribe()
     }
   }, [])
-  const presentation = statusPresentation(status.phase)
+  useEffect(() => {
+    const toastId = 'note-gen-server-sync-action-required'
+    const actionable = status.phase === 'needs-attention' || status.phase === 'error'
+      || status.phase === 'workspace-mismatch' || status.phase === 'paused'
+    if (!actionable) {
+      toast.dismiss(toastId)
+      return
+    }
+    const timer = setTimeout(() => {
+      toast.error(t('actionRequired'), {
+        id: toastId,
+        description: status.error ?? (status.phase === 'workspace-mismatch'
+          ? t('workspaceMismatch') : t('unsafeChanges')),
+        duration: Infinity,
+        action: {
+          label: t('view'),
+          onClick: () => useSettingsDialogStore.getState().openSettings('sync'),
+        },
+      })
+    }, 10_000)
+    return () => clearTimeout(timer)
+  }, [status.error, status.phase, t])
+  const presentation = statusPresentation(status.phase, t)
   const ResultIcon = presentation.icon
   const result = status.result
   const pending = (result?.pendingMutations ?? 0) + (result?.pendingOutbox ?? 0)
@@ -328,7 +355,7 @@ function NoteGenServerStatus({ compact }: { compact: boolean }) {
     }
     const context = getNoteGenServerSyncContext()
     if (!context) {
-      setMobileConflictMessage('同步工作区尚未解锁')
+      setMobileConflictMessage(t('workspaceLocked'))
       return
     }
     const conflicts = await listSyncConflicts(context.syncScopeId)
@@ -338,7 +365,8 @@ function NoteGenServerStatus({ compact }: { compact: boolean }) {
       .find(conflict => Boolean(markdownConflictPath(conflict.payloadJson)))
     const path = markdownConflict ? markdownConflictPath(markdownConflict.payloadJson) : ''
     if (!path) {
-      setMobileConflictMessage('当前问题不是 Markdown 文章冲突，移动端不会弹出处理框')
+      setMobileConflictMessage(null)
+      setConflictsOpen(true)
       return
     }
     setMobileConflictMessage(null)
@@ -353,14 +381,14 @@ function NoteGenServerStatus({ compact }: { compact: boolean }) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label={`同步状态：${presentation.label}${pending > 0 ? `，${pending} 项待同步` : ''}`}
+          aria-label={t('ariaLabel', { label: presentation.label, count: pending })}
           className={compact
             ? 'relative flex size-8 items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
             : undefined}
         >
           {compact ? (
             <>
-              <ResultIcon className={`size-4 ${status.phase === 'syncing' ? 'animate-spin' : ''}`} />
+              <ResultIcon className={`size-4 ${status.phase === 'syncing' || status.phase === 'rebuilding' ? 'animate-spin' : ''}`} />
               {problems > 0 ? (
                 <span className="absolute right-1 top-1 size-2 rounded-full bg-destructive" />
               ) : pending > 0 ? (
@@ -369,7 +397,7 @@ function NoteGenServerStatus({ compact }: { compact: boolean }) {
             </>
           ) : (
             <Badge variant={presentation.variant} className="cursor-pointer">
-              <ResultIcon data-icon="inline-start" className={status.phase === 'syncing' ? 'animate-spin' : undefined} />
+              <ResultIcon data-icon="inline-start" className={status.phase === 'syncing' || status.phase === 'rebuilding' ? 'animate-spin' : undefined} />
               {presentation.label}{pending > 0 ? ` · ${pending}` : ''}
             </Badge>
           )}
@@ -381,34 +409,57 @@ function NoteGenServerStatus({ compact }: { compact: boolean }) {
           <div className="font-medium">{presentation.label}</div>
         </div>
         {status.error ? <p className="text-sm text-destructive">{status.error}</p> : null}
+        {status.phase === 'rebuilding' ? (
+          <p className="text-xs text-muted-foreground">
+            {t('rebuildProgress', {
+              count: status.progress?.processedObjects ?? 0,
+              restarted: status.progress?.restarted ? t('rebuildRestarted') : '',
+            })}
+          </p>
+        ) : null}
         {mobileConflictMessage ? <p className="text-xs text-muted-foreground">{mobileConflictMessage}</p> : null}
+        {status.problems?.slice(0, 3).map(problem => (
+          <div key={`${problem.category}:${problem.identity}`} className="rounded-md border p-2 text-xs">
+            <div className="font-medium">{problem.category === 'outbox' ? t('problemOutbox') : problem.category === 'inbox' ? t('problemInbox') : t('problemTransfer')}</div>
+            {problem.lastError ? <div className="mt-1 text-muted-foreground">{compactSyncProblemMessage(problem.lastError, t)}</div> : null}
+          </div>
+        ))}
         <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-          <span>本地待持久化</span><span className="text-right text-foreground">{result?.pendingMutations ?? 0}</span>
-          <span>待发送</span><span className="text-right text-foreground">{result?.pendingOutbox ?? 0}</span>
-          <span>待应用</span><span className="text-right text-foreground">{result?.pendingInbox ?? 0}</span>
-          <span>附件传输</span><span className="text-right text-foreground">{result?.pendingTransfers ?? 0}</span>
-          <span>冲突与失败</span><span className="text-right text-foreground">{problems}</span>
-          <span>远端确认</span><span className="text-right text-foreground">{formatSyncTime(result?.lastServerConfirmedAt)}</span>
-          <span>完全同步</span><span className="text-right text-foreground">{formatSyncTime(result?.lastFullyConvergedAt)}</span>
+          <span>{t('pendingMutations')}</span><span className="text-right text-foreground">{result?.pendingMutations ?? 0}</span>
+          <span>{t('pendingOutbox')}</span><span className="text-right text-foreground">{result?.pendingOutbox ?? 0}</span>
+          <span>{t('pendingInbox')}</span><span className="text-right text-foreground">{result?.pendingInbox ?? 0}</span>
+          <span>{t('transfers')}</span><span className="text-right text-foreground">
+            {status.transferProgress ? t('inProgress') : (result?.pendingTransfers ?? 0)}{status.transferProgress
+              ? formatTransferProgress(String(status.transferProgress.completedBytes), String(status.transferProgress.totalBytes))
+              : formatTransferProgress(result?.transferCompletedBytes, result?.transferTotalBytes)}
+          </span>
+          <span>{t('problems')}</span><span className="text-right text-foreground">{problems}</span>
+          <span>{t('serverConfirmed')}</span><span className="text-right text-foreground">{formatSyncTime(result?.lastServerConfirmedAt, t('notConfirmed'))}</span>
+          <span>{t('fullySynced')}</span><span className="text-right text-foreground">{formatSyncTime(result?.lastFullyConvergedAt, t('notConfirmed'))}</span>
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={() => void (
             problems > 0 ? retryNoteGenServerBackgroundSync() : triggerNoteGenServerBackgroundSync()
           )}>
-            <RefreshCw data-icon="inline-start" />重试
+            <RefreshCw data-icon="inline-start" />{t('retry')}
           </Button>
           {result?.unresolvedConflicts ? (
             <Button size="sm" variant="destructive" onClick={() => void handleViewProblems()}>
-              查看问题
+              {t('viewProblems')}
             </Button>
           ) : null}
-          <Button size="sm" variant="ghost" onClick={() => exportDiagnostics(status)}>
-            导出诊断
+          {problems > 0 && !result?.unresolvedConflicts ? (
+            <Button size="sm" variant="destructive" onClick={() => useSettingsDialogStore.getState().openSettings('sync')}>
+              {t('viewResolution')}
+            </Button>
+          ) : null}
+          <Button size="sm" variant="ghost" onClick={() => void exportDiagnostics(status)}>
+            {t('exportDiagnostics')}
           </Button>
         </div>
       </PopoverContent>
     </Popover>
-    {!isMobile ? <SyncConflictDialog open={conflictsOpen} onOpenChange={setConflictsOpen} /> : null}
+    <SyncConflictDialog open={conflictsOpen} onOpenChange={setConflictsOpen} />
     </>
   )
 }
@@ -423,28 +474,83 @@ function markdownConflictPath(payloadJson: string): string {
   }
 }
 
-function statusPresentation(phase: NoteGenServerBackgroundStatus['phase']): {
+type StatusTranslationKey =
+  | 'synced' | 'saving' | 'syncing' | 'rebuilding' | 'pending'
+  | 'offline' | 'attention' | 'paused' | 'idle'
+
+function statusPresentation(
+  phase: NoteGenServerBackgroundStatus['phase'],
+  translate: (key: StatusTranslationKey) => string,
+): {
   label: string
   icon: typeof Check
   variant: 'default' | 'secondary' | 'destructive' | 'outline'
 } {
-  if (phase === 'synced') return { label: '已同步', icon: Check, variant: 'secondary' }
-  if (phase === 'syncing' || phase === 'saving') return { label: phase === 'saving' ? '正在保存' : '同步中', icon: LoaderCircle, variant: 'outline' }
-  if (phase === 'pending') return { label: '待同步', icon: RefreshCw, variant: 'outline' }
-  if (phase === 'offline') return { label: '离线，可继续编辑', icon: CloudOff, variant: 'outline' }
-  if (phase === 'needs-attention' || phase === 'error') return { label: '需要处理', icon: AlertTriangle, variant: 'destructive' }
-  if (phase === 'paused' || phase === 'workspace-mismatch') return { label: '已暂停', icon: Pause, variant: 'destructive' }
-  return { label: '同步未启动', icon: Pause, variant: 'outline' }
+  if (phase === 'synced') return { label: translate('synced'), icon: Check, variant: 'secondary' }
+  if (phase === 'syncing' || phase === 'saving') return { label: translate(phase === 'saving' ? 'saving' : 'syncing'), icon: LoaderCircle, variant: 'outline' }
+  if (phase === 'rebuilding') return { label: translate('rebuilding'), icon: LoaderCircle, variant: 'outline' }
+  if (phase === 'pending') return { label: translate('pending'), icon: RefreshCw, variant: 'outline' }
+  if (phase === 'offline') return { label: translate('offline'), icon: CloudOff, variant: 'outline' }
+  if (phase === 'needs-attention' || phase === 'error') return { label: translate('attention'), icon: AlertTriangle, variant: 'destructive' }
+  if (phase === 'paused' || phase === 'workspace-mismatch') return { label: translate('paused'), icon: Pause, variant: 'destructive' }
+  return { label: translate('idle'), icon: Pause, variant: 'outline' }
 }
 
-function formatSyncTime(value?: number | null): string {
-  return value ? new Date(value).toLocaleString() : '尚未确认'
+function formatSyncTime(value: number | null | undefined, fallback: string): string {
+  return value ? new Date(value).toLocaleString() : fallback
 }
 
-function exportDiagnostics(status: NoteGenServerBackgroundStatus): void {
+function formatTransferProgress(completedValue?: string, totalValue?: string): string {
+  const completed = Number(completedValue ?? '0')
+  const total = Number(totalValue ?? '0')
+  if (!Number.isFinite(completed) || !Number.isFinite(total) || total <= 0) return ''
+  const percent = Math.max(0, Math.min(100, Math.round(completed / total * 100)))
+  return ` · ${percent}% (${formatBytes(completed)} / ${formatBytes(total)})`
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`
+  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MB`
+  return `${(value / 1024 ** 3).toFixed(1)} GB`
+}
+
+type ProblemTranslationKey =
+  | 'objectTooLarge' | 'resourceNotReady' | 'quotaExceeded'
+  | 'keyVersionNotFound' | 'folderNotEmpty'
+
+function compactSyncProblemMessage(
+  code: string,
+  translate: (key: ProblemTranslationKey) => string,
+): string {
+  if (code === 'object_too_large') return translate('objectTooLarge')
+  if (code === 'blob_not_ready' || code === 'resource_not_ready') return translate('resourceNotReady')
+  if (code === 'quota_exceeded') return translate('quotaExceeded')
+  if (code === 'key_version_not_found') return translate('keyVersionNotFound')
+  if (code === 'folder_not_empty') return translate('folderNotEmpty')
+  return code
+}
+
+async function exportDiagnostics(status: NoteGenServerBackgroundStatus): Promise<void> {
+  const summary = await getNoteGenServerDiagnosticSummary()
   const payload = JSON.stringify({
-    schemaVersion: 2, exportedAt: new Date().toISOString(), phase: status.phase,
-    result: status.result, error: status.error,
+    schemaVersion: 3,
+    exportedAt: new Date().toISOString(),
+    summary,
+    status: {
+      phase: status.phase,
+      reason: status.reason ?? null,
+      error: status.error ?? null,
+      result: status.result ?? null,
+      problems: (status.problems ?? []).map(problem => ({
+        category: problem.category,
+        operation: problem.operation,
+        lastError: problem.lastError,
+      })),
+      progress: status.progress ?? null,
+      transferProgress: status.transferProgress ?? null,
+      updatedAt: status.updatedAt,
+    },
   }, null, 2)
   const url = URL.createObjectURL(new Blob([payload], { type: 'application/json' }))
   const anchor = document.createElement('a')

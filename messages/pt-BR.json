@@ -1250,6 +1250,20 @@
         "synced": "Sincronizado",
         "syncError": "A sincronização precisa de atenção",
         "syncPausedDescription": "O servidor exige uma ação de conta, política ou manutenção. As alterações locais pendentes foram preservadas; tente novamente manualmente após concluí-la.",
+        "storageBreakdown": "Conteúdo atual {active} · Reservas de upload {reserved} · Histórico retido {retained}",
+        "retentionDescription": "O histórico é mantido por até cerca de {days} dias; excluir conteúdo pode não reduzir o uso imediatamente.",
+        "rebuildingTitle": "Reconstruindo índice de sincronização",
+        "rebuildingDescription": "Criando um snapshot seguro; {count} objetos processados{restarted}.",
+        "rebuildingRestarted": "; reiniciado após o snapshot expirar",
+        "restoreConfirmTitle": "Aceitar o servidor restaurado e sincronizar novamente?",
+        "restoreConfirmDescription": "O servidor foi restaurado para outro momento. O NoteGen preservará alterações locais, baixará um snapshot seguro e manterá conflitos que não possam ser mesclados. Há cerca de {count} itens pendentes; a última sincronização completa foi {time}. Faça backup da pasta de notas primeiro.",
+        "neverFullySynced": "Nenhuma sincronização completa",
+        "notNow": "Agora não",
+        "restoreConfirmAction": "Aceitar e reconstruir o índice",
+        "disconnectConfirmTitle": "Desconectar o servidor de sincronização?",
+        "disconnectConfirmDescription": "As notas locais permanecerão, mas alterações não enviadas não aparecerão em outros dispositivos. Há {count} itens de envio, recebimento, falha ou conflito; a última sincronização completa foi {time}. A desconexão limpa a configuração, revoga a sessão e retorna o provedor principal ao armazenamento local.",
+        "keepSyncing": "Continuar sincronizando",
+        "disconnectAction": "Desconectar mesmo assim",
         "recoveryConfirmLabel": "Digite os 6 últimos caracteres da chave de recuperação: {suffix}",
         "hostedRegistrationInBrowser": "Este servidor exige cadastro e verificação de e-mail no portal da conta no navegador.",
         "openAccountPortal": "Abrir portal da conta",
@@ -1262,7 +1276,36 @@
           "transfer": "Falha na transferência do anexo"
         },
         "problemReason": {
-          "commandIdReused": "Este ID de comando já representou outro conteúdo de sincronização. O cliente preservará a operação e tentará novamente com segurança usando um novo ID."
+          "commandIdReused": "Este ID de comando já representou outro conteúdo de sincronização. O cliente preservará a operação e tentará novamente com segurança usando um novo ID.",
+          "objectTooLarge": "O objeto excede o limite do servidor. Reduza o conteúdo ou anexo e tente novamente.",
+          "blobNotReady": "Um anexo ainda não terminou de enviar. Adicione-o novamente.",
+          "resourceNotReady": "O objeto referencia um anexo ausente. Abra-o e adicione o anexo novamente.",
+          "keyVersionNotFound": "Falta a versão da chave de criptografia. Desbloqueie o workspace novamente.",
+          "folderNotEmpty": "A pasta ainda contém conteúdo ativo. Atualize e tente excluir novamente.",
+          "ciphertextHashMismatch": "A verificação de integridade dos dados criptografados locais falhou. Preserve o arquivo e recrie a operação.",
+          "documentIdentityMismatch": "A identidade do documento não corresponde ao registro local. Exporte o diagnóstico e preserve o arquivo.",
+          "quotaExceeded": "O armazenamento do servidor está cheio. Libere espaço e tente novamente."
+        },
+        "conflicts": {
+          "title": "Resolver conflitos de sincronização",
+          "progress": "Item {current} de {count}",
+          "empty": "Nenhum conflito precisa de atenção",
+          "previous": "Anterior",
+          "next": "Próximo"
+        },
+        "platformSwitch": {
+          "title": "A sincronização não terminou", "description": "Há {count} itens pendentes ou o estado remoto não foi confirmado. A troca não migrará esse trabalho automaticamente.",
+          "outgoing": "Envios e alterações locais", "incoming": "Recebimentos e falhas", "attachments": "Anexos e conflitos", "cancel": "Cancelar", "keepAndSwitch": "Manter pendências e trocar", "syncAndSwitch": "Sincronizar e trocar",
+          "notConfirmed": "O servidor não confirmou esta tentativa. Verifique a conexão ou os problemas de sincronização.", "connectionUnavailable": "A conexão com o servidor está indisponível; não foi possível confirmar o estado remoto.", "switchFailed": "Não foi possível trocar o provedor"
+        },
+        "statusPanel": {
+          "actionRequired": "A sincronização precisa de atenção", "workspaceMismatch": "O workspace atual não corresponde à configuração.", "unsafeChanges": "Algum conteúdo ainda não foi sincronizado com segurança.", "view": "Ver", "workspaceLocked": "O workspace está bloqueado",
+          "ariaLabel": "Status: {label}; {count} itens pendentes", "rebuildProgress": "{count} objetos processados{restarted}", "rebuildRestarted": "; reiniciado após expirar",
+          "problemOutbox": "Operação de envio bloqueada", "problemInbox": "Falha ao aplicar dados recebidos", "problemTransfer": "Falha na transferência do anexo",
+          "pendingMutations": "Persistência local", "pendingOutbox": "A enviar", "pendingInbox": "A aplicar", "transfers": "Anexos", "inProgress": "Em andamento", "problems": "Conflitos e falhas", "serverConfirmed": "Confirmado pelo servidor", "fullySynced": "Totalmente sincronizado", "notConfirmed": "Não confirmado",
+          "retry": "Tentar novamente", "viewProblems": "Ver problemas", "viewResolution": "Ver solução", "exportDiagnostics": "Exportar diagnóstico",
+          "synced": "Sincronizado", "saving": "Salvando", "syncing": "Sincronizando", "rebuilding": "Reconstruindo índice", "pending": "Pendente", "offline": "Offline; edição disponível", "attention": "Precisa de atenção", "paused": "Pausado", "idle": "Não iniciado",
+          "objectTooLarge": "O conteúdo excede o limite.", "resourceNotReady": "Anexo ausente ou incompleto.", "quotaExceeded": "O armazenamento está cheio.", "keyVersionNotFound": "Falta uma chave de criptografia.", "folderNotEmpty": "O conteúdo da pasta mudou."
         },
         "syncSummary": "Neste ciclo: {pushed} enviados, {pulled} recebidos e {conflicts} cópias de conflito.",
         "initialSyncTitle": "Sincronização em andamento",

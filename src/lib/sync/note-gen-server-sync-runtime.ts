@@ -51,9 +51,12 @@ import {
   markSyncServerConfirmed,
   markSyncEntityDocumentMaterialized,
   markSyncBootstrapComplete,
+  markSyncAcknowledged,
+  markSyncAcknowledgementFailed,
   recoverSyncApplyJournal,
   rebaseSyncDeleteCommand,
   replaceReusedSyncCommand,
+  resetSyncForServerEpoch,
   saveSyncBootstrapProgress,
   replaceSyncResourceRefs,
   retireSettledSyncMutations,
@@ -85,6 +88,7 @@ import {
   type NoteGenServerPreparedAssetResource,
 } from './note-gen-server-assets'
 import {
+  acknowledgeSyncEvents,
   bootstrapSync,
   createSyncNameBlindIndex,
   getSyncStableBlindIndexKey,
@@ -116,6 +120,13 @@ interface RuntimeInput {
   workspaceKey: CryptoKey
   workspaceKeys: ReadonlyMap<number, CryptoKey>
   keyVersion: number
+  onBootstrapProgress?: (progress: {
+    reason: 'initial' | 'cursor-expired'
+    processedObjects: number
+    restarted: boolean
+    complete: boolean
+  }) => void
+  onTransferProgress?: (progress: { completedBytes: number, totalBytes: number }) => void
 }
 
 export class SyncKeyMissingError extends Error {
@@ -129,6 +140,7 @@ let lastBlobDownloadCleanupAt = 0
 const reconciledWorkspaces = new Set<string>()
 const lastLocalReconciliationAt = new Map<string, number>()
 const LOCAL_RECONCILIATION_INTERVAL_MS = 5 * 60_000
+const ACK_RETRY_INTERVAL_MS = 60_000
 const BLOB_DOWNLOAD_RETENTION_MS = 7 * 24 * 60 * 60_000
 const ORPHAN_ASSET_GRACE_MS = 7 * 24 * 60 * 60_000
 const ASSET_BINDING_TIMEOUT_MS = 24 * 60 * 60_000
@@ -153,7 +165,7 @@ export async function runNoteGenServerSyncCycle(input: RuntimeInput): Promise<No
   // can materialize over it. Stable-key collisions then become explicit
   // initial-import/structured conflicts instead of timestamp-based winners.
   if (!await isSyncBootstrapComplete(input.syncScopeId)) await reconcileLocalWorkspace(input)
-  await ensureBootstrap(input)
+  await ensureBootstrap(input, 'initial')
   await reconcileCrdtMaterialization(input)
   await reconcileMissingStructuredSnapshots(input)
   await requeueOrphanedLocalConflicts(input)
@@ -184,6 +196,30 @@ export async function runNoteGenServerSyncCycle(input: RuntimeInput): Promise<No
   await retireSettledSyncMutations(input.syncScopeId)
   await markSyncServerConfirmed(input.syncScopeId)
   let health = await getSyncHealthSnapshot(input.syncScopeId)
+  const acknowledgementRetryDue = health.lastAckError === null || health.lastAckError === undefined
+    || health.lastAckAttemptAt === null || health.lastAckAttemptAt === undefined
+    || Date.now() - health.lastAckAttemptAt >= ACK_RETRY_INTERVAL_MS
+  if (health.pendingInbox === 0 && health.failedInbox === 0 && acknowledgementRetryDue
+    && health.acknowledgedCursor !== health.receivedCursor) {
+    try {
+      const acknowledgement = await acknowledgeSyncEvents({
+        baseUrl: input.baseUrl, accessToken: input.session.accessToken,
+        workspaceId: input.workspaceId, through: health.receivedCursor,
+        ...(input.syncEpoch === undefined ? {} : { expectedSyncEpoch: input.syncEpoch }),
+      })
+      await markSyncAcknowledged(input.syncScopeId, acknowledgement.acknowledgedSequence)
+    } catch (error) {
+      // ACK controls server-side retention; the inbox is already durable and
+      // applied locally. A transient ACK failure must not turn converged user
+      // content into a visible sync failure. The next cycle retries it.
+      console.warn('Failed to acknowledge durable sync cursor:', error)
+      await markSyncAcknowledgementFailed(
+        input.syncScopeId,
+        error instanceof Error ? error.message : String(error),
+      ).catch(persistError => console.warn('Failed to persist sync acknowledgement error:', persistError))
+    }
+    health = await getSyncHealthSnapshot(input.syncScopeId)
+  }
   const staging = await getNoteGenServerSyncQueueStats(input.syncScopeId)
   health = { ...health, pendingOutbox: health.pendingOutbox + staging.pendingOutbox,
     blockedOutbox: health.blockedOutbox + staging.blockedOutbox,
@@ -726,7 +762,7 @@ async function materializeMissingReferenceConflict(
   })
 }
 
-async function ensureBootstrap(input: RuntimeInput): Promise<void> {
+async function ensureBootstrap(input: RuntimeInput, reason: 'initial' | 'cursor-expired'): Promise<void> {
   if (await isSyncBootstrapComplete(input.syncScopeId)) return
   const savedProgress = await getSyncBootstrapProgress(input.syncScopeId)
   let afterObjectId = savedProgress?.afterObjectId ?? undefined
@@ -738,6 +774,8 @@ async function ensureBootstrap(input: RuntimeInput): Promise<void> {
     'conversation', 'memory', 'setting',
   ])
   let restartedExpiredSnapshot = false
+  let processedObjects = 0
+  input.onBootstrapProgress?.({ reason, processedObjects, restarted: false, complete: false })
   do {
     let page: Awaited<ReturnType<typeof bootstrapSync>>
     try {
@@ -759,6 +797,8 @@ async function ensureBootstrap(input: RuntimeInput): Promise<void> {
         afterObjectId = undefined
         snapshotSequence = '0'
         deferredObjects = []
+        processedObjects = 0
+        input.onBootstrapProgress?.({ reason, processedObjects, restarted: true, complete: false })
         continue
       }
       throw error
@@ -789,6 +829,8 @@ async function ensureBootstrap(input: RuntimeInput): Promise<void> {
         throw new Error(`Bootstrap 对象 ${object.objectId} (${object.kind}) 应用失败：${message}`, { cause: error })
       }
     }
+    processedObjects += page.objects.length
+    input.onBootstrapProgress?.({ reason, processedObjects, restarted: restartedExpiredSnapshot, complete: false })
     if (deferredObjects.length > 0) {
       const stillDeferred: DeferredBootstrapObject[] = []
       for (const entry of deferredObjects) {
@@ -824,6 +866,7 @@ async function ensureBootstrap(input: RuntimeInput): Promise<void> {
     module.refreshNoteGenServerBootstrapViews(bootstrapKinds)
   ))
   await markSyncBootstrapComplete(input.syncScopeId, snapshotSequence)
+  input.onBootstrapProgress?.({ reason, processedObjects, restarted: restartedExpiredSnapshot, complete: true })
 }
 
 async function importPendingOperations(input: RuntimeInput): Promise<void> {
@@ -947,6 +990,7 @@ async function importPendingOperations(input: RuntimeInput): Promise<void> {
               }
             },
             onTransferProgress: async progress => {
+              input.onTransferProgress?.(progress)
               await setSyncTransfer({
                 scopeId: input.syncScopeId, transferId: `blob-upload:${progress.blobId}`,
                 objectId: entry.objectId, blobId: progress.blobId, direction: 'upload',
@@ -1319,11 +1363,21 @@ async function receiveEvents(input: RuntimeInput): Promise<number> {
   let after = health.receivedCursor
   let received = 0
   while (true) {
-    const page = await pullSyncEvents({
-      baseUrl: input.baseUrl, accessToken: input.session.accessToken,
-      workspaceId: input.workspaceId, after,
-      ...(input.syncEpoch === undefined ? {} : { expectedSyncEpoch: input.syncEpoch }),
-    })
+    let page: Awaited<ReturnType<typeof pullSyncEvents>>
+    try {
+      page = await pullSyncEvents({
+        baseUrl: input.baseUrl, accessToken: input.session.accessToken,
+        workspaceId: input.workspaceId, after,
+        ...(input.syncEpoch === undefined ? {} : { expectedSyncEpoch: input.syncEpoch }),
+      })
+    } catch (error) {
+      if (error instanceof NoteGenServerRequestError && error.code === 'cursor_expired') {
+        await resetSyncForServerEpoch(input.syncScopeId)
+        await ensureBootstrap(input, 'cursor-expired')
+        return received
+      }
+      throw error
+    }
     for (const event of page.events) await storeSyncEvent(input.syncScopeId, event)
     after = page.nextCursor
     received += page.events.length
@@ -1558,6 +1612,7 @@ async function materializeObject(
           ? (parseJson(current?.basePayloadJson ?? null) as { contentHash?: string } | null)?.contentHash
           : undefined,
         onTransferProgress: async progress => {
+          input.onTransferProgress?.(progress)
           await setSyncTransfer({
             scopeId: input.syncScopeId, transferId: `blob-download:${progress.blobId}`,
             objectId: event.objectId!, blobId: progress.blobId, direction: 'download',

@@ -87,6 +87,9 @@ export async function initNoteGenServerSyncDb(): Promise<void> {
       lastSuccessfulSyncAt integer default null,
       lastServerConfirmedAt integer default null,
       lastFullyConvergedAt integer default null,
+      acknowledgedCursor text not null default '0',
+      lastAckAttemptAt integer default null,
+      lastAckError text default null,
       updatedAt integer not null
     )
   `)
@@ -263,6 +266,9 @@ export async function initNoteGenServerSyncDb(): Promise<void> {
   try { await db.execute('alter table sync_state add column bootstrapAfterObjectId text default null') } catch {}
   try { await db.execute('alter table sync_state add column lastServerConfirmedAt integer default null') } catch {}
   try { await db.execute('alter table sync_state add column lastFullyConvergedAt integer default null') } catch {}
+  try { await db.execute("alter table sync_state add column acknowledgedCursor text not null default '0'") } catch {}
+  try { await db.execute('alter table sync_state add column lastAckAttemptAt integer default null') } catch {}
+  try { await db.execute('alter table sync_state add column lastAckError text default null') } catch {}
 }
 
 async function migrateVersionedSyncTables(db: Awaited<ReturnType<typeof getDb>>): Promise<void> {
@@ -436,6 +442,7 @@ export async function resetSyncForServerEpoch(scopeId: string): Promise<void> {
       ) values($1, '0', '0', $2, 0, null, null, null)
       on conflict(scopeId) do update set receivedCursor='0', latestServerSequence='0',
         lastSuccessfulSyncAt=null, lastServerConfirmedAt=null, lastFullyConvergedAt=null,
+        acknowledgedCursor='0', lastAckAttemptAt=null, lastAckError=null,
         bootstrapComplete=0, bootstrapId=null, bootstrapSnapshotSequence=null,
         bootstrapAfterObjectId=null, updatedAt=excluded.updatedAt`,
       values: [scopeId, now],
@@ -455,6 +462,24 @@ export async function markSyncBootstrapComplete(scopeId: string, snapshotSequenc
        bootstrapId = null, bootstrapSnapshotSequence = null, bootstrapAfterObjectId = null,
        updatedAt = excluded.updatedAt`,
     [scopeId, snapshotSequence, now],
+  )
+}
+
+export async function markSyncAcknowledged(scopeId: string, acknowledgedCursor: string): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    `update sync_state set acknowledgedCursor = $2, lastAckAttemptAt = $3,
+       lastAckError = null, updatedAt = $3 where scopeId = $1`,
+    [scopeId, acknowledgedCursor, Date.now()],
+  )
+}
+
+export async function markSyncAcknowledgementFailed(scopeId: string, error: string): Promise<void> {
+  const db = await getDb()
+  await db.execute(
+    `update sync_state set lastAckAttemptAt = $2, lastAckError = $3,
+       updatedAt = $2 where scopeId = $1`,
+    [scopeId, Date.now(), error.slice(0, 1_000)],
   )
 }
 
@@ -1172,6 +1197,9 @@ export async function getSyncHealthSnapshot(scopeId: string): Promise<SyncHealth
        (select lastSuccessfulSyncAt from sync_state where scopeId = $1) as lastSuccessfulSyncAt,
        (select lastServerConfirmedAt from sync_state where scopeId = $1) as lastServerConfirmedAt,
        (select lastFullyConvergedAt from sync_state where scopeId = $1) as lastFullyConvergedAt,
+       coalesce((select acknowledgedCursor from sync_state where scopeId = $1), '0') as acknowledgedCursor,
+       (select lastAckAttemptAt from sync_state where scopeId = $1) as lastAckAttemptAt,
+       (select lastAckError from sync_state where scopeId = $1) as lastAckError,
        (select count(*) from sync_mutation_journal where scopeId = $1) as pendingMutations,
        (select count(*) from sync_outbox where scopeId = $1 and blocked = 0) as pendingOutbox,
        (select count(*) from sync_outbox where scopeId = $1 and blocked = 1) as blockedOutbox,
@@ -1179,7 +1207,11 @@ export async function getSyncHealthSnapshot(scopeId: string): Promise<SyncHealth
        (select count(*) from sync_inbox where scopeId = $1 and status = 'failed') as failedInbox,
        (select count(*) from sync_conflicts where scopeId = $1 and status = 'unresolved') as unresolvedConflicts,
        (select count(*) from sync_transfers where scopeId = $1 and state in ('pending', 'running')) as pendingTransfers,
-       (select count(*) from sync_transfers where scopeId = $1 and state = 'failed') as failedTransfers`,
+       (select count(*) from sync_transfers where scopeId = $1 and state = 'failed') as failedTransfers,
+       cast(coalesce((select sum(cast(completedBytes as integer)) from sync_transfers
+         where scopeId = $1 and state in ('pending', 'running')), 0) as text) as transferCompletedBytes,
+       cast(coalesce((select sum(cast(totalBytes as integer)) from sync_transfers
+         where scopeId = $1 and state in ('pending', 'running')), 0) as text) as transferTotalBytes`,
     [scopeId],
   )
   return rows[0] ?? {
@@ -1187,6 +1219,8 @@ export async function getSyncHealthSnapshot(scopeId: string): Promise<SyncHealth
     lastServerConfirmedAt: null, lastFullyConvergedAt: null,
     pendingMutations: 0, pendingOutbox: 0, blockedOutbox: 0, pendingInbox: 0, failedInbox: 0,
     unresolvedConflicts: 0, pendingTransfers: 0, failedTransfers: 0,
+    transferCompletedBytes: '0', transferTotalBytes: '0',
+    acknowledgedCursor: '0', lastAckAttemptAt: null, lastAckError: null,
   }
 }
 

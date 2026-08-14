@@ -8,9 +8,14 @@ import { AlertCircle, Check, Copy, ExternalLink, Globe, KeyRound, Loader2, LogOu
 import { useTranslations } from 'next-intl'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { SyncConflictDialog } from '@/components/sync-conflict-dialog'
+import { getSyncHealthSnapshot, type SyncHealthSnapshot } from '@/db/note-gen-server-sync-index'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -55,6 +60,7 @@ import {
   acceptNoteGenServerRestoreEpoch,
   disconnectNoteGenServerBackgroundRuntime,
   getNoteGenServerBackgroundConnection,
+  getNoteGenServerSyncContext,
   getNoteGenServerLocalWorkspaceKey,
   initNoteGenServerBackgroundRuntime,
   pauseNoteGenServerForRestoreEpoch,
@@ -67,8 +73,9 @@ import {
   type NoteGenServerBackgroundStatus,
 } from '@/lib/sync/note-gen-server-background'
 import { useNoteGenServerPairingStore } from '@/stores/note-gen-server-pairing'
+import useSettingStore from '@/stores/setting'
 
-type BusyAction = 'authenticate' | 'browser-authorize' | 'open-account-portal' | 'scan-pairing' | 'pairing-link' | 'discover' | 'restore' | 'unlock' | 'create-e2ee' | 'enable-e2ee' | 'enable-managed' | 'retry-sync' | 'accept-restore-epoch' | null
+type BusyAction = 'authenticate' | 'browser-authorize' | 'open-account-portal' | 'scan-pairing' | 'pairing-link' | 'discover' | 'restore' | 'unlock' | 'create-e2ee' | 'enable-e2ee' | 'enable-managed' | 'retry-sync' | 'accept-restore-epoch' | 'disconnect' | null
 type ConnectionMethod = 'browser' | 'password'
 type WorkspaceUnlockMethod = 'passphrase' | 'recovery'
 type RestoreStage = 'local' | 'server' | 'workspace'
@@ -125,6 +132,9 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
     updatedAt: Date.now(),
   })
   const [conflictsOpen, setConflictsOpen] = useState(false)
+  const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false)
+  const [disconnectHealth, setDisconnectHealth] = useState<SyncHealthSnapshot | null>(null)
+  const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false)
   const pendingPairingUri = useNoteGenServerPairingStore(state => state.pendingUri)
   const consumePairingUri = useNoteGenServerPairingStore(state => state.consume)
 
@@ -273,8 +283,14 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
   const browserAuthorizationAvailable = discoveredCapabilities?.features?.deviceAuthorization !== false
   const storageBytes = accountContext === null ? null : sumAccountMetrics(
     accountContext.usage.metrics,
+    ['activeObjectBytes', 'activeCrdtBytes', 'activeBlobBytes', 'reservedBlobBytes', 'retainedBytes'],
+  )
+  const activeStorageBytes = accountContext === null ? null : sumAccountMetrics(
+    accountContext.usage.metrics,
     ['activeObjectBytes', 'activeCrdtBytes', 'activeBlobBytes'],
   )
+  const reservedStorageBytes = accountContext?.usage.metrics.reservedBlobBytes ?? '0'
+  const retainedStorageBytes = accountContext?.usage.metrics.retainedBytes ?? '0'
   const storageLimit = accountContext?.entitlements.limits.storage_bytes
   const monthlyIngressBytes = accountContext?.usage.metrics.monthlyIngressBytes
   const monthlyEgressBytes = accountContext?.usage.metrics.monthlyEgressBytes
@@ -354,6 +370,10 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
       deviceId,
       account.login,
     )
+    const settings = useSettingStore.getState()
+    if (settings.primaryBackupMethod === 'local' || settings.primaryBackupMethod === 'noteGenServer') {
+      await settings.setPrimaryBackupMethod('noteGenServer')
+    }
     setPassword('')
     setSetupToken('')
   }
@@ -640,9 +660,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
       const nextCapabilities = discoveredCapabilities ?? await discoverServer(normalizeServerOrigin(baseUrl))
       setDiscoveredCapabilities(nextCapabilities)
       const accountUrl = nextCapabilities.web?.accountUrl
-      const requiresBrowser = nextCapabilities.registration.methods.includes('email-password')
-        || nextCapabilities.registration.methods.includes('invitation')
-      if (!requiresBrowser || accountUrl === undefined) throw new Error(t('registrationUnavailable'))
+      if (accountUrl === undefined) throw new Error(t('registrationUnavailable'))
       await openAuthorizationPage(accountUrl)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -795,6 +813,11 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
       if (profile) {
         const nextProfile = { ...profile, encryptionMode: 'e2ee' as const }
         await saveServerProfile(nextProfile)
+        await savePendingServerWorkspaceRecoverySecret({
+          profile: nextProfile,
+          accountId: session.accountId,
+          recoveryKey: nextRecoveryKey,
+        })
         setProfile(nextProfile)
       }
       setRecoveryKey(nextRecoveryKey)
@@ -878,6 +901,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
     setError('')
     try {
       await retryNoteGenServerBackgroundSync()
+      if (session) setAccountContext(await loadAccountContext(baseUrl, session.accessToken))
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -887,6 +911,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
 
   async function handleAcceptRestoreEpoch() {
     if (busy !== null) return
+    setRestoreConfirmOpen(false)
     setBusy('accept-restore-epoch')
     setError('')
     try {
@@ -917,46 +942,69 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
   }
 
   async function handleReset() {
-    authorizationAttempt.current += 1
-    const backgroundConnection = await disconnectNoteGenServerBackgroundRuntime()
-    const logoutProfile = backgroundConnection?.profile ?? profile
-    const logoutSession = backgroundConnection?.session ?? session
-    if (logoutSession && logoutProfile) {
-      try {
-        await logoutServerSession({
-          baseUrl: logoutProfile.baseUrl,
-          refreshToken: logoutSession.refreshToken,
-          deviceId: logoutProfile.deviceId,
-        })
-      } catch (cause) {
-        console.error('Failed to revoke NoteGen server session:', cause)
-      }
-    }
-    if (logoutSession && logoutProfile) {
-      await clearPendingServerWorkspaceRecoverySecret({
-        instanceId: logoutProfile.instanceId, accountId: logoutSession.accountId, deviceId: logoutProfile.deviceId,
-      }).catch(() => undefined)
-    }
-    await clearServerProfile()
-    setProfile(null)
-    setCapabilities(null)
-    setSession(null)
-    setAccountContext(null)
-    setWorkspaces([])
-    setWorkspaceId('')
-    setWorkspaceKey(null)
-    setRecoveryKey('')
-    setRecoveryCopied(false)
-    setRecoveryConfirmation('')
-    setSyncPassphrase('')
-    setSyncPassphraseConfirm('')
-    setWorkspaceRecoveryKey('')
-    setWorkspaceUnlockMethod('passphrase')
-    setTotpCode('')
-    setTotpRequired(false)
-    setPendingAuthorization(null)
-    setBusy(null)
+    if (busy !== null) return
+    setDisconnectConfirmOpen(false)
+    setBusy('disconnect')
     setError('')
+    authorizationAttempt.current += 1
+    try {
+      const settings = useSettingStore.getState()
+      if (settings.primaryBackupMethod === 'noteGenServer') {
+        await settings.setPrimaryBackupMethod('local')
+      }
+      const backgroundConnection = await disconnectNoteGenServerBackgroundRuntime()
+      const logoutProfile = backgroundConnection?.profile ?? profile
+      const logoutSession = backgroundConnection?.session ?? session
+      if (logoutSession && logoutProfile) {
+        try {
+          await logoutServerSession({
+            baseUrl: logoutProfile.baseUrl,
+            refreshToken: logoutSession.refreshToken,
+            deviceId: logoutProfile.deviceId,
+          })
+        } catch (cause) {
+          console.error('Failed to revoke NoteGen server session:', cause)
+        }
+        await clearPendingServerWorkspaceRecoverySecret({
+          instanceId: logoutProfile.instanceId, accountId: logoutSession.accountId, deviceId: logoutProfile.deviceId,
+        }).catch(() => undefined)
+      }
+      await clearServerProfile()
+      setProfile(null)
+      setCapabilities(null)
+      setSession(null)
+      setAccountContext(null)
+      setWorkspaces([])
+      setWorkspaceId('')
+      setWorkspaceKey(null)
+      setRecoveryKey('')
+      setRecoveryCopied(false)
+      setRecoveryConfirmation('')
+      setSyncPassphrase('')
+      setSyncPassphraseConfirm('')
+      setWorkspaceRecoveryKey('')
+      setWorkspaceUnlockMethod('passphrase')
+      setTotpCode('')
+      setTotpRequired(false)
+      setPendingAuthorization(null)
+      setDisconnectHealth(null)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function handleOpenDisconnectConfirmation() {
+    setError('')
+    try {
+      const context = getNoteGenServerSyncContext()
+      setDisconnectHealth(context ? await getSyncHealthSnapshot(context.syncScopeId) : null)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setDisconnectConfirmOpen(true)
+    }
   }
 
   return (
@@ -966,12 +1014,17 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
         <CardDescription>{t('description')}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
-        {backgroundStatus.phase === 'syncing' ? (
+        {backgroundStatus.phase === 'syncing' || backgroundStatus.phase === 'rebuilding' ? (
           <Alert>
             <Loader2 className="animate-spin" />
-            <AlertTitle>{t('initialSyncTitle')}</AlertTitle>
+            <AlertTitle>{backgroundStatus.phase === 'rebuilding' ? t('rebuildingTitle') : t('initialSyncTitle')}</AlertTitle>
             <AlertDescription>
-              {backgroundStatus.result
+              {backgroundStatus.phase === 'rebuilding'
+                ? t('rebuildingDescription', {
+                    count: backgroundStatus.progress?.processedObjects ?? 0,
+                    restarted: backgroundStatus.progress?.restarted ? t('rebuildingRestarted') : '',
+                  })
+                : backgroundStatus.result
                 ? t('syncSummary', {
                     pushed: backgroundStatus.result.pushed,
                     pulled: backgroundStatus.result.pulled,
@@ -1012,6 +1065,18 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
               <span>{storageLimit === undefined || storageLimit === null
                 ? t('storageUsageUnlimited', { used: formatAccountBytes(storageBytes) })
                 : t('storageUsage', { used: formatAccountBytes(storageBytes), limit: formatAccountBytes(storageLimit) })}</span>
+              <span className="text-xs text-muted-foreground">
+                {t('storageBreakdown', {
+                  active: formatAccountBytes(activeStorageBytes ?? '0'),
+                  reserved: formatAccountBytes(reservedStorageBytes),
+                  retained: formatAccountBytes(retainedStorageBytes),
+                })}
+              </span>
+              {capabilities?.limits?.versionRetentionDays !== undefined ? (
+                <span className="text-xs text-muted-foreground">
+                  {t('retentionDescription', { days: capabilities.limits.versionRetentionDays })}
+                </span>
+              ) : null}
               {monthlyIngressBytes !== undefined || monthlyEgressBytes !== undefined ? (
                 <span>{t('monthlyTransfer', {
                   ingress: formatAccountBytes(monthlyIngressBytes ?? '0'),
@@ -1368,30 +1433,26 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
                 {recoveryCopied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
                 {recoveryCopied ? t('recoveryCopied') : t('copyRecoveryKey')}
               </Button>
-              {profile?.onboarding ? (
-                <>
-                  <Field className="w-full">
-                    <FieldLabel htmlFor="note-gen-recovery-confirmation">
-                      {t('recoveryConfirmLabel', { suffix: recoveryKey.slice(-6) })}
-                    </FieldLabel>
-                    <Input
-                      id="note-gen-recovery-confirmation"
-                      value={recoveryConfirmation}
-                      onChange={event => setRecoveryConfirmation(event.target.value)}
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      autoComplete="off"
-                    />
-                  </Field>
-                  <Button
-                    size="sm"
-                    onClick={() => void handleConfirmRecoveryKey()}
-                    disabled={!recoveryCopied || recoveryConfirmation.trim() !== recoveryKey.slice(-6)}
-                  >
-                    {t('activateAndSync')}
-                  </Button>
-                </>
-              ) : null}
+              <Field className="w-full">
+                <FieldLabel htmlFor="note-gen-recovery-confirmation">
+                  {t('recoveryConfirmLabel', { suffix: recoveryKey.slice(-6) })}
+                </FieldLabel>
+                <Input
+                  id="note-gen-recovery-confirmation"
+                  value={recoveryConfirmation}
+                  onChange={event => setRecoveryConfirmation(event.target.value)}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  autoComplete="off"
+                />
+              </Field>
+              <Button
+                size="sm"
+                onClick={() => void handleConfirmRecoveryKey()}
+                disabled={!recoveryCopied || recoveryConfirmation.trim() !== recoveryKey.slice(-6)}
+              >
+                {t('activateAndSync')}
+              </Button>
             </AlertDescription>
           </Alert>
         ) : null}
@@ -1427,7 +1488,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
                         <div className="mt-1 break-words text-xs text-muted-foreground">
                           {problem.lastError === 'command_id_reused'
                             ? t('problemReason.commandIdReused')
-                            : problem.lastError}
+                            : syncProblemMessage(problem.lastError, t)}
                         </div>
                       ) : null}
                     </li>
@@ -1465,7 +1526,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
             <AlertCircle />
             <AlertTitle>{t('offline')}</AlertTitle>
             <AlertDescription className="flex flex-col items-start gap-3">
-              <span>{backgroundStatus.error}</span>
+              {backgroundStatus.reason === undefined ? <span>{backgroundStatus.error}</span> : null}
               <Button
                 variant="outline"
                 size="sm"
@@ -1482,13 +1543,13 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
             <AlertCircle />
             <AlertTitle>{t('syncError')}</AlertTitle>
             <AlertDescription className="flex flex-col items-start gap-3">
-              <span>{backgroundStatus.error}</span>
+              {backgroundStatus.reason === undefined ? <span>{backgroundStatus.error}</span> : null}
               <span>{t(pausedReasonTranslationKey(backgroundStatus.reason))}</span>
               {backgroundStatus.reason === 'sync_epoch_changed' ? (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => void handleAcceptRestoreEpoch()}
+                  onClick={() => setRestoreConfirmOpen(true)}
                   disabled={busy !== null}
                 >
                   {busy === 'accept-restore-epoch'
@@ -1508,6 +1569,19 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
                     ? <Loader2 data-icon="inline-start" className="animate-spin" />
                     : <Globe data-icon="inline-start" />}
                   {busy === 'browser-authorize' ? t('openingBrowser') : t('browserConnect')}
+                </Button>
+              ) : null}
+              {backgroundStatus.reason !== undefined
+                && !['server_maintenance', 'cursor_expired', 'sync_epoch_changed'].includes(backgroundStatus.reason)
+                && (capabilities?.web?.accountUrl || discoveredCapabilities?.web?.accountUrl) ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleOpenAccountPortal()}
+                  disabled={busy !== null}
+                >
+                  <ExternalLink data-icon="inline-start" />
+                  {t('openAccountPortal')}
                 </Button>
               ) : null}
               <Button
@@ -1594,13 +1668,58 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
           </>
         ) : null}
         {profile ? (
-          <Button variant="destructive" onClick={() => void handleReset()} disabled={busy !== null}>
+          <Button variant="destructive" onClick={() => void handleOpenDisconnectConfirmation()} disabled={busy !== null}>
             <LogOut data-icon="inline-start" />
             {t('reset')}
           </Button>
         ) : null}
       </CardFooter>
       <SyncConflictDialog open={conflictsOpen} onOpenChange={setConflictsOpen} />
+      <AlertDialog open={restoreConfirmOpen} onOpenChange={setRestoreConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('restoreConfirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('restoreConfirmDescription', {
+                count: pendingSyncItems(backgroundStatus),
+                time: formatStatusTime(backgroundStatus.result?.lastFullyConvergedAt, t('neverFullySynced')),
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('notNow')}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleAcceptRestoreEpoch()}>
+              {t('restoreConfirmAction')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={disconnectConfirmOpen} onOpenChange={setDisconnectConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('disconnectConfirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('disconnectConfirmDescription', {
+                count: Math.max(
+                  disconnectHealth ? pendingHealthItems(disconnectHealth) : 0,
+                  pendingSyncItems(backgroundStatus),
+                ),
+                time: formatStatusTime(
+                  disconnectHealth?.lastFullyConvergedAt ?? backgroundStatus.result?.lastFullyConvergedAt,
+                  t('neverFullySynced'),
+                ),
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('keepSyncing')}</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => void handleReset()} disabled={busy !== null}>
+              {busy === 'disconnect' ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
+              {t('disconnectAction')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   )
 }
@@ -1638,6 +1757,51 @@ function pausedReasonTranslationKey(reason: string | undefined): string {
     case 'restore_reauthorization_required': return 'pauseReason.reauthorize'
     default: return 'syncPausedDescription'
   }
+}
+
+type SyncProblemTranslationKey =
+  | 'problemReason.objectTooLarge'
+  | 'problemReason.blobNotReady'
+  | 'problemReason.resourceNotReady'
+  | 'problemReason.keyVersionNotFound'
+  | 'problemReason.folderNotEmpty'
+  | 'problemReason.ciphertextHashMismatch'
+  | 'problemReason.documentIdentityMismatch'
+  | 'problemReason.quotaExceeded'
+
+function syncProblemMessage(
+  code: string,
+  translate: (key: SyncProblemTranslationKey) => string,
+): string {
+  switch (code) {
+    case 'object_too_large': return translate('problemReason.objectTooLarge')
+    case 'blob_not_ready': return translate('problemReason.blobNotReady')
+    case 'resource_not_ready': return translate('problemReason.resourceNotReady')
+    case 'key_version_not_found': return translate('problemReason.keyVersionNotFound')
+    case 'folder_not_empty': return translate('problemReason.folderNotEmpty')
+    case 'ciphertext_hash_mismatch': return translate('problemReason.ciphertextHashMismatch')
+    case 'document_identity_mismatch': return translate('problemReason.documentIdentityMismatch')
+    case 'quota_exceeded': return translate('problemReason.quotaExceeded')
+    default: return code
+  }
+}
+
+function pendingSyncItems(status: NoteGenServerBackgroundStatus): number {
+  const result = status.result
+  return (result?.pendingMutations ?? 0) + (result?.pendingOutbox ?? 0)
+    + (result?.blockedOutbox ?? 0) + (result?.pendingInbox ?? 0)
+    + (result?.failedInbox ?? 0) + (result?.pendingTransfers ?? 0)
+    + (result?.failedTransfers ?? 0) + (result?.unresolvedConflicts ?? 0)
+}
+
+function pendingHealthItems(health: SyncHealthSnapshot): number {
+  return health.pendingMutations + health.pendingOutbox + health.blockedOutbox
+    + health.pendingInbox + health.failedInbox + health.pendingTransfers
+    + health.failedTransfers + health.unresolvedConflicts
+}
+
+function formatStatusTime(value: number | null | undefined, fallback: string): string {
+  return value ? new Date(value).toLocaleString() : fallback
 }
 
 function sumAccountMetrics(metrics: Record<string, string>, keys: readonly string[]): string {

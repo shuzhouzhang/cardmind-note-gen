@@ -31,9 +31,8 @@ interface MarkdownConflictPayload {
 
 /**
  * Personal workspaces should not stop syncing for ordinary text conflicts.
- * Non-overlapping edits are merged; for the rare overlapping block the edit on
- * this device wins. The server-side conflict/history still retains the remote
- * version, so automatic resolution never makes the other version unrecoverable.
+ * Only non-overlapping edits are safe to merge automatically. Overlapping
+ * blocks stay durable and visible until the user explicitly reviews them.
  */
 export function SyncConflictAutoResolver() {
   const running = useRef(false)
@@ -94,16 +93,22 @@ export function SyncConflictAutoResolver() {
             if (disposed || handledObjects.has(conflict.objectId)) continue
             handledObjects.add(conflict.objectId)
             attempted.current.add(conflict.conflictId)
+            const objectConflicts = candidates.filter(item => item.objectId === conflict.objectId)
+            const hasUnsafeConflict = objectConflicts.some(item => {
+              const candidatePayload = parseMarkdownPayload(item.payloadJson)
+              return !candidatePayload || candidatePayload.remote === null
+                || mergeMarkdownThreeWay(
+                  candidatePayload.base, candidatePayload.local, candidatePayload.remote,
+                ).some(part => part.type === 'conflict')
+            })
+            if (hasUnsafeConflict) continue
             const payload = parseMarkdownPayload(conflict.payloadJson)
             if (!payload || payload.remote === null) continue
 
             const parts = mergeMarkdownThreeWay(payload.base, payload.local, payload.remote)
             const localChoices: Record<string, string> = {}
-            for (const part of parts) {
-              if (part.type === 'conflict') localChoices[part.block.id] = part.block.local
-            }
             const content = materializeMerge(parts, localChoices)
-            const related = candidates.filter(item => (
+            const related = objectConflicts.filter(item => (
               item.objectId === conflict.objectId && item.conflictId !== conflict.conflictId
             ))
 
@@ -112,9 +117,7 @@ export function SyncConflictAutoResolver() {
               const remaining = await listSyncConflicts(context.syncScopeId)
               const resolved = !remaining.some(item => item.conflictId === conflict.conflictId)
               if (!disposed && resolved) {
-                toast.success(parts.some(part => part.type === 'conflict')
-                  ? '已自动处理正文冲突，本机修改已保留'
-                  : '已自动合并来自其他设备的修改')
+                toast.success('已自动合并来自其他设备的修改')
               }
             } catch (error) {
               // Leave the durable conflict untouched. The existing conflict UI

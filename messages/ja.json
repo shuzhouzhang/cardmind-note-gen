@@ -1305,6 +1305,20 @@
         "synced": "同期済み",
         "syncError": "同期の確認が必要です",
         "syncPausedDescription": "サーバーでアカウント、ポリシー、またはメンテナンス操作が必要です。ローカルの保留中変更は保持され、完了後に手動で再試行できます。",
+        "storageBreakdown": "現在のコンテンツ {active} · アップロード予約 {reserved} · 保持履歴 {retained}",
+        "retentionDescription": "履歴データは最長約 {days} 日保持されるため、削除後すぐに使用量が減らない場合があります。",
+        "rebuildingTitle": "同期インデックスを再構築中",
+        "rebuildingDescription": "安全なスナップショットを作成中です。{count} オブジェクトを処理しました{restarted}。",
+        "rebuildingRestarted": "。スナップショット期限切れ後に自動で再開しました",
+        "restoreConfirmTitle": "復元されたサーバーを受け入れて再同期しますか？",
+        "restoreConfirmDescription": "サーバーは別の時点に復元されています。NoteGen はローカルの保留内容を保持し、安全なスナップショットを再取得し、自動統合できない変更を競合として保存します。処理待ちは約 {count} 件、最後の完全同期は {time} です。先にノートフォルダーをバックアップしてください。",
+        "neverFullySynced": "完全同期はまだありません",
+        "notNow": "後で",
+        "restoreConfirmAction": "受け入れて同期インデックスを再構築",
+        "disconnectConfirmTitle": "同期サーバーを切断しますか？",
+        "disconnectConfirmDescription": "ローカルノートは残りますが、未アップロードの変更は他の端末に反映されません。送受信、失敗、競合が {count} 件あり、最後の完全同期は {time} です。切断すると接続設定と端末セッションを削除し、主同期先をローカルストレージに戻します。",
+        "keepSyncing": "同期を続ける",
+        "disconnectAction": "切断する",
         "recoveryConfirmLabel": "復元キーの末尾 6 文字を入力してください：{suffix}",
         "hostedRegistrationInBrowser": "このサーバーでは、ブラウザーのアカウント画面でメール登録と確認を行う必要があります。",
         "openAccountPortal": "アカウントポータルを開く",
@@ -1317,7 +1331,40 @@
           "transfer": "添付ファイルの転送に失敗しました"
         },
         "problemReason": {
-          "commandIdReused": "このコマンド ID は以前に別の同期内容で使用されています。操作を保持したまま新しい ID で安全に再試行します。"
+          "commandIdReused": "このコマンド ID は以前に別の同期内容で使用されています。操作を保持したまま新しい ID で安全に再試行します。",
+          "objectTooLarge": "オブジェクトがサーバー上限を超えています。内容または添付を小さくして再試行してください。",
+          "blobNotReady": "参照された添付のアップロードが完了していません。もう一度追加してください。",
+          "resourceNotReady": "参照先の添付が見つかりません。対象を開いて添付を追加し直してください。",
+          "keyVersionNotFound": "必要な暗号化キーバージョンがありません。ワークスペースを再度解除してください。",
+          "folderNotEmpty": "フォルダーに使用中の内容があります。更新後に削除を再試行してください。",
+          "ciphertextHashMismatch": "ローカル暗号化データの整合性確認に失敗しました。ファイルを保持して同期操作を作り直してください。",
+          "documentIdentityMismatch": "文書 ID がローカル記録と一致しません。診断を書き出し、ファイルを保持してください。",
+          "quotaExceeded": "サーバー容量が不足しています。容量を整理して再試行してください。"
+        },
+        "conflicts": {
+          "title": "同期競合を解決",
+          "progress": "{count} 件中 {current} 件目",
+          "empty": "処理が必要な同期競合はありません",
+          "previous": "前へ",
+          "next": "次へ"
+        },
+        "platformSwitch": {
+          "title": "同期処理が完了していません",
+          "description": "保留中の項目が {count} 件あるか、リモート状態が未確認です。切り替えても自動移行されません。",
+          "outgoing": "送信とローカル変更", "incoming": "受信と失敗", "attachments": "添付と競合",
+          "cancel": "キャンセル", "keepAndSwitch": "保留内容を残して切り替え", "syncAndSwitch": "完全同期してから切り替え",
+          "notConfirmed": "今回の同期をサーバーで確認できませんでした。接続または同期問題を確認してください。",
+          "connectionUnavailable": "同期サーバーに接続できないため、リモート状態を確認できません。",
+          "switchFailed": "同期先を切り替えられませんでした"
+        },
+        "statusPanel": {
+          "actionRequired": "同期の確認が必要です", "workspaceMismatch": "現在のワークスペースは同期設定と一致しません。", "unsafeChanges": "安全に同期されていない内容があります。", "view": "表示", "workspaceLocked": "同期ワークスペースはロックされています",
+          "ariaLabel": "同期状態：{label}、保留 {count} 件", "rebuildProgress": "{count} オブジェクトを処理しました{restarted}", "rebuildRestarted": "。期限切れ後に再開しました",
+          "problemOutbox": "送信操作がブロックされました", "problemInbox": "受信データの適用に失敗しました", "problemTransfer": "添付の転送に失敗しました",
+          "pendingMutations": "ローカル永続化", "pendingOutbox": "送信待ち", "pendingInbox": "適用待ち", "transfers": "添付転送", "inProgress": "処理中", "problems": "競合と失敗", "serverConfirmed": "サーバー確認", "fullySynced": "完全同期", "notConfirmed": "未確認",
+          "retry": "再試行", "viewProblems": "問題を表示", "viewResolution": "対処方法を表示", "exportDiagnostics": "診断を書き出す",
+          "synced": "同期済み", "saving": "保存中", "syncing": "同期中", "rebuilding": "同期インデックスを再構築中", "pending": "同期待ち", "offline": "オフライン（編集可能）", "attention": "確認が必要", "paused": "一時停止", "idle": "同期未開始",
+          "objectTooLarge": "内容がサーバー上限を超えています。", "resourceNotReady": "添付が不足または未完了です。", "quotaExceeded": "サーバー容量が不足しています。", "keyVersionNotFound": "暗号化キーが不足しています。", "folderNotEmpty": "フォルダー内容が変更されました。"
         },
         "syncSummary": "今回の同期：送信 {pushed} 件、受信 {pulled} 件、競合コピー {conflicts} 件。",
         "initialSyncTitle": "同期中",

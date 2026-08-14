@@ -13,6 +13,11 @@ export interface SyncHealthSnapshot {
   unresolvedConflicts: number
   pendingTransfers: number
   failedTransfers: number
+  transferCompletedBytes?: string
+  transferTotalBytes?: string
+  acknowledgedCursor?: string
+  lastAckAttemptAt?: number | null
+  lastAckError?: string | null
 }
 
 export function isSyncFullyConverged(snapshot: SyncHealthSnapshot): boolean {
