@@ -1234,6 +1234,10 @@ export function TipTapEditor({
   documentMarkdown,
   onBlockingActivityChange,
 }: TipTapEditorProps) {
+  const editorRenderStartedAtRef = useRef(
+    typeof performance === 'undefined' ? Date.now() : performance.now(),
+  )
+  const [editorRenderDurationMs, setEditorRenderDurationMs] = useState<number | null>(null)
   const t = useTranslations('editor')
   const tMermaid = useTranslations('editor.mermaid.templates')
   const tImage = useTranslations('editor.image')
@@ -1367,6 +1371,8 @@ export function TipTapEditor({
     showMobileEditorToolbar,
     enableOutline,
     setEditorViewMode,
+    developerMode,
+    experimentalFeatures,
   } = useSettingStore()
   const viewMode: EditorViewMode = applyLayoutPreferences && !isSectionScope
     ? editorViewMode
@@ -1395,6 +1401,12 @@ export function TipTapEditor({
   isSourceViewRef.current = isSourceView
   const usesCanonicalMarkdownRef = useRef(usesCanonicalMarkdown)
   usesCanonicalMarkdownRef.current = usesCanonicalMarkdown
+
+  useEffect(() => {
+    if (!developerMode || !experimentalFeatures.performanceInfo || isSectionScope) return
+    editorRenderStartedAtRef.current = performance.now()
+    setEditorRenderDurationMs(null)
+  }, [activeFilePath, developerMode, experimentalFeatures.performanceInfo, isSectionScope])
   const previousViewModeRef = useRef<EditorViewMode>(documentViewMode)
 
   // 编辑器容器 ref，用于应用字体缩放
@@ -1896,6 +1908,14 @@ export function TipTapEditor({
       }
     },
   }, [collaborationDoc])
+
+  useEffect(() => {
+    if (!editor || !developerMode || !experimentalFeatures.performanceInfo || isSectionScope) return
+    const frame = requestAnimationFrame(() => {
+      setEditorRenderDurationMs(performance.now() - editorRenderStartedAtRef.current)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [activeFilePath, developerMode, editor, experimentalFeatures.performanceInfo, isSectionScope])
 
   blockingActivityFlushRef.current = () => {
     if (!editor || editor.isDestroyed || blockingActivityTokensRef.current.size > 0) return
@@ -6579,6 +6599,14 @@ export function TipTapEditor({
           : undefined
       }
     >
+      {developerMode && experimentalFeatures.performanceInfo && !isSectionScope ? (
+        <div className="pointer-events-none absolute left-3 top-3 z-40 rounded-md border bg-background/90 px-2.5 py-2 font-mono text-[11px] leading-5 text-muted-foreground shadow-sm backdrop-blur">
+          <div>{t('developerPerformance.documentSize')}: {formatDeveloperDocumentSize(sourceMarkdown)}</div>
+          <div>{t('developerPerformance.mode')}: {isLargeDocument ? t('developerPerformance.largeDocument') : t('developerPerformance.standardDocument')}</div>
+          <div>{t('developerPerformance.view')}: {effectiveViewMode}</div>
+          <div>{t('developerPerformance.renderTime')}: {editorRenderDurationMs === null ? '—' : `${editorRenderDurationMs.toFixed(1)} ms`}</div>
+        </div>
+      ) : null}
       {isMobile && mobileContext && (
         <MobileEditorContextBar
           mode={mobileContext.mode}
@@ -6937,3 +6965,13 @@ export function TipTapEditor({
 }
 
 export default TipTapEditor
+
+function formatDeveloperDocumentSize(markdown: string): string {
+  const bytes = new TextEncoder().encode(markdown).byteLength
+  const formattedBytes = bytes < 1024
+    ? `${bytes} B`
+    : bytes < 1024 ** 2
+      ? `${(bytes / 1024).toFixed(1)} KB`
+      : `${(bytes / 1024 ** 2).toFixed(1)} MB`
+  return `${formattedBytes} · ${markdown.length.toLocaleString()} chars`
+}

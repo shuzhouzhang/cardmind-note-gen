@@ -120,6 +120,19 @@ export interface GenTemplate {
 
 export type CloseBehavior = 'minimize' | 'quit' | 'ask'
 
+export type ExperimentalFeature =
+  | 'selfHostedSync'
+  | 'diagnosticsAndLogs'
+  | 'performanceInfo'
+
+export type ExperimentalFeatures = Record<ExperimentalFeature, boolean>
+
+export const DEFAULT_EXPERIMENTAL_FEATURES: ExperimentalFeatures = {
+  selfHostedSync: false,
+  diagnosticsAndLogs: false,
+  performanceInfo: false,
+}
+
 interface SettingState {
   initSettingData: () => Promise<void>
 
@@ -137,6 +150,12 @@ interface SettingState {
 
   closeBehavior: CloseBehavior
   setCloseBehavior: (behavior: CloseBehavior) => Promise<void>
+
+  developerMode: boolean
+  setDeveloperMode: (enabled: boolean) => Promise<void>
+
+  experimentalFeatures: ExperimentalFeatures
+  setExperimentalFeature: (feature: ExperimentalFeature, enabled: boolean) => Promise<void>
 
   // setting - ai - 当前选择的模型 key
   currentAi: string
@@ -972,6 +991,18 @@ const useSettingStore = create<SettingState>((set, get) => ({
           } else {
             hydratedSettings[key] = res as RecordToolbarItem[]
           }
+        } else if (key === 'experimentalFeatures') {
+          const storedFeatures = typeof res === 'object' && res !== null
+            ? res as Partial<ExperimentalFeatures> & { syncDiagnostics?: boolean, logExport?: boolean }
+            : {}
+          hydratedSettings[key] = {
+            selfHostedSync: storedFeatures.selfHostedSync ?? false,
+            diagnosticsAndLogs: storedFeatures.diagnosticsAndLogs
+              ?? storedFeatures.syncDiagnostics
+              ?? storedFeatures.logExport
+              ?? false,
+            performanceInfo: storedFeatures.performanceInfo ?? false,
+          }
         } else if (key !== 'aiModelList') {
           hydratedSettings[key] = res
         }
@@ -1024,6 +1055,26 @@ const useSettingStore = create<SettingState>((set, get) => ({
     set({ closeBehavior })
     const store = await Store.load('store.json')
     await store.set('closeBehavior', closeBehavior)
+    await store.save()
+  },
+
+  developerMode: false,
+  setDeveloperMode: async (developerMode) => {
+    set({ developerMode })
+    const store = await Store.load('store.json')
+    await store.set('developerMode', developerMode)
+    await store.save()
+  },
+
+  experimentalFeatures: DEFAULT_EXPERIMENTAL_FEATURES,
+  setExperimentalFeature: async (feature, enabled) => {
+    const experimentalFeatures = {
+      ...get().experimentalFeatures,
+      [feature]: enabled,
+    }
+    set({ experimentalFeatures })
+    const store = await Store.load('store.json')
+    await store.set('experimentalFeatures', experimentalFeatures)
     await store.save()
   },
 

@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { platform } from '@tauri-apps/plugin-os'
-import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { AlertCircle, Check, Copy, ExternalLink, Globe, KeyRound, Loader2, LogOut, RefreshCw, ScanLine, Server, X } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 
@@ -74,6 +73,7 @@ import {
 } from '@/lib/sync/note-gen-server-background'
 import { useNoteGenServerPairingStore } from '@/stores/note-gen-server-pairing'
 import useSettingStore from '@/stores/setting'
+import { writeClipboardText } from '@/lib/clipboard'
 
 type BusyAction = 'authenticate' | 'browser-authorize' | 'open-account-portal' | 'scan-pairing' | 'pairing-link' | 'discover' | 'restore' | 'unlock' | 'create-e2ee' | 'enable-e2ee' | 'enable-managed' | 'retry-sync' | 'accept-restore-epoch' | 'disconnect' | null
 type ConnectionMethod = 'browser' | 'password'
@@ -861,8 +861,7 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
   async function handleCopyRecoveryKey() {
     if (!recoveryKey) return
     try {
-      if ('__TAURI_INTERNALS__' in globalThis) await writeText(recoveryKey)
-      else await navigator.clipboard.writeText(recoveryKey)
+      await writeClipboardText(recoveryKey)
       setRecoveryCopied(true)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -1014,6 +1013,12 @@ export function NoteGenServerSync({ onConnectionStateChange }: NoteGenServerSync
         <CardDescription>{t('description')}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
+        <Alert variant="warning">
+          <AlertCircle />
+          <AlertTitle>{t('experimentalTitle')}</AlertTitle>
+          <AlertDescription>{t('experimentalDescription')}</AlertDescription>
+        </Alert>
+
         {backgroundStatus.phase === 'syncing' || backgroundStatus.phase === 'rebuilding' ? (
           <Alert>
             <Loader2 className="animate-spin" />

@@ -93,6 +93,9 @@ export const ALWAYS_SYNC_EXCLUDED_FIELDS: string[] = [
   'autoSettingsSyncEnabled',
   'autoConversationSyncEnabled',
   'primaryBackupMethod',
+  // 开发者模式和实验功能只控制当前设备，不应跟随设置同步到其他设备。
+  'developerMode',
+  'experimentalFeatures',
   'autoVectorEnabled',
   'closeBehavior',
   'excludeSensitiveConfig',

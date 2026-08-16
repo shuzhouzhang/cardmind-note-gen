@@ -47,11 +47,11 @@ export default function SyncPage() {
   const isIOS = currentPlatform === 'ios'
   const isAndroid = currentPlatform === 'android'
   const standardPlatforms = SYNC_PLATFORMS.filter(platformName => platformName !== 'cloudFolder')
-  const availablePlatforms: MobileSyncPlatform[] = isIOS
-    ? ['local', 'noteGenServer', ...standardPlatforms, 'iCloud', 'oneDrive']
+  const allPlatforms: MobileSyncPlatform[] = isIOS
+    ? ['local', ...standardPlatforms, 'iCloud', 'oneDrive', 'noteGenServer']
     : isAndroid
-      ? ['local', 'noteGenServer', ...standardPlatforms, 'oneDrive']
-      : ['local', 'noteGenServer', ...standardPlatforms]
+      ? ['local', ...standardPlatforms, 'oneDrive', 'noteGenServer']
+      : ['local', ...standardPlatforms, 'noteGenServer']
   const {
     primaryBackupMethod,
     setPrimaryBackupMethod,
@@ -73,7 +73,10 @@ export default function SyncPage() {
     setGiteeCustomSyncRepo,
     setGitlabCustomSyncRepo,
     setGiteaCustomSyncRepo,
+    developerMode,
+    experimentalFeatures,
   } = useSettingStore()
+  const selfHostedSyncEnabled = developerMode && experimentalFeatures.selfHostedSync
   const {
     syncRepoState,
     giteeSyncRepoState,
@@ -84,7 +87,9 @@ export default function SyncPage() {
     cloudFolderConnected,
   } = useSyncStore()
 
-  const [tab, setTab] = useState<MobileSyncPlatform>(primaryBackupMethod)
+  const [tab, setTab] = useState<MobileSyncPlatform>(
+    primaryBackupMethod === 'noteGenServer' && !selfHostedSyncEnabled ? 'local' : primaryBackupMethod,
+  )
   const [isLoading, setIsLoading] = useState(true)
   const [noteGenConnectionState, setNoteGenConnectionState] = useState<NoteGenServerConnectionState>('checking')
   const [activeCloudFolderProvider, setActiveCloudFolderProvider] = useState<'folder' | 'oneDrive' | null>(null)
@@ -142,7 +147,11 @@ export default function SyncPage() {
             : null,
         )
         if (savedMethod) {
-          const nextTab: MobileSyncPlatform = savedMethod !== 'cloudFolder'
+          const settings = useSettingStore.getState()
+          const nextTab: MobileSyncPlatform = savedMethod === 'noteGenServer'
+            && !(settings.developerMode && settings.experimentalFeatures.selfHostedSync)
+            ? 'local'
+            : savedMethod !== 'cloudFolder'
             ? savedMethod
             : isIOS
               ? cloudFolderConfig?.provider === 'oneDrive' ? 'oneDrive' : 'iCloud'
@@ -162,6 +171,14 @@ export default function SyncPage() {
 
     void loadPrimaryBackupMethod()
   }, [isAndroid, isIOS, setPrimaryBackupMethod])
+
+  useEffect(() => {
+    if (!selfHostedSyncEnabled && tab === 'noteGenServer') setTab('local')
+  }, [selfHostedSyncEnabled, tab])
+
+  const availablePlatforms = selfHostedSyncEnabled
+    ? allPlatforms
+    : allPlatforms.filter(platformName => platformName !== 'noteGenServer')
 
   const selectedSyncPlatform = toSyncPlatform(tab)
   const currentSyncState = tab === 'local'
@@ -200,7 +217,11 @@ export default function SyncPage() {
 
   function getProviderLabel(platform: MobileSyncPlatform) {
     if (platform === 'local') return t('settings.sync.localStorage.title')
-    if (platform === 'noteGenServer') return t('settings.sync.noteGenServer.title')
+    if (platform === 'noteGenServer') {
+      return (
+        <span className="text-warning-foreground">{t('settings.sync.noteGenServer.title')}</span>
+      )
+    }
     if (platform === 'iCloud') return t('settings.sync.iCloud.title')
     if (platform === 'oneDrive' || platform === 'cloudFolder') return t('settings.sync.oneDrive.title')
     return SYNC_PLATFORM_INFO[platform].name

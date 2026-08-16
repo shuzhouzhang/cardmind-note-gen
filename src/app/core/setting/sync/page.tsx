@@ -8,6 +8,7 @@ import {
   Database,
   FileDown,
   FileUp,
+  FlaskConical,
   FolderSync,
   GitBranch,
   GitFork,
@@ -91,7 +92,7 @@ const PLATFORM_LOGOS: Partial<Record<SyncPlatform, string>> = {
 
 type DisplaySyncPlatform = PrimarySyncPlatform
 
-const DISPLAY_SYNC_PLATFORMS: DisplaySyncPlatform[] = ['local', 'noteGenServer', ...SYNC_PLATFORMS]
+const DISPLAY_SYNC_PLATFORMS: DisplaySyncPlatform[] = ['local', ...SYNC_PLATFORMS]
 
 export default function SyncPage() {
   const t = useTranslations()
@@ -116,7 +117,10 @@ export default function SyncPage() {
     setGiteeCustomSyncRepo,
     setGitlabCustomSyncRepo,
     setGiteaCustomSyncRepo,
+    developerMode,
+    experimentalFeatures,
   } = useSettingStore()
+  const selfHostedSyncEnabled = developerMode && experimentalFeatures.selfHostedSync
   const {
     syncRepoState,
     giteeSyncRepoState,
@@ -127,7 +131,9 @@ export default function SyncPage() {
     cloudFolderConnected,
   } = useSyncStore()
 
-  const [platform, setPlatform] = useState<DisplaySyncPlatform>(primaryBackupMethod)
+  const [platform, setPlatform] = useState<DisplaySyncPlatform>(
+    primaryBackupMethod === 'noteGenServer' && !selfHostedSyncEnabled ? 'local' : primaryBackupMethod,
+  )
   const [activeTab, setActiveTab] = useState('connection')
   const [noteGenConnectionState, setNoteGenConnectionState] = useState<NoteGenServerConnectionState>('checking')
   const [isLoading, setIsLoading] = useState(true)
@@ -142,11 +148,15 @@ export default function SyncPage() {
   )
 
   useEffect(() => {
-    if (pendingNoteGenServerPairingUri) {
+    if (pendingNoteGenServerPairingUri && selfHostedSyncEnabled) {
       setPlatform('noteGenServer')
       setNoteGenConnectionState('checking')
     }
-  }, [pendingNoteGenServerPairingUri])
+  }, [pendingNoteGenServerPairingUri, selfHostedSyncEnabled])
+
+  useEffect(() => {
+    if (!selfHostedSyncEnabled && platform === 'noteGenServer') setPlatform('local')
+  }, [platform, selfHostedSyncEnabled])
 
   useEffect(() => {
     let cancelled = false
@@ -190,7 +200,11 @@ export default function SyncPage() {
         const savedMethod = await store.get<PrimarySyncPlatform>('primaryBackupMethod')
         if (savedMethod && !useNoteGenServerPairingStore.getState().pendingUri) {
           await setPrimaryBackupMethod(savedMethod)
-          setPlatform(savedMethod)
+          const settings = useSettingStore.getState()
+          setPlatform(savedMethod === 'noteGenServer'
+            && !(settings.developerMode && settings.experimentalFeatures.selfHostedSync)
+            ? 'local'
+            : savedMethod)
         }
       } catch (error) {
         console.error('Failed to load primary backup method:', error)
@@ -339,6 +353,10 @@ export default function SyncPage() {
     )
   }
 
+  const displaySyncPlatforms: DisplaySyncPlatform[] = selfHostedSyncEnabled
+    ? [...DISPLAY_SYNC_PLATFORMS, 'noteGenServer']
+    : DISPLAY_SYNC_PLATFORMS
+
   return (
     <SettingType id="sync" icon={<FileUp />} title={t('settings.sync.title')} desc={t('settings.sync.desc')}>
       <div className="grid items-start gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
@@ -348,7 +366,7 @@ export default function SyncPage() {
           </CardHeader>
           <CardContent>
             <ItemGroup className="gap-1">
-              {DISPLAY_SYNC_PLATFORMS.map((itemPlatform) => {
+              {displaySyncPlatforms.map((itemPlatform) => {
                 const platformInfo = itemPlatform === 'local' || itemPlatform === 'noteGenServer' ? null : SYNC_PLATFORM_INFO[itemPlatform]
                 const isCurrentPlatform = primaryBackupMethod === itemPlatform
                 const isSelectedPlatform = platform === itemPlatform
@@ -357,8 +375,12 @@ export default function SyncPage() {
                     key={itemPlatform}
                     asChild
                     size="sm"
-                    variant={isSelectedPlatform ? 'outline' : 'default'}
-                    className="data-[state=on]:border-primary data-[state=on]:bg-primary/5"
+                    variant={itemPlatform !== 'noteGenServer' && isSelectedPlatform ? 'outline' : 'default'}
+                    className={cn(
+                      itemPlatform === 'noteGenServer'
+                        ? 'text-warning-foreground'
+                        : 'data-[state=on]:border-primary data-[state=on]:bg-primary/5',
+                    )}
                   >
                     <button
                       type="button"
@@ -370,7 +392,7 @@ export default function SyncPage() {
                         {itemPlatform === 'local'
                           ? <HardDrive />
                           : itemPlatform === 'noteGenServer'
-                          ? <Server />
+                          ? <FlaskConical />
                           : <SyncPlatformIcon platform={itemPlatform} small />}
                       </ItemMedia>
                       <ItemContent>
