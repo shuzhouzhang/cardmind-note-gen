@@ -1114,6 +1114,18 @@
       "platformSettings": "同步方式",
       "currentPlatform": "使用中",
       "setCurrentPlatform": "設為使用平台",
+      "engineSwitchReviewTitle": "切換同步方案前檢查差異",
+      "engineSwitchReviewDescription": "將暫停目前的同步執行環境並切換方案。本機還有 {changes} 項變更、{commands} 條待傳送命令；目前遠端 {currentRemote} 個物件，目標遠端 {nextRemote} 個物件。兩側遠端資料都不會自動刪除。確認差異後繼續。",
+      "selfHosted": {
+        "transferTarget": "選擇自己的可寫資料庫", "transferToLibrary": "轉存資料庫", "transferTargetUnavailable": "目標資料庫不可寫或尚未綁定", "transferredToLibrary": "已轉存到 {name}",
+        "unboundWorkspaceTitle": "目前筆記目錄尚未綁定資料庫", "unboundWorkspaceDescription": "請選擇新建、綁定既有資料庫或暫不同步；NoteGen 不會靜默上傳。", "configureLibrary": "選擇同步方式", "notNow": "暫不同步",
+        "libraryUnbound": "已解除本機綁定", "unbind": "解除本機綁定",
+        "connectedToast": "NoteGen Server 已連線", "connectionFailed": "連線失敗", "disconnectedToast": "已中斷自託管同步", "experimentalTitle": "實驗功能", "experimentalDescription": "自託管同步仍在分階段開放，啟用後會使用獨立同步執行環境。", "experimentalLabel": "自託管同步與即時協作", "experimentalHint": "不會變更 Git、S3 或 WebDAV 的遠端資料。",
+        "connectionTitle": "連線 NoteGen Server", "connectionDescription": "一個 NoteGen 安裝目前只連線一個伺服器實例。", "serverUrl": "伺服器位址", "httpsNoDowngrade": "HTTPS 連線失敗時不會自動降級至 HTTP。", "insecureTitle": "目前連線未加密", "insecureDescription": "這是非本機 HTTP 位址，登入與同步流量可能被網路中的其他人看到。", "login": "帳號", "password": "密碼", "totp": "兩步驗證碼（選填）", "connected": "已連線", "browserAuthorization": "瀏覽器授權", "passwordLogin": "密碼登入", "usePassword": "使用密碼或 TOTP", "disconnectTitle": "中斷伺服器", "disconnectDescription": "登入憑證與工作區金鑰會從安全儲存中清除；已下載的本機資料仍會保留。", "disconnect": "中斷連線",
+        "personalDataTitle": "個人資料", "personalDataDescription": "依領域控制個人空間的同步內容。路徑、祕密、快取、索引與硬體設定只保存在本機。", "domains": { "tags": { "title": "標籤", "description": "同步名稱、順序與固定狀態。" }, "marks": { "title": "記錄與筆記資料", "description": "同步記錄、相關筆記與畫布中繼資料。" }, "conversations": { "title": "會話", "description": "同步會話標題、順序與狀態。" }, "messages": { "title": "訊息", "description": "每則訊息作為獨立物件同步。" }, "memories": { "title": "記憶", "description": "同步內容，不同步 embedding 與索引。" }, "settings": { "title": "偏好設定", "description": "同步可攜偏好，不同步 Token、API Key 與本機路徑。" }, "attachments": { "title": "個人附件", "description": "同步記錄與會話使用的附件。" } },
+        "librariesTitle": "資料庫", "librariesDescription": "每個本機目錄綁定一個獨立資料庫；未綁定目錄不會被靜默上傳。", "newLibraryDefaultName": "我的資料庫", "libraryCreated": "資料庫已建立並綁定", "libraryBound": "資料庫已綁定", "operationFailed": "操作失敗", "invitationCreated": "邀請已建立", "linkCopied": "一次性邀請權杖已複製", "invitedBy": "{login} 邀請你加入資料庫", "invitationRole": "角色：{role}", "accept": "接受", "notBound": "尚未綁定本機目錄", "readOnly": "唯讀", "readWrite": "可讀寫", "bind": "綁定", "newLibraryName": "新資料庫名稱", "createLibrary": "新建並綁定資料庫", "refresh": "重新整理", "membersTitle": "{name} 的成員", "membersDescription": "角色範本提供預設權限，也可逐項微調。", "removeMember": "移除成員", "accountLogin": "帳號名稱", "roleTemplate": "角色範本", "capabilities": "權限微調", "inviteAccount": "邀請帳號", "copyInviteLink": "建立並複製邀請權杖",
+        "conflictsTitle": "衝突中心", "conflictsDescription": "本機衝突副本會保留到你確認為止。", "noConflicts": "目前沒有待處理衝突。", "keepLocalCopy": "已保留本機副本", "conflictTypes": { "snapshot-diverged": "本機與遠端快照不同", "remote-delete-local-edit": "遠端刪除時本機已修改", "viewer-local-edit": "唯讀資料庫存在本機修改", "protocol-conflict": "伺服器版本衝突", "symlink-ignored": "符號連結已忽略，不會參與同步" }
+      },
       "connectionTab": "連線設定",
       "syncOptionsTab": "同步選項",
       "settings": "同步設置",

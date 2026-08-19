@@ -28,6 +28,7 @@ import {
   hasRemoteConversationSyncData,
   uploadConversations,
 } from '@/lib/sync/conversation-sync'
+import useSettingStore from '@/stores/setting'
 
 export type AutoDataSyncDomain = 'records' | 'settings' | 'conversations'
 type AutoDataSyncProvider = 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'
@@ -470,6 +471,18 @@ export function isAutoDataSyncApplyingRemote(): boolean {
 export function enqueueAutoDataSync(domain: AutoDataSyncDomain, reason = 'change', mode: 'auto' | 'manual' = 'auto') {
   if (applyingRemote || repositoryChangePauseDepth > 0) {
     debugAutoDataSync('skip enqueue while applying remote data', { domain, reason, mode })
+    return
+  }
+
+  if (useSettingStore.getState().primaryBackupMethod === 'selfHosted') {
+    void (async () => {
+      if (domain === 'settings') {
+        const { enqueueSelfHostedSettingChange } = await import('@/db/self-hosted-sync')
+        await enqueueSelfHostedSettingChange(reason)
+      }
+      const { getSelfHostedSyncRuntime } = await import('@/lib/self-hosted-sync/runtime')
+      void getSelfHostedSyncRuntime().wake(`data:${domain}`)
+    })()
     return
   }
 

@@ -3,10 +3,12 @@
 import { Check, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslations } from 'next-intl'
+import { confirm } from '@tauri-apps/plugin-dialog'
 
 import { Button } from '@/components/ui/button'
 import useSettingStore from '@/stores/setting'
 import type { SyncPlatform } from '@/types/sync'
+import { inspectSyncEngineSwitch, pauseSyncEngine } from '@/lib/sync/engine-switch'
 
 interface UsePlatformButtonProps {
   platform: SyncPlatform
@@ -27,6 +29,20 @@ export function UsePlatformButton({
   async function handleClick() {
     setIsSaving(true)
     try {
+      const review = await inspectSyncEngineSwitch(primaryBackupMethod, platform)
+      if (review.requiresReview) {
+        const accepted = await confirm(
+          t('settings.sync.engineSwitchReviewDescription', {
+            changes: review.pendingLocalChanges,
+            commands: review.pendingCommands,
+            currentRemote: review.currentRemoteObjects < 0 ? '?' : review.currentRemoteObjects,
+            nextRemote: review.nextRemoteObjects < 0 ? '?' : review.nextRemoteObjects,
+          }),
+          { title: t('settings.sync.engineSwitchReviewTitle'), kind: 'warning' },
+        )
+        if (!accepted) return
+      }
+      pauseSyncEngine(primaryBackupMethod)
       await setPrimaryBackupMethod(platform)
     } finally {
       setIsSaving(false)

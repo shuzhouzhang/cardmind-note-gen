@@ -112,6 +112,7 @@ export function MobileMePage({
     s3Connected,
     webdavConnected,
     cloudFolderConnected,
+    selfHostedConnected,
   } = useSyncStore()
 
   async function refreshActivity() {
@@ -416,6 +417,7 @@ export function MobileMePage({
     s3Connected,
     webdavConnected,
     cloudFolderConnected,
+    selfHostedConnected,
     configuredLabel: tMe('sync.configured'),
     unavailableLabel: tMe('sync.unconfigured'),
   }), [
@@ -427,6 +429,7 @@ export function MobileMePage({
     s3Connected,
     webdavConnected,
     cloudFolderConnected,
+    selfHostedConnected,
     tMe,
   ])
 

@@ -29,6 +29,7 @@ import { GitlabSync } from './gitlab-sync'
 import { S3Sync } from './s3-sync'
 import { WebDAVSync } from './webdav-sync'
 import { CloudFolderSync } from './cloud-folder-sync'
+import { SelfHostedSync } from './self-hosted-sync'
 import { UsePlatformButton } from './components/use-platform-button'
 import { WorkspaceRepoMapping } from './components/workspace-repo-mapping'
 import { DataSyncOverview } from './components/data-sync-overview'
@@ -77,6 +78,7 @@ const PLATFORM_ICONS: Record<SyncPlatform, LucideIcon> = {
   s3: Database,
   webdav: Cloud,
   cloudFolder: FolderSync,
+  selfHosted: Server,
 }
 
 const PLATFORM_LOGOS: Partial<Record<SyncPlatform, string>> = {
@@ -118,6 +120,7 @@ export default function SyncPage() {
     s3Connected,
     webdavConnected,
     cloudFolderConnected,
+    selfHostedConnected,
   } = useSyncStore()
 
   const [platform, setPlatform] = useState<SyncPlatform>(primaryBackupMethod)
@@ -222,6 +225,8 @@ export default function SyncPage() {
         return webdavConnected ? SyncStateEnum.success : SyncStateEnum.fail
       case 'cloudFolder':
         return cloudFolderConnected ? SyncStateEnum.success : SyncStateEnum.fail
+      case 'selfHosted':
+        return selfHostedConnected ? SyncStateEnum.success : SyncStateEnum.fail
     }
   }
 
@@ -265,6 +270,8 @@ export default function SyncPage() {
         return <WebDAVSync />
       case 'cloudFolder':
         return <CloudFolderSync />
+      case 'selfHosted':
+        return <SelfHostedSync />
     }
   }
 
@@ -389,7 +396,7 @@ export default function SyncPage() {
 
             <TabsContent value="connection" className="flex flex-col gap-4">
               {renderSyncContent()}
-              {platform !== 's3' && platform !== 'webdav' && platform !== 'cloudFolder' ? (
+              {platform !== 's3' && platform !== 'webdav' && platform !== 'cloudFolder' && platform !== 'selfHosted' ? (
                 <WorkspaceRepoMapping
                   platform={platform}
                   workspaceOptions={workspaceOptions}

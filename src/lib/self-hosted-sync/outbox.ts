@@ -1,0 +1,496 @@
+import { invoke } from '@tauri-apps/api/core'
+import { readTextFile } from '@tauri-apps/plugin-fs'
+import { join } from '@tauri-apps/api/path'
+import { Store } from '@tauri-apps/plugin-store'
+import { getDb } from '@/db'
+import { filterSyncData } from '@/config/sync-exclusions'
+import { encryptJson, loadWorkspaceKey, objectAssociatedData } from './crypto'
+import type { SyncObjectKind, WorkspaceType } from './protocol'
+import { uploadAsset } from './blob'
+import { getDefaultArticleAbsolutePath, getWorkspacePath } from '@/lib/workspace'
+
+interface PendingChange {
+  id: number
+  domain: string
+  localKey: string
+  operation: 'upsert' | 'delete'
+  reason: string
+  deterministicImport: number
+}
+
+interface ObjectMapping {
+  objectId: string
+  revision: string | null
+  blobRefs: string[]
+  documentSequence: string
+}
+
+export async function enqueueFileSnapshot(
+  relativePath: string,
+  operation: 'upsert' | 'delete' = 'upsert',
+  workspaceId?: string,
+  identityMode: 'import' | 'new' = 'new',
+) {
+  const database = await getDb()
+  const resolvedWorkspaceId = workspaceId ?? await activeLibraryWorkspaceId()
+  if (!resolvedWorkspaceId) return
+  const now = Date.now()
+  if (operation === 'upsert') {
+    await enqueueParentFolderChanges(database, resolvedWorkspaceId, relativePath, now, identityMode)
+  }
+  await database.execute(
+    `insert into self_hosted_local_changes(workspace_id, domain, local_key, operation, reason, created_at, updated_at)
+     values ($1, 'file', $2, $3, $4, $5, $5)`,
+    [resolvedWorkspaceId, relativePath, operation, `workspace:file-${identityMode}`, now]
+  )
+}
+
+export async function enqueueAssetSnapshot(
+  relativePath: string,
+  operation: 'upsert' | 'delete' = 'upsert',
+  workspaceId?: string,
+  identityMode: 'import' | 'new' = 'new',
+) {
+  const database = await getDb()
+  const resolvedWorkspaceId = workspaceId ?? await activeLibraryWorkspaceId()
+  if (!resolvedWorkspaceId) return
+  const now = Date.now()
+  if (operation === 'upsert') {
+    await enqueueParentFolderChanges(database, resolvedWorkspaceId, relativePath, now, identityMode)
+  }
+  await database.execute(
+    `insert into self_hosted_local_changes(workspace_id, domain, local_key, operation, reason, created_at, updated_at)
+     values ($1, 'asset', $2, $3, $4, $5, $5)`,
+    [resolvedWorkspaceId, relativePath, operation, `workspace:asset-${identityMode}`, now]
+  )
+}
+
+export async function enqueueFolderSnapshot(
+  relativePath: string,
+  operation: 'upsert' | 'delete' = 'upsert',
+  workspaceId?: string,
+  identityMode: 'import' | 'new' = 'new',
+) {
+  const resolvedWorkspaceId = workspaceId ?? await activeLibraryWorkspaceId()
+  if (!resolvedWorkspaceId) return
+  const database = await getDb()
+  const now = Date.now()
+  await database.execute(
+    `insert into self_hosted_local_changes(workspace_id, domain, local_key, operation, reason, created_at, updated_at)
+     values ($1, 'folder', $2, $3, $4, $5, $5)`,
+    [resolvedWorkspaceId, relativePath, operation, `workspace:folder-${identityMode}`, now]
+  )
+}
+
+export async function enqueuePathMove(oldPath: string, newPath: string) {
+  const workspaceId = await activeLibraryWorkspaceId()
+  if (!workspaceId) return
+  const database = await getDb()
+  const mappings = await database.select<Array<{
+    objectId: string
+    kind: 'folder' | 'note' | 'asset'
+    relativePath: string
+  }>>(
+    `select object_id as objectId, kind, relative_path as relativePath
+     from self_hosted_object_mappings where workspace_id = $1 and deleted_at is null
+       and relative_path is not null
+     order by length(relative_path)`,
+    [workspaceId]
+  )
+  const now = Date.now()
+  for (const mapping of mappings.filter(mapping => (
+    mapping.relativePath === oldPath || mapping.relativePath.startsWith(`${oldPath}/`)
+  ))) {
+    const relativePath = mapping.relativePath === oldPath
+      ? newPath
+      : `${newPath}${mapping.relativePath.slice(oldPath.length)}`
+    const portable = await invoke<{ normalized: string; caseFolded: string }>(
+      'self_hosted_portable_path', { relativePath },
+    )
+    const domain = mapping.kind === 'note' ? 'file' : mapping.kind
+    await database.execute(
+      `update self_hosted_object_mappings set local_identity = $1, relative_path = $2,
+         path_casefold = $3, updated_at = $4 where workspace_id = $5 and object_id = $6`,
+      [`${domain}:${portable.normalized}`, portable.normalized, portable.caseFolded, now, workspaceId, mapping.objectId]
+    )
+    await database.execute(
+      `insert into self_hosted_local_changes(
+         workspace_id, domain, local_key, operation, reason, created_at, updated_at
+       ) values ($1, $2, $3, 'upsert', 'workspace:path-moved', $4, $4)`,
+      [workspaceId, domain, portable.normalized, now]
+    )
+  }
+}
+
+export async function enqueueCanvasSnapshot(canvasId: string, operation: 'upsert' | 'delete' = 'upsert') {
+  const database = await getDb()
+  const workspaceId = await activeLibraryWorkspaceId()
+  if (!workspaceId) return null
+  const now = Date.now()
+  await database.execute(
+    `insert into self_hosted_local_changes(workspace_id, domain, local_key, operation, reason, created_at, updated_at)
+     values ($1, 'canvas', $2, $3, 'canvas:changed', $4, $4)`,
+    [workspaceId, canvasId, operation, now]
+  )
+  return workspaceId
+}
+
+async function activeLibraryWorkspaceId() {
+  const workspace = await getWorkspacePath()
+  const localRoot = workspace.isCustom ? workspace.path : await getDefaultArticleAbsolutePath('')
+  const database = await getDb()
+  const bindings = await database.select<Array<{ workspaceId: string }>>(
+    `select workspace_id as workspaceId from self_hosted_workspace_bindings
+     where workspace_type = 'library' and local_root = $1 and binding_state = 'bound' limit 1`,
+    [localRoot]
+  )
+  return bindings[0]?.workspaceId ?? null
+}
+
+async function enqueueParentFolderChanges(
+  database: Awaited<ReturnType<typeof getDb>>,
+  workspaceId: string,
+  relativePath: string,
+  now: number,
+  identityMode: 'import' | 'new',
+) {
+  const segments = relativePath.replaceAll('\\', '/').split('/').filter(Boolean)
+  for (let count = 1; count < segments.length; count++) {
+    await database.execute(
+      `insert into self_hosted_local_changes(workspace_id, domain, local_key, operation, reason, created_at, updated_at)
+       values ($1, 'folder', $2, 'upsert', $3, $4, $4)`,
+      [workspaceId, segments.slice(0, count).join('/'), `workspace:folder-${identityMode}`, now]
+    )
+  }
+}
+
+const STRUCTURED_DOMAINS: Record<string, { table: string; keyColumn: string; kind: SyncObjectKind }> = {
+  tag: { table: 'tags', keyColumn: 'id', kind: 'tag' },
+  mark: { table: 'marks', keyColumn: 'sourceId', kind: 'mark' },
+  conversation: { table: 'conversations', keyColumn: 'syncId', kind: 'conversation' },
+  message: { table: 'chats', keyColumn: 'syncId', kind: 'message' },
+  memory: { table: 'memories', keyColumn: 'id', kind: 'memory' },
+  canvas: { table: 'canvases', keyColumn: 'id', kind: 'canvas' },
+}
+
+export async function materializeOutbox(
+  workspaceId: string,
+  workspaceType: WorkspaceType,
+  localRoot: string | null,
+  maxCommands: number,
+  profileId?: string,
+  syncEpoch?: string,
+  keyVersion = 1,
+) {
+  const database = await getDb()
+  const toggleRows = await database.select<Array<{ domainToggles: string }>>(
+    `select p.domain_toggles as domainToggles
+     from self_hosted_workspace_bindings b join self_hosted_sync_profiles p on p.id = b.profile_id
+     where b.workspace_id = $1 limit 1`,
+    [workspaceId]
+  )
+  const domainToggles = JSON.parse(toggleRows[0]?.domainToggles ?? '{}') as Record<string, boolean>
+  const pending = await database.select<PendingChange[]>(
+    `select c.id, c.domain, c.local_key as localKey, c.operation, c.reason,
+       case when exists (
+         select 1 from self_hosted_local_changes imported
+         where imported.domain = c.domain and imported.local_key = c.local_key
+           and imported.reason like '%-import'
+           and coalesce(imported.workspace_id, '') = coalesce(c.workspace_id, '')
+       ) then 1 else 0 end as deterministicImport
+     from self_hosted_local_changes c
+     where c.state = 'pending'
+       and ((c.workspace_id = $1) or (c.workspace_id is null and $2 = 'account-data'))
+       and c.id = (
+         select max(latest.id) from self_hosted_local_changes latest
+         where latest.state = 'pending' and latest.domain = c.domain and latest.local_key = c.local_key
+           and coalesce(latest.workspace_id, '') = coalesce(c.workspace_id, '')
+       )
+     order by c.id
+     limit $3`,
+    [workspaceId, workspaceType, maxCommands]
+  )
+  const workspaceKey = await loadWorkspaceKey(workspaceId, keyVersion)
+  for (const change of pending) {
+    if (workspaceType === 'library' && !['file', 'asset', 'folder', 'canvas'].includes(change.domain)) continue
+    if (workspaceType === 'account-data' && ['file', 'asset', 'folder', 'canvas'].includes(change.domain)) continue
+    if (workspaceType === 'account-data' && !isDomainEnabled(change.domain, domainToggles)) continue
+    if ((change.domain === 'file' || change.domain === 'asset') && !localRoot) continue
+    const kind = change.domain === 'file' ? 'note'
+      : change.domain === 'asset' ? 'asset'
+        : change.domain === 'folder' ? 'folder'
+        : STRUCTURED_DOMAINS[change.domain]?.kind ?? 'setting'
+    const mapping = await ensureObjectMapping(
+      workspaceId, change.domain, change.localKey, kind, change.deterministicImport === 1,
+    )
+    const sourceIds = await database.select<Array<{ id: number }>>(
+      `select id from self_hosted_local_changes
+       where state = 'pending' and domain = $1 and local_key = $2
+         and ((workspace_id = $3) or (workspace_id is null and $4 = 'account-data'))
+       order by id`,
+      [change.domain, change.localKey, workspaceId, workspaceType]
+    )
+    if (sourceIds.length === 0) continue
+    const commandId = crypto.randomUUID()
+    const aad = objectAssociatedData(workspaceId, mapping.objectId, kind)
+    let command: Record<string, unknown>
+    let localContentHash: string | null = null
+    if (change.operation === 'delete') {
+      if (!mapping.revision) {
+        await markChanges(sourceIds.map(item => item.id), 'superseded')
+        continue
+      }
+      const encrypted = await encryptJson(workspaceKey, {
+        version: 1, domain: change.domain, relativePath: change.localKey, deleted: true,
+      }, aad)
+      command = {
+        commandId,
+        type: 'delete-object',
+        objectId: mapping.objectId,
+        kind,
+        parentObjectId: null,
+        nameCiphertext: null,
+        baseRevision: mapping.revision,
+        expectedDocumentSequence: mapping.documentSequence,
+        blobRefs: mapping.blobRefs,
+        conflictId: crypto.randomUUID(),
+        conflictCiphertext: encrypted.packedCiphertext,
+        conflictCiphertextHash: encrypted.packedCiphertextHash,
+        keyVersion,
+        ciphertext: encrypted.packedCiphertext,
+        ciphertextHash: encrypted.packedCiphertextHash,
+      }
+    } else {
+      const asset = change.domain === 'asset' && profileId && syncEpoch
+        ? await uploadAsset({
+            profileId,
+            workspaceId,
+            syncEpoch,
+            localRoot: localRoot!,
+            relativePath: change.localKey,
+            keyVersion,
+          })
+        : null
+      const payload = change.domain === 'file'
+        ? await filePayload(localRoot!, change.localKey)
+        : change.domain === 'folder'
+          ? { version: 1, domain: 'folder', relativePath: change.localKey }
+        : asset
+          ? { version: 1, domain: 'asset', relativePath: change.localKey, ...asset }
+          : await structuredPayload(workspaceId, change.domain, change.localKey)
+      if (!payload) {
+        await markChanges(sourceIds.map(item => item.id), 'superseded')
+        continue
+      }
+      const encrypted = await encryptJson(workspaceKey, payload, aad)
+      if (change.domain === 'file') {
+        localContentHash = await invoke<string>('self_hosted_sha256', {
+          value: String(payload.content ?? ''),
+        })
+      } else if (asset) {
+        localContentHash = asset.plaintextHash
+      }
+      const parentObjectId = ['file', 'asset', 'folder'].includes(change.domain)
+        ? await parentFolderObjectId(workspaceId, change.localKey)
+        : null
+      command = {
+        commandId,
+        type: 'upsert-object',
+        objectId: mapping.objectId,
+        kind,
+        parentObjectId,
+        nameCiphertext: null,
+        nameBlindIndex: null,
+        nameBlindIndexKeyVersion: null,
+        baseRevision: mapping.revision,
+        blobRefs: asset ? [asset.blobId] : [],
+        keyVersion,
+        ciphertext: encrypted.packedCiphertext,
+        ciphertextHash: encrypted.packedCiphertextHash,
+      }
+    }
+    const now = Date.now()
+    await database.execute(
+      `insert into self_hosted_outbox(
+         command_id, workspace_id, source_change_ids, command_type, payload,
+         state, created_at, updated_at
+       ) values ($1, $2, $3, $4, $5, 'pending', $6, $6)`,
+      [commandId, workspaceId, JSON.stringify(sourceIds.map(item => item.id)), String(command.type), JSON.stringify(command), now]
+    )
+    if (localContentHash) {
+      await database.execute(
+        `update self_hosted_object_mappings set content_hash = $1, updated_at = $2
+         where workspace_id = $3 and object_id = $4`,
+        [localContentHash, Date.now(), workspaceId, mapping.objectId]
+      )
+    }
+    if (change.domain === 'asset' && command.type === 'upsert-object') {
+      await database.execute(
+        `update self_hosted_object_mappings set blob_refs = $1, updated_at = $2
+         where workspace_id = $3 and object_id = $4`,
+        [JSON.stringify(command.blobRefs), Date.now(), workspaceId, mapping.objectId]
+      )
+    }
+    await markChanges(sourceIds.map(item => item.id), 'queued')
+  }
+}
+
+function isDomainEnabled(domain: string, toggles: Record<string, boolean>) {
+  const key = ({
+    tag: 'tags', mark: 'marks', conversation: 'conversations', message: 'messages',
+    memory: 'memories', setting: 'settings', canvas: 'marks',
+  } as Record<string, string>)[domain]
+  return key ? toggles[key] !== false : true
+}
+
+async function filePayload(localRoot: string, relativePath: string) {
+  const absolutePath = await join(localRoot, relativePath)
+  return { version: 1, domain: 'file', relativePath, content: await readTextFile(absolutePath) }
+}
+
+async function structuredPayload(
+  workspaceId: string,
+  domain: string,
+  localKey: string,
+): Promise<Record<string, unknown> | null> {
+  if (domain === 'setting') {
+    const store = await Store.load('store.json')
+    const entries = Object.fromEntries(await store.entries()) as Record<string, unknown>
+    const excludeSensitiveConfig = await store.get<boolean>('excludeSensitiveConfig') !== false
+    return {
+      version: 1,
+      domain,
+      localKey,
+      value: filterSyncData(entries, { excludeSensitiveConfig }),
+    }
+  }
+  const config = STRUCTURED_DOMAINS[domain]
+  if (!config) return null
+  const database = await getDb()
+  let rows = await database.select<Array<Record<string, unknown>>>(
+    `select * from ${config.table} where ${config.keyColumn} = $1 limit 1`,
+    [localKey]
+  )
+  if (rows.length === 0 && domain === 'mark') {
+    rows = await database.select<Array<Record<string, unknown>>>(
+      'select * from marks where cast(id as text) = $1 limit 1',
+      [localKey]
+    )
+  }
+  const row = rows[0]
+  if (!row) return null
+  const references: Record<string, string> = {}
+  if ((domain === 'mark' || domain === 'note' || domain === 'message') && row.tagId != null) {
+    references.tag = (await ensureObjectMapping(workspaceId, 'tag', String(row.tagId), 'tag')).objectId
+  }
+  if (domain === 'message' && row.conversationId != null) {
+    const conversations = await database.select<Array<{ syncId: string }>>(
+      'select syncId from conversations where id = $1 limit 1',
+      [row.conversationId]
+    )
+    if (conversations[0]?.syncId) {
+      references.conversation = (
+        await ensureObjectMapping(workspaceId, 'conversation', conversations[0].syncId, 'conversation')
+      ).objectId
+    }
+  }
+  return {
+    version: 1,
+    domain,
+    localKey,
+    value: sanitizeStructuredRow(domain, row),
+    references,
+  }
+}
+
+function sanitizeStructuredRow(domain: string, row: Record<string, unknown>) {
+  const value = { ...row }
+  if (domain === 'memory') {
+    delete value.embedding
+    delete value.embedding_model
+    delete value.embedding_dimensions
+    delete value.indexing_status
+    delete value.access_count
+    delete value.last_accessed_at
+    delete value.last_recall_reason
+  }
+  if (domain === 'canvas') {
+    delete value.thumbnailPath
+    delete value.undoStack
+    delete value.redoStack
+  }
+  if (domain === 'message') {
+    delete value.imageAnalyses
+    delete value.ragSources
+    delete value.ragSourceDetails
+    delete value.agentHistory
+    delete value.thinking
+  }
+  return value
+}
+
+async function ensureObjectMapping(
+  workspaceId: string,
+  domain: string,
+  localKey: string,
+  kind: SyncObjectKind,
+  deterministicImport = false,
+): Promise<ObjectMapping> {
+  const database = await getDb()
+  const rows = await database.select<Array<{ objectId: string; blobRefs: string }>>(
+    `select object_id as objectId, blob_refs as blobRefs from self_hosted_object_mappings
+     where workspace_id = $1 and kind = $2 and local_identity = $3 limit 1`,
+    [workspaceId, kind, `${domain}:${localKey}`]
+  )
+  const objectId = rows[0]?.objectId ?? (deterministicImport
+    ? await invoke<string>('self_hosted_import_object_id', {
+        workspaceId,
+        relativePath: `${domain}/${localKey}`,
+      })
+    : crypto.randomUUID())
+  if (!rows[0]) {
+    const portable = domain === 'file' || domain === 'asset' || domain === 'folder'
+      ? await invoke<{ normalized: string; caseFolded: string }>('self_hosted_portable_path', { relativePath: localKey })
+      : null
+    await database.execute(
+      `insert into self_hosted_object_mappings(
+         workspace_id, object_id, kind, local_identity, relative_path, path_casefold, updated_at
+       ) values ($1, $2, $3, $4, $5, $6, $7)`,
+      [workspaceId, objectId, kind, `${domain}:${localKey}`, portable?.normalized ?? null, portable?.caseFolded ?? null, Date.now()]
+    )
+  }
+  const revisions = await database.select<Array<{ revision: string }>>(
+    `select revision from self_hosted_revisions
+     where workspace_id = $1 and object_id = $2
+     order by cast(revision as integer) desc limit 1`,
+    [workspaceId, objectId]
+  )
+  const documents = await database.select<Array<{ sequence: string }>>(
+    `select coalesce(max(cast(document_sequence as integer)), 0) as sequence
+     from self_hosted_yjs_updates where workspace_id = $1 and object_id = $2`,
+    [workspaceId, objectId]
+  )
+  return {
+    objectId,
+    revision: revisions[0]?.revision ?? null,
+    blobRefs: JSON.parse(rows[0]?.blobRefs ?? '[]') as string[],
+    documentSequence: documents[0]?.sequence ?? '0',
+  }
+}
+
+async function parentFolderObjectId(workspaceId: string, relativePath: string) {
+  const segments = relativePath.replaceAll('\\', '/').split('/').filter(Boolean)
+  if (segments.length <= 1) return null
+  const parent = segments.slice(0, -1).join('/')
+  return (await ensureObjectMapping(workspaceId, 'folder', parent, 'folder')).objectId
+}
+
+async function markChanges(ids: number[], state: string) {
+  const database = await getDb()
+  for (const id of ids) {
+    await database.execute(
+      'update self_hosted_local_changes set state = $1, updated_at = $2 where id = $3',
+      [state, Date.now(), id]
+    )
+  }
+}

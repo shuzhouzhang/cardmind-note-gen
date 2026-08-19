@@ -113,6 +113,7 @@ import { flattenFileTree } from '@/app/core/main/file/file-selection'
 import { getMarkListItemContent } from '@/app/core/main/mark/mark-list-item-content'
 import { applyCanvasOperations } from '@/lib/canvas/operations'
 import { getFilePathOptions } from '@/lib/workspace'
+import { clearCanvasDragPresence, updateCanvasDragPresence } from '@/lib/self-hosted-sync/canvas-collaboration'
 import {
   createFreehandGeometry,
   getFreehandOutline,
@@ -2308,6 +2309,10 @@ function CanvasEditorInner({ canvasId, mobile = false }: CanvasEditorProps) {
           }
         }}
         onNodeDrag={(_event, node) => {
+          const draggedNodes = node.selected
+            ? nodes.filter(item => item.selected).map(item => item.id === node.id ? node : item)
+            : [node]
+          void updateCanvasDragPresence(canvasId, draggedNodes)
           const drag = groupDragRef.current
           if (!drag || drag.groupId !== node.id) return
           const delta = { x: node.position.x - drag.start.x, y: node.position.y - drag.start.y }
@@ -2316,7 +2321,10 @@ function CanvasEditorInner({ canvasId, mobile = false }: CanvasEditorProps) {
             return start ? { ...item, position: { x: start.x + delta.x, y: start.y + delta.y } } : item
           }))
         }}
-        onNodeDragStop={() => { groupDragRef.current = null }}
+        onNodeDragStop={() => {
+          groupDragRef.current = null
+          void clearCanvasDragPresence(canvasId)
+        }}
         deleteKeyCode={null}
         nodesDraggable={!previewSnapshot && tool === 'select'}
         nodesConnectable={!previewSnapshot && tool === 'select'}

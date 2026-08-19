@@ -44,6 +44,7 @@ import {
   registerEditorPathWriteTransactionRunner,
   type EditorPathWriteTransactionContext,
 } from '@/lib/editor-deactivation'
+import { writeSelfHostedWorkspaceText } from '@/lib/self-hosted-sync/files'
 
 type SyncPushCompletedEvent = Events['sync-push-completed']
 type SyncPushCompletedListener = (event: SyncPushCompletedEvent) => void
@@ -1494,6 +1495,9 @@ const useArticleStore = create<NoteState>((set, get) => ({
     }
 
     get().setFileTree(cacheTree)
+    void import('@/lib/self-hosted-sync/outbox').then(({ enqueuePathMove }) => (
+      enqueuePathMove(oldPath, newPath)
+    ))
     return true
   },
   syncOpenTabsForPathChange: async (oldPath: string, newPath: string) => {
@@ -1667,7 +1671,9 @@ const useArticleStore = create<NoteState>((set, get) => ({
     }
     
     // 确保工作区目录存在
-    if (workspace.isCustom) {
+    if (await writeSelfHostedWorkspaceText(fullPath, '')) {
+      // Rust journal already persisted the file.
+    } else if (workspace.isCustom) {
       // 自定义工作区
       const isWorkspaceExists = await exists(workspace.path)
       if (!isWorkspaceExists) {
@@ -2950,7 +2956,9 @@ const useArticleStore = create<NoteState>((set, get) => ({
         const pathOptions = await getFilePathOptions(actualPath)
 
         try {
-          if (!pathOptions.baseDir) {
+          if (await writeSelfHostedWorkspaceText(actualPath, '')) {
+            // Rust journal already persisted the file.
+          } else if (!pathOptions.baseDir) {
             await writeTextFile(pathOptions.path, '')
           } else {
             await writeTextFile(pathOptions.path, '', { baseDir: pathOptions.baseDir })
@@ -3098,7 +3106,9 @@ const useArticleStore = create<NoteState>((set, get) => ({
           if (previousSave) await previousSave
           // 只保存本地文件，不触发同步推送
           const pathOptions = await getFilePathOptions(path)
-          if (!pathOptions.baseDir) {
+          if (await writeSelfHostedWorkspaceText(path, content)) {
+            // Rust journal already persisted the file.
+          } else if (!pathOptions.baseDir) {
             await writeTextFile(pathOptions.path, content)
           } else {
             await writeTextFile(pathOptions.path, content, { baseDir: pathOptions.baseDir })
@@ -3151,7 +3161,9 @@ const useArticleStore = create<NoteState>((set, get) => ({
           // 检查文件是否存在
           let isLocale = false
           const pathOptions = await getFilePathOptions(savePath)
-          if (!pathOptions.baseDir) {
+          if (await writeSelfHostedWorkspaceText(savePath, saveContent)) {
+            // Rust journal already persisted the file.
+          } else if (!pathOptions.baseDir) {
             isLocale = await exists(pathOptions.path)
           } else {
             isLocale = await exists(pathOptions.path, { baseDir: pathOptions.baseDir })

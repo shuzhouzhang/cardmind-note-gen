@@ -620,6 +620,7 @@ export async function getRemoteCommitInfo(path: string): Promise<{
   try {
     const store = await Store.load('store.json')
     const primaryBackupMethod = await store.get<string>('primaryBackupMethod') || 'github'
+    if (primaryBackupMethod === 'selfHosted') return null
     const repo = await getSyncRepoName(primaryBackupMethod as 'github' | 'gitee' | 'gitlab' | 'gitea')
     
     let commits: any[] = []
@@ -1023,6 +1024,15 @@ export async function hasNetworkConnection(): Promise<boolean> {
         clearTimeout(timeoutId)
         const config = await store.get<CloudFolderConfig>('cloudFolderSyncConfig')
         return Boolean(config && supportsCloudFolderWorkspace(config))
+      }
+      case 'selfHosted': {
+        clearTimeout(timeoutId)
+        const { connectedProfileId } = await import('@/lib/self-hosted-sync/workspaces')
+        const profileId = await connectedProfileId()
+        if (!profileId) return false
+        const { client } = await (await import('@/lib/self-hosted-sync/profile')).authenticatedClient(profileId)
+        await client.capabilities()
+        return true
       }
       case 's3': {
         clearTimeout(timeoutId)

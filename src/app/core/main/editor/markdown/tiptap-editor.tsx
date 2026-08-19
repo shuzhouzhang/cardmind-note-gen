@@ -122,6 +122,10 @@ import {
   type SectionedMarkdownSelection,
 } from './sectioned-markdown-editor'
 import dynamic from 'next/dynamic'
+import {
+  openMarkdownCollaboration,
+  type MarkdownCollaborationController,
+} from '@/lib/self-hosted-sync/markdown-collaboration'
 import './style.css'
 
 const MathEditorDialog = dynamic(
@@ -1486,6 +1490,7 @@ export function TipTapEditor({
   const [customAiInstruction, setCustomAiInstruction] = useState('')
   const [isCanvasDragOver, setIsCanvasDragOver] = useState(false)
   const [isCanvasDropPending, setIsCanvasDropPending] = useState(false)
+  const [selfHostedCollaborators, setSelfHostedCollaborators] = useState<Array<{ deviceId: string; label: string }>>([])
   const aiActionHandlersRef = useRef({
     polish: async () => {},
     concise: async () => {},
@@ -1499,6 +1504,7 @@ export function TipTapEditor({
   const initializedForPathRef = useRef<string | null>(null)
   const externalUpdateCounterRef = useRef(0)
   const pendingSyncUpdateRef = useRef<{ path: string; content: string } | null>(null)
+  const selfHostedCollaborationRef = useRef<MarkdownCollaborationController | null>(null)
   const canonicalExternalUpdateSequenceRef = useRef(0)
   const restoredViewPathRef = useRef<string | null>(null)
   const restoreEditorViewStateRef = useRef<(path: string, attempt?: number) => void>(() => {})
@@ -1571,6 +1577,7 @@ export function TipTapEditor({
       }
     }
     onChangeRef.current?.(markdown)
+    selfHostedCollaborationRef.current?.applyLocal(markdown)
   }, [isSectionScope])
 
   const scheduleMarkdownChange = useCallback((targetEditor: TipTapReactEditor) => {
@@ -1982,6 +1989,7 @@ export function TipTapEditor({
     setHasUnparsedSourceChanges(true)
     contentVersionRef.current++
     onChangeRef.current?.(value)
+    selfHostedCollaborationRef.current?.applyLocal(value)
   }, [])
 
   const handleSectionedMarkdownChange = useCallback((value: string) => {
@@ -1991,8 +1999,82 @@ export function TipTapEditor({
     setHasUnparsedSourceChanges(false)
     contentVersionRef.current++
     onChangeRef.current?.(value)
+    selfHostedCollaborationRef.current?.applyLocal(value)
     classifyCanonicalMarkdown(value)
   }, [classifyCanonicalMarkdown])
+
+  useEffect(() => {
+    let cancelled = false
+    let stopPresence: (() => void) | null = null
+    const setup = async () => {
+      const state = useSettingStore.getState()
+      if (state.primaryBackupMethod !== 'selfHosted' || isSectionScope || isSourceView || !activeFilePath || !editor) return
+      const workspace = await getWorkspacePath()
+      if (!workspace.isCustom) return
+      const normalizedRoot = workspace.path.replaceAll('\\', '/').replace(/\/$/, '')
+      const normalizedPath = activeFilePath.replaceAll('\\', '/')
+      const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)
+        ? normalizedPath.slice(normalizedRoot.length + 1)
+        : normalizedPath
+      try {
+        const controller = await openMarkdownCollaboration(
+          workspace.path,
+          relativePath,
+          sourceMarkdownRef.current,
+          markdown => {
+            if (cancelled || markdown === sourceMarkdownRef.current) return
+            externalUpdateCounterRef.current++
+            sourceMarkdownRef.current = markdown
+            setSourceMarkdown(markdown)
+            trySetMarkdownContent(editor, markdown, { resetHistory: true })
+            onChangeRef.current?.(markdown)
+            queueMicrotask(() => {
+              externalUpdateCounterRef.current = Math.max(0, externalUpdateCounterRef.current - 1)
+            })
+          },
+        )
+        if (cancelled) controller.close()
+        else {
+          selfHostedCollaborationRef.current = controller
+          stopPresence = controller.subscribePresence(message => {
+            const deviceId = typeof message.deviceId === 'string' ? message.deviceId : null
+            if (!deviceId) return
+            if (message.type === 'presence.cleared') {
+              setSelfHostedCollaborators(current => current.filter(item => item.deviceId !== deviceId))
+            } else if (message.type === 'presence.updated') {
+              const label = typeof message.label === 'string' ? message.label : 'NoteGen'
+              setSelfHostedCollaborators(current => [
+                ...current.filter(item => item.deviceId !== deviceId), { deviceId, label },
+              ])
+            }
+          })
+        }
+      } catch (error) {
+        console.warn('[self-hosted-sync] Collaborative document is unavailable:', error)
+      }
+    }
+    void setup()
+    return () => {
+      cancelled = true
+      stopPresence?.()
+      setSelfHostedCollaborators([])
+      selfHostedCollaborationRef.current?.close()
+      selfHostedCollaborationRef.current = null
+    }
+  }, [activeFilePath, editor, isSectionScope, isSourceView, trySetMarkdownContent])
+
+  useEffect(() => {
+    if (!editor) return
+    const updatePresence = () => {
+      selfHostedCollaborationRef.current?.updatePresence(
+        editor.state.selection.anchor,
+        editor.state.selection.head,
+        'NoteGen',
+      )
+    }
+    editor.on('selectionUpdate', updatePresence)
+    return () => editor.off('selectionUpdate', updatePresence)
+  }, [activeFilePath, editor])
 
   const flushSectionedMarkdown = useCallback(() => {
     const expectedCanonical = sourceMarkdownRef.current
@@ -6412,6 +6494,16 @@ export function TipTapEditor({
           : undefined
       }
     >
+      {selfHostedCollaborators.length > 0 ? (
+        <div className="absolute right-3 top-3 z-40 flex items-center gap-1 rounded-full border bg-background/90 px-2 py-1 shadow-sm backdrop-blur">
+          {selfHostedCollaborators.slice(0, 3).map(collaborator => (
+            <span key={collaborator.deviceId} className="grid size-6 place-items-center rounded-full bg-primary text-[10px] font-medium text-primary-foreground" title={collaborator.label}>
+              {collaborator.label.slice(0, 1).toUpperCase()}
+            </span>
+          ))}
+          <span className="text-xs text-muted-foreground">{selfHostedCollaborators.length}</span>
+        </div>
+      ) : null}
       {isMobile && effectiveViewMode === 'visual' && !isSectionVirtualView && (
         <MobileEditorContextBar
           mode={mobileContext?.mode ?? 'text'}

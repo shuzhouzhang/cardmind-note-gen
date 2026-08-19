@@ -6,6 +6,7 @@ import { useEffect } from 'react'
 
 import useSettingStore from '@/stores/setting'
 import useArticleStore from '@/stores/article'
+import { getSelfHostedSyncRuntime } from '@/lib/self-hosted-sync/runtime'
 
 function isStructuralEvent(event: WatchEvent) {
   if (event.type === 'any' || event.type === 'other') return true
@@ -28,6 +29,7 @@ export function useWorkspaceFileWatcher() {
 
       unwatch = await watch(workspaceRoot, event => {
         if (disposed) return
+        void getSelfHostedSyncRuntime().wake('file-watcher')
 
         const relativePaths = event.paths.map(path => {
           const normalizedPath = path.replace(/\\/g, '/')

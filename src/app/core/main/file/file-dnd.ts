@@ -1,6 +1,7 @@
 import { exists, rename } from "@tauri-apps/plugin-fs"
 
 import { getFilePathOptions, getWorkspacePath } from "@/lib/workspace"
+import { moveSelfHostedWorkspacePath } from '@/lib/self-hosted-sync/files'
 import { rewriteWorkspaceMarkdownMediaPaths } from '@/lib/markdown-media-path'
 import useArticleStore from '@/stores/article'
 
@@ -138,7 +139,9 @@ export async function moveFileManagerEntry(sourcePath: string, targetDirectoryPa
   const oldPathOptions = await getFilePathOptions(sourcePath)
   const newPathOptions = await getFilePathOptions(targetPath)
 
-  if (workspace.isCustom) {
+  if (await moveSelfHostedWorkspacePath(sourcePath, targetPath)) {
+    // Rust journal already completed the atomic move.
+  } else if (workspace.isCustom) {
     await rename(oldPathOptions.path, newPathOptions.path)
   } else {
     await rename(oldPathOptions.path, newPathOptions.path, {

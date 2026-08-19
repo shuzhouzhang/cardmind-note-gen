@@ -13,8 +13,8 @@ import { cloudFolderDownload, cloudFolderUpload } from '@/lib/sync/cloud-folder'
 import { setAutoDataSyncApplyingRemote } from '@/lib/sync/auto-data-sync-queue'
 import type { CloudFolderConfig, S3Config, WebDAVConfig } from '@/types/sync'
 
-type SettingsSyncProvider = 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'
-type GitSettingsSyncProvider = Exclude<SettingsSyncProvider, 's3' | 'webdav' | 'cloudFolder'>
+type SettingsSyncProvider = 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder' | 'selfHosted'
+type GitSettingsSyncProvider = Exclude<SettingsSyncProvider, 's3' | 'webdav' | 'cloudFolder' | 'selfHosted'>
 type RemoteFileEntry = {
   name?: string
   path?: string
@@ -75,6 +75,14 @@ const useSettingsSyncStore = create<SettingsSyncState>((set) => ({
     try {
       const store = await Store.load('store.json')
       const primaryBackupMethod = await store.get<SettingsSyncProvider>('primaryBackupMethod') || 'github'
+      if (primaryBackupMethod === 'selfHosted') {
+        const [{ enqueueSelfHostedSettingChange }, { getSelfHostedSyncRuntime }] = await Promise.all([
+          import('@/db/self-hosted-sync'), import('@/lib/self-hosted-sync/runtime'),
+        ])
+        await enqueueSelfHostedSettingChange('manual-settings-upload')
+        void getSelfHostedSyncRuntime().wake('settings:manual-upload')
+        return true
+      }
       const excludeSensitiveConfig = await store.get<boolean>('excludeSensitiveConfig') !== false
       debugSettingsSync('upload started', {
         provider: primaryBackupMethod,
@@ -217,6 +225,11 @@ const useSettingsSyncStore = create<SettingsSyncState>((set) => ({
     try {
       const store = await Store.load('store.json')
       const primaryBackupMethod = await store.get<SettingsSyncProvider>('primaryBackupMethod') || 'github'
+      if (primaryBackupMethod === 'selfHosted') {
+        const { getSelfHostedSyncRuntime } = await import('@/lib/self-hosted-sync/runtime')
+        await getSelfHostedSyncRuntime().wake('settings:manual-download')
+        return true
+      }
       const excludeSensitiveConfig = await store.get<boolean>('excludeSensitiveConfig') !== false
       debugSettingsSync('download started', {
         provider: primaryBackupMethod,

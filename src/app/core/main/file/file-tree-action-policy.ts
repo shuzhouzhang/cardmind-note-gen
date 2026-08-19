@@ -99,7 +99,17 @@ export async function getSyncConfiguration(): Promise<{
     return { platform, configured: Boolean(config?.path) }
   }
 
-  const credentials: Record<Exclude<SyncPlatform, 's3' | 'webdav' | 'cloudFolder'>, [string, string]> = {
+  if (platform === 'selfHosted') {
+    const { getDb } = await import('@/db')
+    const database = await getDb()
+    const rows = await database.select<Array<{ total: number }>>(
+      `select count(*) as total from self_hosted_workspace_bindings
+       where workspace_type = 'library' and binding_state = 'bound'`
+    )
+    return { platform, configured: (rows[0]?.total ?? 0) > 0 }
+  }
+
+  const credentials: Record<Exclude<SyncPlatform, 's3' | 'webdav' | 'cloudFolder' | 'selfHosted'>, [string, string]> = {
     github: ['accessToken', 'githubUsername'],
     gitee: ['giteeAccessToken', 'giteeUsername'],
     gitlab: ['gitlabAccessToken', 'gitlabUsername'],

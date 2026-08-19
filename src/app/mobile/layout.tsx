@@ -178,6 +178,8 @@ export default function RootLayout({
         initMainHosting()
         await initAllDatabases()
         if (cancelled) return
+        const { refreshSelfHostedSyncRuntime } = await import('@/lib/self-hosted-sync/lifecycle')
+        await refreshSelfHostedSyncRuntime()
         const { runMemoryMaintenance } = await import('@/lib/memory/auto-memory')
         void runMemoryMaintenance()
         const {

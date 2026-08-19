@@ -7,6 +7,7 @@ import { testWebDAVConnection } from '@/lib/sync/webdav'
 import { testCloudFolderConnection } from '@/lib/sync/cloud-folder'
 import useSyncStore from '@/stores/sync'
 import type { CloudFolderConfig, S3Config, SyncPlatform, WebDAVConfig } from '@/types/sync'
+import { getDb } from '@/db'
 
 type GitSyncPlatform = 'github' | 'gitee' | 'gitlab' | 'gitea'
 
@@ -206,6 +207,14 @@ async function checkCloudFolderStatus(store: Store) {
   }
 }
 
+async function checkSelfHostedStatus() {
+  const database = await getDb()
+  const rows = await database.select<Array<{ total: number }>>(
+    "select count(*) as total from self_hosted_sync_profiles where state = 'connected'"
+  )
+  useSyncStore.getState().setSelfHostedConnected((rows[0]?.total ?? 0) > 0)
+}
+
 export async function checkSyncProviderStatus(platform: SyncPlatform) {
   const store = await Store.load('store.json')
 
@@ -224,5 +233,7 @@ export async function checkSyncProviderStatus(platform: SyncPlatform) {
       return checkWebDAVStatus(store)
     case 'cloudFolder':
       return checkCloudFolderStatus(store)
+    case 'selfHosted':
+      return checkSelfHostedStatus()
   }
 }

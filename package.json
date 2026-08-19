@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "docs:build": "npm --prefix ./docs run build",
     "sync-version": "./scripts/sync-version.sh",
+    "sync:self-hosted-schema": "pnpm dlx openapi-typescript@7.13.0 ${NOTEGEN_SERVER_OPENAPI_URL:-http://localhost:3000/openapi.json} -o src/lib/self-hosted-sync/generated/openapi.ts",
     "ios-build": "npm run sync-version && pnpm tauri ios build --open",
     "macos-app-store-build": "tauri build --config src-tauri/tauri.macos-app-store.conf.json"
   },
@@ -138,6 +139,7 @@
     "vaul": "^1.1.1",
     "words-count": "^2.0.2",
     "yaml": "^2.8.0",
+    "yjs": "13.6.31",
     "zod": "^3.23.8",
     "zustand": "^5.0.1"
   },

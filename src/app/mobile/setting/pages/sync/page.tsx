@@ -12,6 +12,7 @@ import { GitlabSync } from '@/app/core/setting/sync/gitlab-sync'
 import { GiteaSync } from '@/app/core/setting/sync/gitea-sync'
 import { S3Sync } from '@/app/core/setting/sync/s3-sync'
 import { WebDAVSync } from '@/app/core/setting/sync/webdav-sync'
+import { SelfHostedSync } from '@/app/core/setting/sync/self-hosted-sync'
 import { UsePlatformButton } from '@/app/core/setting/sync/components/use-platform-button'
 import { WorkspaceRepoMapping } from '@/app/core/setting/sync/components/workspace-repo-mapping'
 import { DataSyncOverview } from '@/app/core/setting/sync/components/data-sync-overview'
@@ -80,6 +81,7 @@ export default function SyncPage() {
     s3Connected,
     webdavConnected,
     cloudFolderConnected,
+    selfHostedConnected,
   } = useSyncStore()
 
   const [tab, setTab] = useState<MobileSyncPlatform>(primaryBackupMethod)
@@ -185,6 +187,8 @@ export default function SyncPage() {
             || (tab === 'iCloud' && activeCloudFolderProvider === 'folder'))
           ? SyncStateEnum.success
           : SyncStateEnum.fail
+      case 'selfHosted':
+        return selfHostedConnected ? SyncStateEnum.success : SyncStateEnum.fail
       default:
         return syncRepoState
     }
@@ -227,6 +231,8 @@ export default function SyncPage() {
         return <S3Sync />
       case 'webdav':
         return <WebDAVSync />
+      case 'selfHosted':
+        return <SelfHostedSync />
       case 'iCloud':
         return isIOS
           ? <ICloudFolderSync onActiveProviderChange={setActiveCloudFolderProvider} />

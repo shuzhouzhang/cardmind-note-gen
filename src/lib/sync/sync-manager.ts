@@ -234,6 +234,15 @@ export class SyncManager {
     }
 
     try {
+      if (await this.getCurrentPlatform() === 'selfHosted') {
+        const [{ enqueueFileSnapshot }, { getSelfHostedSyncRuntime }] = await Promise.all([
+          import('@/lib/self-hosted-sync/outbox'),
+          import('@/lib/self-hosted-sync/runtime'),
+        ])
+        await enqueueFileSnapshot(path)
+        void getSelfHostedSyncRuntime().wake('local-change')
+        return { success: true, action: 'push', message: '已加入自托管同步队列', content }
+      }
       const platform = await this.getCurrentPlatform() as 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'
       // S3 不需要 repo，直接设为空字符串
       const repo = (platform === 's3' || platform === 'webdav' || platform === 'cloudFolder') ? '' : await getSyncRepoName(platform)
@@ -331,6 +340,11 @@ export class SyncManager {
     initialEditorMutationRevision = getEditorPathMutationRevision(path),
   ): Promise<SyncResult> {
     try {
+      if (await this.getCurrentPlatform() === 'selfHosted') {
+        const { getSelfHostedSyncRuntime } = await import('@/lib/self-hosted-sync/runtime')
+        await getSelfHostedSyncRuntime().wake('foreground')
+        return { success: true, action: 'none', message: '已检查自托管同步事件' }
+      }
       const platform = await this.getCurrentPlatform() as 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'
       // S3 不需要 repo
       const repo = (platform === 's3' || platform === 'webdav' || platform === 'cloudFolder') ? '' : await getSyncRepoName(platform)
@@ -493,6 +507,15 @@ export class SyncManager {
    */
   async deleteRemoteFile(path: string): Promise<SyncResult> {
     try {
+      if (await this.getCurrentPlatform() === 'selfHosted') {
+        const [{ enqueueFileSnapshot }, { getSelfHostedSyncRuntime }] = await Promise.all([
+          import('@/lib/self-hosted-sync/outbox'),
+          import('@/lib/self-hosted-sync/runtime'),
+        ])
+        await enqueueFileSnapshot(path, 'delete')
+        void getSelfHostedSyncRuntime().wake('local-change')
+        return { success: true, action: 'delete', message: '删除操作已加入自托管同步队列' }
+      }
       const platform = await this.getCurrentPlatform() as 'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'
       // S3 不需要 repo
       const repo = (platform === 's3' || platform === 'webdav' || platform === 'cloudFolder') ? '' : await getSyncRepoName(platform)
@@ -621,6 +644,15 @@ export class SyncManager {
   async syncFile(path: string, options: {
     onConflict?: (local: string, remote: string) => Promise<'local' | 'remote' | 'cancel'>
   } = {}): Promise<SyncResult> {
+    if (await this.getCurrentPlatform() === 'selfHosted') {
+      const [{ enqueueFileSnapshot }, { getSelfHostedSyncRuntime }] = await Promise.all([
+        import('@/lib/self-hosted-sync/outbox'),
+        import('@/lib/self-hosted-sync/runtime'),
+      ])
+      await enqueueFileSnapshot(path)
+      void getSelfHostedSyncRuntime().wake('local-change')
+      return { success: true, action: 'push', message: '已加入自托管同步队列' }
+    }
     // 检查是否正在同步
     if (this.state.isSyncing) {
       this.state.pendingSync = true
@@ -706,6 +738,16 @@ export class SyncManager {
       return
     }
 
+    if (await this.getCurrentPlatform() === 'selfHosted') {
+      const [{ enqueueFileSnapshot }, { getSelfHostedSyncRuntime }] = await Promise.all([
+        import('@/lib/self-hosted-sync/outbox'),
+        import('@/lib/self-hosted-sync/runtime'),
+      ])
+      await enqueueFileSnapshot(path)
+      void getSelfHostedSyncRuntime().wake('local-change')
+      return
+    }
+
     // 标记该路径需要同步（内容从磁盘读取）
     this.syncQueue.set(path, { timestamp: Date.now() })
 
@@ -739,6 +781,11 @@ export class SyncManager {
 
     // 检查是否应该排除
     if (shouldExclude(path)) {
+      return null
+    }
+    if (await this.getCurrentPlatform() === 'selfHosted') {
+      const { getSelfHostedSyncRuntime } = await import('@/lib/self-hosted-sync/runtime')
+      await getSelfHostedSyncRuntime().wake('foreground')
       return null
     }
     // 比较版本，决定是否需要拉取
@@ -991,6 +1038,13 @@ export async function isSyncConfigured(): Promise<boolean> {
       case 'cloudFolder': {
         const config = await store.get<CloudFolderConfig>('cloudFolderSyncConfig')
         return Boolean(config && supportsCloudFolderWorkspace(config))
+      }
+      case 'selfHosted': {
+        const database = await (await import('@/db')).getDb()
+        const rows = await database.select<Array<{ total: number }>>(
+          "select count(*) as total from self_hosted_sync_profiles where state = 'connected'"
+        )
+        return (rows[0]?.total ?? 0) > 0
       }
       default:
         return false

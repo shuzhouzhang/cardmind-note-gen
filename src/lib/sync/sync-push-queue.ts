@@ -16,7 +16,14 @@ import { generateGitSyncCommitMessage } from './commit-message'
 import { getSyncMetadataKey } from './sync-context'
 import { supportsCloudFolderWorkspace } from './cloud-folder'
 
-type SyncProvider = 'gitee' | 'github' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'
+type SyncProvider = 'gitee' | 'github' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder' | 'selfHosted'
+
+async function enqueueSelfHostedFile(path: string) {
+  const { enqueueFileSnapshot } = await import('@/lib/self-hosted-sync/outbox')
+  const { getSelfHostedSyncRuntime } = await import('@/lib/self-hosted-sync/runtime')
+  await enqueueFileSnapshot(path)
+  void getSelfHostedSyncRuntime().wake('file:push-queue')
+}
 
 async function getCloudFolderWorkspaceConfig(): Promise<CloudFolderConfig | null> {
   const store = await Store.load('store.json')
@@ -325,6 +332,10 @@ class SyncPushQueue {
         const store = await Store.load('store.json')
         const provider = (await store.get<string>('primaryBackupMethod') || 'github') as SyncProvider
         providerForLog = provider
+        if (provider === 'selfHosted') {
+          await enqueueSelfHostedFile(path)
+          return { success: true }
+        }
         const repo = (provider !== 's3' && provider !== 'webdav' && provider !== 'cloudFolder')
           ? await getSyncRepoName(provider)
           : undefined
@@ -836,6 +847,10 @@ class SyncPushQueue {
 
       const store = await Store.load('store.json')
       const provider = (await store.get<string>('primaryBackupMethod') || 'github') as SyncProvider
+      if (provider === 'selfHosted') {
+        await enqueueSelfHostedFile(path)
+        return { success: true }
+      }
       const repo = (provider !== 's3' && provider !== 'webdav' && provider !== 'cloudFolder')
         ? await getSyncRepoName(provider)
         : undefined

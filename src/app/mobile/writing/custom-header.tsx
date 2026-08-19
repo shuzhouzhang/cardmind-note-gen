@@ -1050,7 +1050,7 @@ export function MobileFileBrowser({ active, onOpenFile }: MobileFileBrowserProps
     if (!ok) return
 
     const store = await Store.load('store.json')
-    const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'>('primaryBackupMethod') || 'github'
+    const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder' | 'selfHosted'>('primaryBackupMethod') || 'github'
 
     if (entry.type === 'folder') {
       const node = getNodeByPath(fileTree, entry.relativePath)

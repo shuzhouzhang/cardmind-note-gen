@@ -42,12 +42,18 @@ url = "2.5"
 reqwest_dav = "=0.2.1"
 tauri-plugin-opener = "2.4.0"
 tauri-plugin-clipboard-manager = "2"
-uuid = { version = "1.10", features = ["v4"] }
+uuid = { version = "1.10", features = ["v4", "v5"] }
 zip = { version = "4", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
+chacha20poly1305 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+argon2 = "0.5"
+hkdf = "0.12"
+rand_core = { version = "0.6", features = ["getrandom"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
 base64 = "0.22"
 anydoc = "=0.1.8"
+unicode-normalization = "0.1"
 
 [dependencies.tauri-plugin-sql]
 features = ["sqlite"]
@@ -70,6 +76,9 @@ font-kit = "0.14"
 tauri-plugin-autostart = "=2.4.0"
 trash = "=5.2.6"
 
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+keyring = "3"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = [
   "Foundation",
@@ -80,6 +89,7 @@ windows = { version = "0.58", features = [
   "Storage",
   "Storage_Streams",
   "Win32_Foundation",
+  "Win32_Storage_FileSystem",
   "Win32_System_Threading"
 ] }
 

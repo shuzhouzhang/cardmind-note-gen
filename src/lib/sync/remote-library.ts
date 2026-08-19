@@ -67,6 +67,7 @@ const STATIC_ASSET_CONTENT_TYPES: Record<string, string> = {
 
 export type RemoteLibraryOptions = {
   includeStaticAssets?: boolean
+  platform?: SyncPlatform
 }
 
 export type RemoteRepositoryScope = 'workspace' | 'data'
@@ -124,7 +125,7 @@ async function getFileTransferConcurrency(): Promise<number> {
 }
 
 async function getGitRepository(
-  platform: Exclude<SyncPlatform, 's3' | 'webdav' | 'cloudFolder'>,
+  platform: Exclude<SyncPlatform, 's3' | 'webdav' | 'cloudFolder' | 'selfHosted'>,
   scope: RemoteRepositoryScope,
 ) {
   return scope === 'data'
@@ -149,7 +150,7 @@ function normalizeGitEntries(value: unknown): GitRemoteEntry[] {
 }
 
 async function listGitRemoteFiles(
-  platform: Exclude<SyncPlatform, 's3' | 'webdav' | 'cloudFolder'>,
+  platform: Exclude<SyncPlatform, 's3' | 'webdav' | 'cloudFolder' | 'selfHosted'>,
   options: RemoteLibraryOptions
 ): Promise<RemoteLibraryFile[]> {
   const repo = await getSyncRepoName(platform)
@@ -255,7 +256,8 @@ async function listObjectStorageFiles(
 
 async function listRemoteLibraryFilesRaw(options: RemoteLibraryOptions): Promise<RemoteLibraryFile[]> {
   const store = await Store.load('store.json')
-  const platform = await getPlatform(store)
+  const platform = options.platform ?? await getPlatform(store)
+  if (platform === 'selfHosted') return []
   if (platform === 'cloudFolder') {
     const config = await store.get<CloudFolderConfig>('cloudFolderSyncConfig')
     if (!config?.path || !supportsCloudFolderWorkspace(config)) return []
@@ -559,7 +561,7 @@ export async function downloadRemoteBytes(
   }
 }
 
-async function getExistingRemoteSha(platform: Exclude<SyncPlatform, 's3' | 'webdav' | 'cloudFolder'>, path: string, repo: string) {
+async function getExistingRemoteSha(platform: Exclude<SyncPlatform, 's3' | 'webdav' | 'cloudFolder' | 'selfHosted'>, path: string, repo: string) {
   let entry: unknown
   switch (platform) {
     case 'github':

@@ -2,6 +2,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuSeparator, ContextMenuTrigg
 import { Input } from "@/components/ui/input";
 import useArticleStore, { DirTree } from "@/stores/article";
 import { BaseDirectory, exists, mkdir, rename } from "@tauri-apps/plugin-fs";
+import { moveSelfHostedWorkspacePath } from '@/lib/self-hosted-sync/files'
 import { Folder, FolderDot, FolderOpen, FolderOpenDot, LoaderCircle, Database, Sparkles } from "lucide-react"
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { toast } from "@/hooks/use-toast";
@@ -477,7 +478,9 @@ export function FolderItem({
       
       // 根据工作区类型执行重命名操作
       try {
-        if (workspace.isCustom) {
+        if (await moveSelfHostedWorkspacePath(path, targetRelativePath)) {
+          // Rust journal already completed the atomic move.
+        } else if (workspace.isCustom) {
           await rename(oldPathOptions.path, newPathOptions.path)
         } else {
           await rename(oldPathOptions.path, newPathOptions.path, {
@@ -492,7 +495,9 @@ export function FolderItem({
             targetPath: targetRelativePath,
           }])
         } catch (error) {
-          if (workspace.isCustom) {
+          if (await moveSelfHostedWorkspacePath(targetRelativePath, path)) {
+            // Rust journal already completed the rollback.
+          } else if (workspace.isCustom) {
             await rename(newPathOptions.path, oldPathOptions.path)
           } else {
             await rename(newPathOptions.path, oldPathOptions.path, {

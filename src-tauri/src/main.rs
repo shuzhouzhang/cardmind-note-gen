@@ -23,6 +23,9 @@ mod ocr_packages;
 mod printing;
 mod remote_skills;
 mod screenshot;
+mod self_hosted_crypto;
+mod self_hosted_files;
+mod self_hosted_security;
 mod skill_runtime;
 mod skills;
 mod storefront;
@@ -172,6 +175,29 @@ fn main() {
             set_web_clipper_enabled,
             set_web_clipper_ready,
             resolve_web_clipper_request,
+            self_hosted_crypto::self_hosted_generate_workspace_key,
+            self_hosted_crypto::self_hosted_generate_device_key_pair,
+            self_hosted_crypto::self_hosted_encrypt,
+            self_hosted_crypto::self_hosted_encrypt_bytes,
+            self_hosted_crypto::self_hosted_decrypt,
+            self_hosted_crypto::self_hosted_decrypt_packed,
+            self_hosted_crypto::self_hosted_decrypt_packed_bytes,
+            self_hosted_crypto::self_hosted_sha256,
+            self_hosted_crypto::self_hosted_derive_argon2id_key,
+            self_hosted_crypto::self_hosted_wrap_workspace_key,
+            self_hosted_crypto::self_hosted_unwrap_workspace_key,
+            self_hosted_security::self_hosted_secure_set,
+            self_hosted_security::self_hosted_secure_get,
+            self_hosted_security::self_hosted_secure_delete,
+            self_hosted_files::self_hosted_portable_path,
+            self_hosted_files::self_hosted_import_object_id,
+            self_hosted_files::self_hosted_atomic_write,
+            self_hosted_files::self_hosted_delete_file,
+            self_hosted_files::self_hosted_create_directory,
+            self_hosted_files::self_hosted_delete_directory,
+            self_hosted_files::self_hosted_move_path,
+            self_hosted_files::self_hosted_pending_file_journal,
+            self_hosted_files::self_hosted_recover_file_journal,
         ])
         // 应用设置 - 在所有插件和命令注册后
         .setup(app_setup::setup_app)

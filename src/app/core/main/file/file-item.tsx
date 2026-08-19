@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import useArticleStore, { DirTree } from "@/stores/article";
 import { BaseDirectory, exists, rename, writeTextFile } from "@tauri-apps/plugin-fs";
+import { moveSelfHostedWorkspacePath } from '@/lib/self-hosted-sync/files'
 import { Copy, Database, Download, File, FileCode, FileJson, FileText, FileUp, FolderOpen, ImageIcon, LoaderCircle, RefreshCwOff, Trash2 } from "lucide-react"
 import { useEffect, useRef, useState, useCallback } from "react";
 import { ask } from '@tauri-apps/plugin-dialog';
@@ -350,7 +351,7 @@ export function FileItem({
       try {
         // 获取当前主要备份方式
         const store = await Store.load('store.json');
-        const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder'>('primaryBackupMethod') || 'github';
+        const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder' | 'selfHosted'>('primaryBackupMethod') || 'github';
         if (backupMethod === 'cloudFolder') {
           setEntryLoading(currentPath, false)
           return
@@ -524,7 +525,9 @@ export function FileItem({
         
         // 根据工作区类型执行重命名操作
         try {
-          if (workspace.isCustom) {
+          if (await moveSelfHostedWorkspacePath(path, targetRelativePath)) {
+            // Rust journal already completed the atomic move.
+          } else if (workspace.isCustom) {
             await rename(oldPathOptions.path, newPathOptions.path)
           } else {
             await rename(oldPathOptions.path, newPathOptions.path, {
@@ -539,7 +542,9 @@ export function FileItem({
               targetPath: targetRelativePath,
             }])
           } catch (error) {
-            if (workspace.isCustom) {
+            if (await moveSelfHostedWorkspacePath(targetRelativePath, path)) {
+              // Rust journal already completed the rollback.
+            } else if (workspace.isCustom) {
               await rename(newPathOptions.path, oldPathOptions.path)
             } else {
               await rename(newPathOptions.path, oldPathOptions.path, {
