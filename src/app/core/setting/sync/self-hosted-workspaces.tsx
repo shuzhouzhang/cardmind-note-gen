@@ -370,7 +370,7 @@ export function SelfHostedWorkspaces({ profileId }: { profileId: string }) {
 
   return (
     <Accordion type="multiple" className="gap-4">
-      <AccordionItem value="workspaces" className="border-b-0">
+      <AccordionItem value="workspaces" className="not-last:border-b-0">
         <Card>
           <CardHeader>
             <AccordionTrigger className="p-0 hover:no-underline">
@@ -381,7 +381,7 @@ export function SelfHostedWorkspaces({ profileId }: { profileId: string }) {
             </AccordionTrigger>
           </CardHeader>
           <AccordionContent className="pb-0">
-            <CardContent className="flex flex-col gap-4">
+            <CardContent className="flex flex-col gap-4 pb-(--card-spacing)">
               <Field>
                 <FieldLabel>{t('currentWorkspaceLibrary')}</FieldLabel>
                 <Select
@@ -443,7 +443,7 @@ export function SelfHostedWorkspaces({ profileId }: { profileId: string }) {
       </AccordionItem>
 
       {selected ? (
-        <AccordionItem value="members" className="border-b-0">
+        <AccordionItem value="members" className="not-last:border-b-0">
           <Card>
             <CardHeader>
               <AccordionTrigger className="p-0 hover:no-underline">
@@ -487,7 +487,7 @@ export function SelfHostedWorkspaces({ profileId }: { profileId: string }) {
       ) : null}
 
       {pendingInvitations.length > 0 || selected?.capabilities.includes('member.invite') ? (
-        <AccordionItem value="invitations" className="border-b-0">
+        <AccordionItem value="invitations" className="not-last:border-b-0">
           <Card>
             <CardHeader>
               <AccordionTrigger className="p-0 hover:no-underline">
@@ -564,7 +564,7 @@ export function SelfHostedWorkspaces({ profileId }: { profileId: string }) {
         </AccordionItem>
       ) : null}
 
-      <AccordionItem value="conflicts" className="border-b-0">
+      <AccordionItem value="conflicts" className="not-last:border-b-0">
         <Card>
           <CardHeader>
             <AccordionTrigger className="p-0 hover:no-underline">

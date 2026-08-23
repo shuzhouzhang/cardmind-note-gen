@@ -87,6 +87,7 @@ const PLATFORM_LOGOS: Partial<Record<SyncPlatform, string>> = {
   gitee: '/sync-platforms/gitee.svg',
   gitlab: '/sync-platforms/gitlab.svg',
   gitea: '/sync-platforms/gitea.svg',
+  selfHosted: '/app-icon.png',
 }
 
 export default function SyncPage() {
@@ -233,10 +234,12 @@ export default function SyncPage() {
 
   const currentSyncState = getSyncState(platform)
   const isAutoSyncDisabled = currentSyncState !== SyncStateEnum.success
-  const currentPlatformInfo = SYNC_PLATFORM_INFO[platform]
-  const currentPlatformName = platform === 'cloudFolder'
-    ? t('settings.sync.cloudFolder.title')
-    : currentPlatformInfo.name
+  const getPlatformName = (targetPlatform: SyncPlatform) => {
+    if (targetPlatform === 'cloudFolder') return t('settings.sync.cloudFolder.title')
+    if (targetPlatform === 'selfHosted') return t('settings.sync.selfHosted.title')
+    return SYNC_PLATFORM_INFO[targetPlatform].name
+  }
+  const currentPlatformName = getPlatformName(platform)
 
   function handlePlatformChange(nextPlatform: SyncPlatform) {
     setPlatform(nextPlatform)
@@ -321,7 +324,6 @@ export default function SyncPage() {
           <CardContent>
             <ItemGroup className="gap-1">
               {SYNC_PLATFORMS.map((itemPlatform) => {
-                const platformInfo = SYNC_PLATFORM_INFO[itemPlatform]
                 const isCurrentPlatform = primaryBackupMethod === itemPlatform
                 const isSelectedPlatform = platform === itemPlatform
                 return (
@@ -343,9 +345,7 @@ export default function SyncPage() {
                       </ItemMedia>
                       <ItemContent>
                         <ItemTitle>
-                          {itemPlatform === 'cloudFolder'
-                            ? t('settings.sync.cloudFolder.title')
-                            : platformInfo.name}
+                          {getPlatformName(itemPlatform)}
                         </ItemTitle>
                       </ItemContent>
                       {isCurrentPlatform ? (
@@ -367,7 +367,17 @@ export default function SyncPage() {
               <div className="flex min-w-0 items-center gap-3">
                 <SyncPlatformIcon platform={platform} />
                 <div className="min-w-0 flex-1">
-                  <CardTitle>{currentPlatformName}</CardTitle>
+                  <CardTitle className="flex items-center gap-2">
+                    {currentPlatformName}
+                    {platform === 'selfHosted' ? (
+                      <Badge
+                        variant="outline"
+                        className="border-warning/40 bg-warning/10 text-warning-foreground"
+                      >
+                        {t('settings.sync.experimental')}
+                      </Badge>
+                    ) : null}
+                  </CardTitle>
                   <CardDescription>{t('settings.sync.platformDesc')}</CardDescription>
                 </div>
               </div>
@@ -511,7 +521,10 @@ function SyncPlatformIcon({
     >
       {logo ? (
         <Image
-          className="size-full object-contain"
+          className={cn(
+            'size-full object-contain',
+            platform === 'selfHosted' && 'rounded-[22%]',
+          )}
           src={logo}
           alt={`${platformInfo.name} logo`}
           width={small ? 24 : 32}

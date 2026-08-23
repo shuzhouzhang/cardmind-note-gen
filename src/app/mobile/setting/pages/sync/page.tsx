@@ -197,6 +197,7 @@ export default function SyncPage() {
   function getProviderLabel(platform: MobileSyncPlatform) {
     if (platform === 'iCloud') return t('settings.sync.iCloud.title')
     if (platform === 'oneDrive' || platform === 'cloudFolder') return t('settings.sync.oneDrive.title')
+    if (platform === 'selfHosted') return t('settings.sync.selfHosted.title')
     return SYNC_PLATFORM_INFO[platform].name
   }
 

@@ -16,7 +16,7 @@ export const SYNC_PLATFORM_INFO: Record<SyncPlatform, SyncPlatformType> = {
   s3: { platform: 's3', name: 'S3', icon: 's3' },
   webdav: { platform: 'webdav', name: 'WebDAV', icon: 'webdav' },
   cloudFolder: { platform: 'cloudFolder', name: 'OneDrive / iCloud', icon: 'cloudFolder' },
-  selfHosted: { platform: 'selfHosted', name: 'NoteGen Server', icon: 'selfHosted' },
+  selfHosted: { platform: 'selfHosted', name: 'Self-hosted', icon: 'selfHosted' },
 }
 
 export interface S3Config {

@@ -207,7 +207,8 @@ export function getBackupMethodStatus({
 
 export function getBackupProviderName(
   primaryBackupMethod: SyncProvider,
-  cloudFolderName = 'Cloud Drive'
+  cloudFolderName = 'Cloud Drive',
+  selfHostedName = 'Self-hosted',
 ) {
   switch (primaryBackupMethod) {
     case 'github':
@@ -225,7 +226,7 @@ export function getBackupProviderName(
     case 'cloudFolder':
       return cloudFolderName
     case 'selfHosted':
-      return 'NoteGen Server'
+      return selfHostedName
     default:
       return toTitleCase(primaryBackupMethod)
   }

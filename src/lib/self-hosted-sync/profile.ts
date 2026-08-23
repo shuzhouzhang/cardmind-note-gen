@@ -631,14 +631,14 @@ async function resolveServerConnection(value: string) {
     const client = new SelfHostedClient(normalized.url)
     try {
       const capabilities = await client.capabilities()
-      if (capabilities.service !== 'note-gen-server') throw new Error('该地址不是 NoteGen Server 同步 API')
+      if (capabilities.service !== 'note-gen-server') throw new Error('该地址不是自托管同步 API')
       return { normalized, client, capabilities }
     } catch (error) {
       lastError = error
     }
   }
   if (lastError instanceof Error) throw lastError
-  throw new Error('无法连接 NoteGen Server 同步 API')
+  throw new Error('无法连接自托管同步 API')
 }
 
 async function profileForServer(serverUrl: string) {

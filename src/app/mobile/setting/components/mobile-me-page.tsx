@@ -449,7 +449,11 @@ export function MobileMePage({
     const cloudFolderName = platform() === 'ios' && cloudFolderProvider !== 'oneDrive'
       ? tSync('iCloud.title')
       : tSync('oneDrive.title')
-    return getBackupProviderName(primaryBackupMethod, cloudFolderName)
+    return getBackupProviderName(
+      primaryBackupMethod,
+      cloudFolderName,
+      tSync('selfHosted.title'),
+    )
   }, [cloudFolderProvider, primaryBackupMethod, syncStatus, tMe, tSync])
 
   const profileCardName = useMemo(() => {

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Store } from '@tauri-apps/plugin-store'
 import { AlertTriangle, Loader2, LogIn, LogOut, Server } from 'lucide-react'
-import { useTranslations } from 'next-intl'
+import { useLocale, useTranslations } from 'next-intl'
 import { toast } from 'sonner'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { OpenBroswer } from '@/components/open-broswer'
 import { getDb } from '@/db'
 import { connectWithBrowser, connectWithPassword, disconnectProfile } from '@/lib/self-hosted-sync/profile'
 import { refreshSelfHostedSyncRuntime } from '@/lib/self-hosted-sync/lifecycle'
@@ -23,6 +24,9 @@ let serverUrlDraftWrite: Promise<void> = Promise.resolve()
 
 export function SelfHostedSync() {
   const t = useTranslations('settings.sync.selfHosted')
+  const locale = useLocale()
+  const websiteLocale = locale.toLocaleLowerCase().startsWith('zh') ? 'cn' : 'en'
+  const deploymentGuideUrl = `https://notegen.top/${websiteLocale}/self-hosted`
   const [serverUrl, setServerUrl] = useState('')
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
@@ -33,9 +37,18 @@ export function SelfHostedSync() {
   const [profileId, setProfileId] = useState<string | null>(null)
   const [reauthenticationRequired, setReauthenticationRequired] = useState(false)
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
+  const [experimentalAcknowledged, setExperimentalAcknowledged] = useState<boolean | null>(null)
   const { selfHostedConnected, setSelfHostedConnected } = useSyncStore()
 
   useEffect(() => {
+    void Store.load('store.json')
+      .then(store => store.get<boolean>('selfHostedExperimentalAcknowledged'))
+      .then(acknowledged => setExperimentalAcknowledged(acknowledged === true))
+      .catch(() => setExperimentalAcknowledged(false))
+  }, [])
+
+  useEffect(() => {
+    if (experimentalAcknowledged !== true) return
     const handleProfileStateChange = () => {
       setProfileId(null)
       setReauthenticationRequired(true)
@@ -86,7 +99,7 @@ export function SelfHostedSync() {
       toast.error(error instanceof Error ? error.message : t('operationFailed'))
     })
     return () => window.removeEventListener('self-hosted-profile-state-changed', handleProfileStateChange)
-  }, [setSelfHostedConnected, t])
+  }, [experimentalAcknowledged, setSelfHostedConnected, t])
 
   function updateServerUrl(value: string) {
     setServerUrl(value)
@@ -143,12 +156,70 @@ export function SelfHostedSync() {
     toast.success(t('disconnectedToast'))
   }
 
+  async function acknowledgeExperimentalRisk() {
+    try {
+      const store = await Store.load('store.json')
+      await store.set('selfHostedExperimentalAcknowledged', true)
+      await store.save()
+      setExperimentalAcknowledged(true)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('operationFailed'))
+    }
+  }
+
+  if (experimentalAcknowledged === null) {
+    return (
+      <Card>
+        <CardContent className="flex min-h-32 items-center justify-center">
+          <Loader2 className="animate-spin text-muted-foreground" />
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (!experimentalAcknowledged) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('experimentalWarningTitle')}</CardTitle>
+          <CardDescription>{t('experimentalWarningDescription')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Alert variant="warning">
+            <AlertTriangle />
+            <AlertTitle>{t('experimentalBackupTitle')}</AlertTitle>
+            <AlertDescription className="flex flex-col items-start gap-2">
+              <span>{t('experimentalBackupDescription')}</span>
+              <OpenBroswer
+                url={deploymentGuideUrl}
+                title={t('deploymentGuide')}
+                className="text-warning-foreground underline underline-offset-4"
+              />
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+        <CardFooter>
+          <Button onClick={() => void acknowledgeExperimentalRisk()}>
+            {t('experimentalAcknowledge')}
+          </Button>
+        </CardFooter>
+      </Card>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <Card>
         <CardHeader>
           <CardTitle>{t('connectionTitle')}</CardTitle>
-          <CardDescription>{t('connectionDescription')}</CardDescription>
+          <CardDescription className="flex flex-col items-start gap-1">
+            <span>{t('connectionDescription')}</span>
+            <OpenBroswer
+              url={deploymentGuideUrl}
+              title={t('deploymentGuide')}
+              className="text-primary underline underline-offset-4"
+            />
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <FieldGroup>
