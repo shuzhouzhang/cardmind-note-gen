@@ -6,4 +6,4 @@
  * checked-in protocol facade remains the compatibility boundary while the
  * generated paths type is refreshed during protocol freeze.
  */
-export interface paths {}
+export type paths = Record<string, never>

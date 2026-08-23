@@ -42,6 +42,7 @@ export function FooterBar({
 }: FooterBarProps) {
   const isMobile = isMobileDevice()
   const showEditorStats = useSettingStore((state) => state.showEditorStats)
+  const primaryBackupMethod = useSettingStore((state) => state.primaryBackupMethod)
   const tSourceMode = useTranslations('settings.editor.sourceMode')
   if (isMobile) {
     return (
@@ -64,15 +65,19 @@ export function FooterBar({
               {viewMode === 'source' ? <Eye /> : <Code2 />}
             </Button>
           ) : null}
-          <HistorySheet editor={editor} prepareExternalAction={prepareExternalAction} onMarkdownChange={onMarkdownChange} />
-          <SyncButton getMarkdown={getMarkdown} prepareExternalAction={prepareExternalAction} />
-          <PullButton
-            editor={editor}
-            markdown={sourceMarkdown}
-            getMarkdown={getMarkdown}
-            prepareExternalAction={prepareExternalAction}
-            onMarkdownChange={onMarkdownChange}
-          />
+          {primaryBackupMethod !== 'selfHosted' ? (
+            <>
+              <HistorySheet editor={editor} prepareExternalAction={prepareExternalAction} onMarkdownChange={onMarkdownChange} />
+              <SyncButton getMarkdown={getMarkdown} prepareExternalAction={prepareExternalAction} />
+              <PullButton
+                editor={editor}
+                markdown={sourceMarkdown}
+                getMarkdown={getMarkdown}
+                prepareExternalAction={prepareExternalAction}
+                onMarkdownChange={onMarkdownChange}
+              />
+            </>
+          ) : null}
         </div>
       </div>
     )

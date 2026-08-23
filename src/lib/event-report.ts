@@ -117,8 +117,10 @@ async function trackAnalyticsEvent(name: EventType): Promise<boolean> {
     }
 
     return true
-  } catch (error) {
-    console.error('Failed to report analytics event:', error)
+  } catch {
+    if (process.env.NODE_ENV === 'development') {
+      console.debug(`[analytics] skipped ${name}: analytics service unavailable`)
+    }
     return false
   }
 }

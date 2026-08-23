@@ -102,6 +102,7 @@ export const ALWAYS_SYNC_EXCLUDED_FIELDS: string[] = [
   'syncQueue',
   'lastAppliedRemoteRev',
   'deviceId',
+  'selfHostedDeviceId',
   'autoDataSyncDirtyDomains',
   'autoDataSyncLastLocalUploadMetaUpdatedAtMs',
   'autoDataSyncLastAppliedRemoteMetaUpdatedAtMs',

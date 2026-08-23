@@ -327,7 +327,7 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: false
           prerelease: false
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
 
       - name: Verify macOS bundle architectures
         if: matrix.targetArch

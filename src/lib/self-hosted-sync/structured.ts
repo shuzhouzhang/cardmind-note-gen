@@ -61,6 +61,9 @@ export async function applyStructuredPayload(
   const config = DOMAIN_CONFIG[typedDomain]
   const database = await getDb()
   const row = { ...payload.value }
+  if (typedDomain === 'mark' && (row.sourceId === null || row.sourceId === undefined)) {
+    row.sourceId = String(payload.localKey ?? objectId)
+  }
   const references = isRecord(payload.references) ? payload.references : {}
   if ('tagId' in row && typeof references.tag === 'string') {
     row.tagId = await mappedNumericId(workspaceId, references.tag, 'tag')
@@ -78,11 +81,24 @@ export async function applyStructuredPayload(
 
   const existing = await mappingLocalKey(workspaceId, objectId)
   let localKey: string | number
-  if (config.numeric) {
+  let mappingKey: string
+  if (typedDomain === 'mark') {
+    const stableKey = String(row.sourceId ?? payload.localKey ?? existing ?? objectId)
+    const matches = await database.select<Array<{ id: number }>>(
+      `select id from marks where sourceId = $1 or cast(id as text) = $1 limit 1`,
+      [stableKey]
+    )
+    localKey = matches[0]?.id ?? await nextNumericId(config.table, config.key)
+    mappingKey = stableKey
+    row.id = localKey
+    row.sourceId = stableKey
+  } else if (config.numeric) {
     localKey = existing ? Number(existing) : await nextNumericId(config.table, config.key)
+    mappingKey = String(localKey)
     row[config.key] = localKey
   } else {
     localKey = String(row[config.key] ?? payload.localKey ?? objectId)
+    mappingKey = String(localKey)
     row[config.key] = localKey
   }
   const columns = [config.key, ...config.columns.filter(column => column !== config.key)]
@@ -97,23 +113,38 @@ export async function applyStructuredPayload(
       columns.map(column => row[column] ?? null)
     )
   })
-  await upsertMapping(workspaceId, objectId, kind, `${domain}:${localKey}`)
+  await upsertMapping(workspaceId, objectId, kind, `${domain}:${mappingKey}`)
 }
 
 export async function deleteStructuredObject(workspaceId: string, objectId: string) {
-  const mapping = await mapping(workspaceId, objectId)
-  if (!mapping || mapping.relativePath) return false
-  const separator = mapping.localIdentity.indexOf(':')
+  const objectMapping = await mapping(workspaceId, objectId)
+  if (!objectMapping || objectMapping.relativePath) return false
+  const separator = objectMapping.localIdentity.indexOf(':')
   if (separator < 1) return false
-  const domain = mapping.localIdentity.slice(0, separator)
+  const domain = objectMapping.localIdentity.slice(0, separator)
   if (!(domain in DOMAIN_CONFIG)) return false
   const config = DOMAIN_CONFIG[domain as StructuredDomain]
-  const localKey = mapping.localIdentity.slice(separator + 1)
+  const localKey = objectMapping.localIdentity.slice(separator + 1)
   const database = await getDb()
-  await suppressSyncTriggers(() => database.execute(
-    `delete from ${config.table} where ${config.key} = $1`,
-    [localKey]
-  ).then(() => undefined))
+  await suppressSyncTriggers(() => {
+    if (domain === 'mark') {
+      return database.execute(
+        `update marks set deleted = 1, createdAt = $1
+         where sourceId = $2 or cast(id as text) = $2`,
+        [Date.now(), localKey]
+      ).then(() => undefined)
+    }
+    if (domain === 'canvas') {
+      return database.execute(
+        `update canvases set deletedAt = $1, updatedAt = $1 where id = $2`,
+        [Date.now(), localKey]
+      ).then(() => undefined)
+    }
+    return database.execute(
+      `delete from ${config.table} where ${config.key} = $1`,
+      [localKey]
+    ).then(() => undefined)
+  })
   return true
 }
 

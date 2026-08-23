@@ -32,7 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "targets": "all",
     "resources": [
       "icons",
@@ -77,8 +77,7 @@
       "endpoints": [
         "https://download.notegen.top/updates/latest.json",
         "https://github.com/codexu/note-gen/releases/latest/download/latest.json"
-      ],
-      "createUpdaterArtifacts": true
+      ]
     }
   }
 }

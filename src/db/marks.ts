@@ -161,9 +161,10 @@ export async function updateMarkTag(id: number, tagId: number) {
 export async function insertMark(mark: Partial<Mark>) {
   const db = await getDb();
   const createdAt = Date.now();
+  const sourceId = mark.sourceId ?? crypto.randomUUID()
   const result = await db.execute(
     "insert into marks (tagId, type, content, url, desc, createdAt, deleted, sourceId) values ($1, $2, $3, $4, $5, $6, $7, $8)",
-    [mark.tagId, mark.type, mark.content, mark.url, mark.desc, createdAt, 0, mark.sourceId ?? null]
+    [mark.tagId, mark.type, mark.content, mark.url, mark.desc, createdAt, 0, sourceId]
   )
 
   const localImagePath = mark.type && mark.url
@@ -272,6 +273,7 @@ export async function deleteAllMarks() {
   const db = await getDb();
   const marks = await getAllMarks()
   const result = await db.execute("delete from marks")
+  enqueueRecordsAutoSync('mark:delete-all')
   await Promise.all(marks.map(mark => removeMarkKnowledgeIndex(mark.id)))
   return result
 }
@@ -283,23 +285,26 @@ export async function insertMarks(marks: Partial<Mark>[]) {
       if (mark.id) {
         const exists = await db.select<Mark[]>(`select ${MARK_COLUMNS} from marks where id = $1`, [mark.id])
         if (exists.length > 0) {
+          const sourceId = mark.sourceId ?? exists[0]!.sourceId ?? crypto.randomUUID()
           await db.execute(
             "update marks set tagId = $1, type = $2, content = $3, url = $4, desc = $5, createdAt = $6, deleted = $7, sourceId = $8 where id = $9",
-            [mark.tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, mark.sourceId ?? null, mark.id]
+            [mark.tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, sourceId, mark.id]
           );
           continue
         }
 
+        const sourceId = mark.sourceId ?? crypto.randomUUID()
         await db.execute(
           "insert into marks (id, tagId, type, content, url, desc, createdAt, deleted, sourceId) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-          [mark.id, mark.tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, mark.sourceId ?? null]
+          [mark.id, mark.tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, sourceId]
         );
         continue
       }
 
+      const sourceId = mark.sourceId ?? crypto.randomUUID()
       await db.execute(
         "insert into marks (tagId, type, content, url, desc, createdAt, deleted, sourceId) values ($1, $2, $3, $4, $5, $6, $7, $8)",
-        [mark.tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, mark.sourceId ?? null]
+        [mark.tagId, mark.type, mark.content, mark.url, mark.desc, mark.createdAt, mark.deleted, sourceId]
       );
     }
     enqueueRecordsAutoSync('mark:bulk-insert')

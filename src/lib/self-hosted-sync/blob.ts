@@ -117,6 +117,10 @@ function base64UrlToBytes(value: string) {
   return Uint8Array.from(atob(padded), character => character.charCodeAt(0))
 }
 
+export function base64UrlByteLength(value: string) {
+  return base64UrlToBytes(value).byteLength
+}
+
 export async function hashBytes(value: Uint8Array) {
   const copy = new Uint8Array(value.byteLength)
   copy.set(value)

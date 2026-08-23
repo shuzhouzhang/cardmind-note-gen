@@ -48,7 +48,7 @@ interface Events {
     deletions?: number;
   };
   'sync-success': unknown;
-  'sync-content-updated': { path: string; content: string };
+  'sync-content-updated': { path: string; content: string; workspaceRoot?: string };
   'sync-push-started': { path: string };
   'sync-push-completed': { path: string; success: boolean; sha?: string };
   'sync-sha-mismatch': {

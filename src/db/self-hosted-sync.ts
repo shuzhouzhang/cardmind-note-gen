@@ -211,7 +211,12 @@ const SYNC_TABLES = `
 
 const TRIGGER_DOMAINS = [
   { table: 'tags', domain: 'tag', key: 'cast(NEW.id as text)', oldKey: 'cast(OLD.id as text)' },
-  { table: 'marks', domain: 'mark', key: "coalesce(NEW.sourceId, cast(NEW.id as text))", oldKey: "coalesce(OLD.sourceId, cast(OLD.id as text))" },
+  {
+    table: 'marks', domain: 'mark',
+    key: "coalesce(NEW.sourceId, cast(NEW.id as text))",
+    oldKey: "coalesce(OLD.sourceId, cast(OLD.id as text))",
+    updateOperation: "case when NEW.deleted = 1 then 'delete' else 'upsert' end",
+  },
   { table: 'conversations', domain: 'conversation', key: "coalesce(NEW.syncId, cast(NEW.id as text))", oldKey: "coalesce(OLD.syncId, cast(OLD.id as text))" },
   { table: 'chats', domain: 'message', key: "coalesce(NEW.syncId, cast(NEW.id as text))", oldKey: "coalesce(OLD.syncId, cast(OLD.id as text))" },
   { table: 'memories', domain: 'memory', key: 'NEW.id', oldKey: 'OLD.id' },
@@ -222,6 +227,14 @@ export async function initSelfHostedSyncDb() {
   for (const statement of SYNC_TABLES.split(';').map(value => value.trim()).filter(Boolean)) {
     await database.execute(statement)
   }
+  await database.execute(
+    `create index if not exists idx_self_hosted_local_changes_pending
+     on self_hosted_local_changes(state, workspace_id, domain, local_key, id)`
+  )
+  await database.execute(
+    `create index if not exists idx_self_hosted_outbox_ready
+     on self_hosted_outbox(workspace_id, state, next_attempt_at, created_at)`
+  )
   const localChangeColumns = await database.select<Array<{ name: string }>>(
     'pragma table_info(self_hosted_local_changes)'
   )
@@ -255,7 +268,13 @@ export async function initSelfHostedSyncDb() {
     await database.execute(`drop trigger if exists self_hosted_notes_${operation}`)
   }
 
+  await migrateUnsyncedMarkIdentities(database)
+
   for (const trigger of TRIGGER_DOMAINS) {
+    const updateOperation = 'updateOperation' in trigger ? trigger.updateOperation : "'upsert'"
+    for (const operation of ['insert', 'update', 'delete']) {
+      await database.execute(`drop trigger if exists self_hosted_${trigger.table}_${operation}`)
+    }
     await database.execute(`
       create trigger if not exists self_hosted_${trigger.table}_insert
       after insert on ${trigger.table}
@@ -271,7 +290,7 @@ export async function initSelfHostedSyncDb() {
       when (select suppress_triggers from self_hosted_sync_context where id = 1) = 0
       begin
         insert into self_hosted_local_changes(domain, local_key, operation, reason, created_at, updated_at)
-        values ('${trigger.domain}', ${trigger.key}, 'upsert', '${trigger.table}:update', cast((julianday('now') - 2440587.5) * 86400000 as integer), cast((julianday('now') - 2440587.5) * 86400000 as integer));
+        values ('${trigger.domain}', ${trigger.key}, ${updateOperation}, '${trigger.table}:update', cast((julianday('now') - 2440587.5) * 86400000 as integer), cast((julianday('now') - 2440587.5) * 86400000 as integer));
       end
     `)
     await database.execute(`
@@ -286,12 +305,45 @@ export async function initSelfHostedSyncDb() {
   }
 }
 
-export async function enqueueSelfHostedSettingChange(_settingKey: string) {
+async function migrateUnsyncedMarkIdentities(database: Awaited<ReturnType<typeof getDb>>) {
+  const marks = await database.select<Array<{ id: number }>>(
+    `select m.id from marks m
+     where m.deleted = 0 and m.sourceId is null
+       and exists (
+         select 1 from self_hosted_local_changes c
+         where c.domain = 'mark' and c.local_key = cast(m.id as text)
+           and c.state = 'pending'
+       )
+       and not exists (
+         select 1 from self_hosted_object_mappings mapping
+         where mapping.kind = 'mark'
+           and mapping.local_identity = 'mark:' || cast(m.id as text)
+           and mapping.deleted_at is null
+       )`,
+  )
+  if (marks.length === 0) return
+  await database.execute('update self_hosted_sync_context set suppress_triggers = 1 where id = 1')
+  try {
+    for (const mark of marks) {
+      const sourceId = crypto.randomUUID()
+      await database.execute('update marks set sourceId = $1 where id = $2', [sourceId, mark.id])
+      await database.execute(
+        `update self_hosted_local_changes set local_key = $1, updated_at = $2
+         where domain = 'mark' and local_key = $3 and state = 'pending'`,
+        [sourceId, Date.now(), String(mark.id)],
+      )
+    }
+  } finally {
+    await database.execute('update self_hosted_sync_context set suppress_triggers = 0 where id = 1')
+  }
+}
+
+export async function enqueueSelfHostedSettingChange(settingKey: string) {
   const database = await getDb()
   const now = Date.now()
   await database.execute(
     `insert into self_hosted_local_changes(domain, local_key, operation, reason, created_at, updated_at)
-     values ('setting', $1, 'upsert', 'setting:changed', $2, $2)`,
-    ['all', now]
+     values ('setting', 'all', 'upsert', $1, $2, $2)`,
+    [`setting:${settingKey}`, now]
   )
 }

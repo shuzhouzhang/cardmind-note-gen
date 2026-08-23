@@ -153,14 +153,14 @@ pub async fn self_hosted_delete_file(
         expected_hash.as_deref(),
     )
     .await?;
-    match trash::delete(&target) {
+    match remove_synchronized_file(&target) {
         Ok(()) => {
             update_journal(&mut connection, journal_id, "committed", None).await?;
             Ok(true)
         }
         Err(error) => {
             let _ = update_journal(&mut connection, journal_id, "failed", Some("file_delete_failed")).await;
-            Err(format!("Failed to move synchronized file to trash: {error}"))
+            Err(error)
         }
     }
 }
@@ -219,16 +219,40 @@ pub async fn self_hosted_delete_directory(
         &mut connection, &workspace_id, "rmdir", object_id.as_deref(),
         Some(&target), None, None, None,
     ).await?;
-    match trash::delete(&target) {
+    match remove_synchronized_directory(&target) {
         Ok(()) => {
             update_journal(&mut connection, journal_id, "committed", None).await?;
             Ok(true)
         }
         Err(error) => {
             let _ = update_journal(&mut connection, journal_id, "failed", Some("directory_delete_failed")).await;
-            Err(format!("Failed to move synchronized directory to trash: {error}"))
+            Err(error)
         }
     }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn remove_synchronized_file(path: &Path) -> Result<(), String> {
+    trash::delete(path)
+        .map_err(|error| format!("Failed to move synchronized file to trash: {error}"))
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn remove_synchronized_file(path: &Path) -> Result<(), String> {
+    fs::remove_file(path)
+        .map_err(|error| format!("Failed to remove synchronized file: {error}"))
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn remove_synchronized_directory(path: &Path) -> Result<(), String> {
+    trash::delete(path)
+        .map_err(|error| format!("Failed to move synchronized directory to trash: {error}"))
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn remove_synchronized_directory(path: &Path) -> Result<(), String> {
+    fs::remove_dir_all(path)
+        .map_err(|error| format!("Failed to remove synchronized directory: {error}"))
 }
 
 #[tauri::command]

@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 
 import { MobileMePage } from "@/app/mobile/setting/components/mobile-me-page"
+import { getMobilePlatform } from "@/app/mobile/components/mobile-update-prompt"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { ShineBorder } from "@/components/ui/shine-border"
@@ -17,6 +18,8 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import useSyncStore from "@/stores/sync"
+import useSettingStore from "@/stores/setting"
+import useUpdateStore from "@/stores/update"
 import { cn } from "@/lib/utils"
 import emitter from "@/lib/emitter"
 import {
@@ -29,7 +32,7 @@ const MOBILE_ME_RESTORE_OPEN_KEY = "mobile-me-restore-open"
 const MOBILE_ME_RESTORE_INSTANT_KEY = "mobile-me-restore-open-instant"
 const SYNC_INDICATOR_HIDE_DELAY = 500
 
-export function MobileMeSheet({ indicator = false }: { indicator?: boolean }) {
+export function MobileMeSheet() {
   const reduceMotion = useReducedMotion()
   const tNavigation = useTranslations("navigation")
   const [open, setOpen] = useState(false)
@@ -39,6 +42,12 @@ export function MobileMeSheet({ indicator = false }: { indicator?: boolean }) {
   )
   const [syncingFiles, setSyncingFiles] = useState<Set<string>>(() => new Set())
   const [showSyncIndicator, setShowSyncIndicator] = useState(false)
+  const primaryBackupMethod = useSettingStore(state => state.primaryBackupMethod)
+  const autoRecordSyncEnabled = useSettingStore(state => state.autoRecordSyncEnabled)
+  const autoConversationSyncEnabled = useSettingStore(state => state.autoConversationSyncEnabled)
+  const mobileUpdate = useUpdateStore(state => state.mobileUpdate)
+  const [currentPlatform] = useState(() => getMobilePlatform())
+  const hasMobileUpdate = Boolean(mobileUpdate && currentPlatform)
   const swipeSurfaceRef = useRef<HTMLDivElement>(null)
   const surfaceX = useMotionValue(0)
   const avatarUrl = useSyncStore(state =>
@@ -77,12 +86,36 @@ export function MobileMeSheet({ indicator = false }: { indicator?: boolean }) {
   }, [])
 
   const syncing = useMemo(() => (
-    syncingFiles.size > 0
-    || autoDataSyncState.phase === 'uploading'
-    || autoDataSyncState.phase === 'downloading'
-  ), [autoDataSyncState.phase, syncingFiles])
+    primaryBackupMethod !== 'selfHosted'
+    && (syncingFiles.size > 0
+      || autoDataSyncState.phase === 'uploading'
+      || autoDataSyncState.phase === 'downloading')
+  ), [autoDataSyncState.phase, primaryBackupMethod, syncingFiles])
+  const indicator = useMemo(() => {
+    if (hasMobileUpdate) return true
+    if (primaryBackupMethod === 'selfHosted') return false
+    const recordProblem = autoRecordSyncEnabled
+      && (autoDataSyncState.phase === 'waiting_provider'
+        || (autoDataSyncState.affectedDomains.includes('records')
+          && (autoDataSyncState.phase === 'failed' || autoDataSyncState.phase === 'conflict')))
+    const conversationProblem = autoConversationSyncEnabled
+      && autoDataSyncState.affectedDomains.includes('conversations')
+      && (autoDataSyncState.phase === 'failed' || autoDataSyncState.phase === 'conflict')
+    return recordProblem || conversationProblem
+  }, [
+    autoConversationSyncEnabled,
+    autoDataSyncState.affectedDomains,
+    autoDataSyncState.phase,
+    autoRecordSyncEnabled,
+    hasMobileUpdate,
+    primaryBackupMethod,
+  ])
 
   useEffect(() => {
+    if (primaryBackupMethod === 'selfHosted') {
+      setShowSyncIndicator(false)
+      return
+    }
     if (syncing) {
       setShowSyncIndicator(true)
       return
@@ -93,7 +126,7 @@ export function MobileMeSheet({ indicator = false }: { indicator?: boolean }) {
       SYNC_INDICATOR_HIDE_DELAY,
     )
     return () => window.clearTimeout(timer)
-  }, [syncing])
+  }, [primaryBackupMethod, syncing])
 
   useLayoutEffect(() => {
     if (window.sessionStorage.getItem(MOBILE_ME_RESTORE_OPEN_KEY) !== "true") {

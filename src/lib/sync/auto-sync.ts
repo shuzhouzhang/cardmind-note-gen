@@ -1030,9 +1030,25 @@ export async function hasNetworkConnection(): Promise<boolean> {
         const { connectedProfileId } = await import('@/lib/self-hosted-sync/workspaces')
         const profileId = await connectedProfileId()
         if (!profileId) return false
-        const { client } = await (await import('@/lib/self-hosted-sync/profile')).authenticatedClient(profileId)
-        await client.capabilities()
-        return true
+        const {
+          authenticatedClient,
+          getProfile,
+          isSelfHostedAuthenticationError,
+        } = await import('@/lib/self-hosted-sync/profile')
+        try {
+          const { client } = await authenticatedClient(profileId)
+          await client.capabilities()
+          return true
+        } catch (error) {
+          if (
+            isSelfHostedAuthenticationError(error)
+            || (await getProfile(profileId))?.state === 'reauthentication-required'
+          ) {
+            console.info('[self-hosted-sync] Network check requires reauthentication', { profileId })
+            return false
+          }
+          throw error
+        }
       }
       case 's3': {
         clearTimeout(timeoutId)

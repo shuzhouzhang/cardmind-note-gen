@@ -1562,3 +1562,36 @@
   fill: hsl(var(--muted)) !important;
   stroke: hsl(var(--border)) !important;
 }
+
+.self-hosted-remote-cursor {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 1.25em;
+  margin-left: -1px;
+  border-left: 2px solid;
+  pointer-events: none;
+  vertical-align: text-bottom;
+  animation: self-hosted-cursor-blink 1.2s steps(2, start) infinite;
+}
+
+.self-hosted-remote-cursor-label {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: -2px;
+  max-width: 8rem;
+  overflow: hidden;
+  border-radius: 4px 4px 4px 0;
+  padding: 1px 5px;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes self-hosted-cursor-blink {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0.38; }
+}

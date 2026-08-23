@@ -1,21 +1,27 @@
 import { invoke } from '@tauri-apps/api/core'
-import { readDir, readFile, readTextFile } from '@tauri-apps/plugin-fs'
-import { join } from '@tauri-apps/api/path'
+import { mkdir, readDir, readFile, readTextFile } from '@tauri-apps/plugin-fs'
+import { appDataDir, join } from '@tauri-apps/api/path'
 import { Store } from '@tauri-apps/plugin-store'
 import { getDb } from '@/db'
 import { decryptText } from './crypto'
+import { SelfHostedApiError } from './client'
 import { authenticatedClient, secureSet, workspaceSecretKey } from './profile'
 import { enqueueAssetSnapshot, enqueueFileSnapshot, enqueueFolderSnapshot } from './outbox'
 import { bytesToBase64Url } from './blob'
 import type { WorkspaceSummary } from './protocol'
+import { getDefaultArticleAbsolutePath, getWorkspacePath } from '@/lib/workspace'
 
 interface EncryptedName {
   nonce: string
   ciphertext: string
 }
 
+const DEFAULT_LIBRARY_IDEMPOTENCY_KEY = 'notegen.default-library.v1'
+const LEGACY_DEFAULT_LIBRARY_NAME = '我的资料库'
+
 export interface SelfHostedLibrary extends WorkspaceSummary {
   name: string
+  default: boolean
   localRoot: string | null
   bindingState: string | null
   accessMode: 'read-write' | 'read-only'
@@ -23,7 +29,14 @@ export interface SelfHostedLibrary extends WorkspaceSummary {
 
 export async function listLibraries(profileId: string): Promise<SelfHostedLibrary[]> {
   const { client } = await authenticatedClient(profileId)
-  const workspaces = (await client.workspaces()).filter(workspace => workspace.type === 'library')
+  const [workspaceRows, defaultCreation] = await Promise.all([
+    client.workspaces(),
+    client.workspaceCreationRequest(DEFAULT_LIBRARY_IDEMPOTENCY_KEY).catch(error => {
+      if (error instanceof SelfHostedApiError && error.status === 404) return null
+      throw error
+    }),
+  ])
+  const workspaces = workspaceRows.filter(workspace => workspace.type === 'library')
   const database = await getDb()
   const bindings = await database.select<Array<{
     workspaceId: string
@@ -37,12 +50,14 @@ export async function listLibraries(profileId: string): Promise<SelfHostedLibrar
     [profileId]
   )
   return Promise.all(workspaces.map(async workspace => {
-    const key = await ensureManagedWorkspaceKey(profileId, workspace.id, workspace.latestKeyVersion)
+    const key = await loadManagedWorkspaceKey(profileId, workspace.id, workspace.latestKeyVersion)
     const encrypted = JSON.parse(workspace.nameCiphertext) as EncryptedName
     const binding = bindings.find(item => item.workspaceId === workspace.id)
+    const decryptedName = await decryptText(key, encrypted.nonce, encrypted.ciphertext, 'workspace-name:v1')
     return {
       ...workspace,
-      name: await decryptText(key, encrypted.nonce, encrypted.ciphertext, 'workspace-name:v1'),
+      name: decryptedName === LEGACY_DEFAULT_LIBRARY_NAME ? '我的工作区' : decryptedName,
+      default: workspace.id === defaultCreation?.id,
       localRoot: binding?.localRoot ?? null,
       bindingState: binding?.bindingState ?? null,
       accessMode: binding?.accessMode ?? (workspace.capabilities.includes('content.update') ? 'read-write' : 'read-only'),
@@ -50,7 +65,20 @@ export async function listLibraries(profileId: string): Promise<SelfHostedLibrar
   }))
 }
 
-export async function createLibrary(profileId: string, name: string, localRoot: string) {
+export async function createLibrary(
+  profileId: string,
+  name: string,
+  localRoot: string | null,
+  idempotencyKey = crypto.randomUUID(),
+) {
+  const workspaceId = await createRemoteLibrary(profileId, name, idempotencyKey)
+  const resolvedLocalRoot = localRoot ?? await getManagedLibraryWorkspacePath(workspaceId)
+  if (localRoot === null) await mkdir(resolvedLocalRoot, { recursive: true })
+  await bindLibrary(profileId, workspaceId, resolvedLocalRoot, localRoot !== null)
+  return workspaceId
+}
+
+async function createRemoteLibrary(profileId: string, name: string, idempotencyKey: string) {
   const { client } = await authenticatedClient(profileId)
   const key = await invoke<string>('self_hosted_generate_workspace_key')
   const encryptedName = await invoke<EncryptedName>('self_hosted_encrypt', {
@@ -61,11 +89,136 @@ export async function createLibrary(profileId: string, name: string, localRoot: 
   const workspace = await client.createLibrary(
     JSON.stringify(encryptedName),
     key,
-    crypto.randomUUID(),
+    idempotencyKey,
   )
-  await secureSet(workspaceSecretKey(workspace.id, 1), key)
-  await bindLibrary(profileId, workspace.id, localRoot, true)
+  if (workspace.created) await secureSet(workspaceSecretKey(workspace.id, 1), key)
   return workspace.id
+}
+
+export async function getManagedLibraryWorkspacePath(workspaceId: string) {
+  return join(await appDataDir(), 'workspaces', 'self-hosted', workspaceId)
+}
+
+export async function ensureLibraryLocalWorkspace(profileId: string, workspaceId: string) {
+  const database = await getDb()
+  const bindings = await database.select<Array<{ localRoot: string | null; bindingState: string }>>(
+    `select local_root as localRoot, binding_state as bindingState
+     from self_hosted_workspace_bindings
+     where profile_id = $1 and workspace_id = $2 limit 1`,
+    [profileId, workspaceId]
+  )
+  const existing = bindings[0]
+  if (existing?.bindingState === 'bound' && existing.localRoot) {
+    await mkdir(existing.localRoot, { recursive: true })
+    return existing.localRoot
+  }
+
+  const localRoot = await getManagedLibraryWorkspacePath(workspaceId)
+  await mkdir(localRoot, { recursive: true })
+  await bindLibrary(profileId, workspaceId, localRoot, false)
+  return localRoot
+}
+
+const defaultLibraryTasks = new Map<string, Promise<string | null>>()
+
+export function ensureDefaultLibraryForCurrentWorkspace(profileId: string, defaultName: string) {
+  const current = defaultLibraryTasks.get(profileId)
+  if (current) return current
+  const task = ensureDefaultLibrary(profileId, defaultName).finally(() => {
+    defaultLibraryTasks.delete(profileId)
+  })
+  defaultLibraryTasks.set(profileId, task)
+  return task
+}
+
+async function ensureDefaultLibrary(profileId: string, defaultName: string) {
+  const workspaceLocation = await getWorkspacePath()
+  const defaultLocalRoot = await getDefaultArticleAbsolutePath('')
+  // "Default" is a logical workspace identity, not a filesystem path. Every
+  // platform resolves it to its own app-data directory.
+  const isDefaultLocalWorkspace = !workspaceLocation.isCustom
+    || normalizeLocalRoot(workspaceLocation.path) === normalizeLocalRoot(defaultLocalRoot)
+    || normalizeLocalRoot(workspaceLocation.path) === 'article'
+  const localRoot = isDefaultLocalWorkspace
+    ? defaultLocalRoot
+    : workspaceLocation.path
+  console.info('[self-hosted-sync] workspace.ensure-started', { profileId, localRoot })
+  const database = await getDb()
+  console.info('[self-hosted-sync] workspace.database-ready', { profileId })
+  const existing = await database.select<Array<{ workspaceId: string }>>(
+    `select workspace_id as workspaceId from self_hosted_workspace_bindings
+     where profile_id = $1 and workspace_type = 'library'
+       and local_root = $2
+       and binding_state in ('bound', 'bootstrapping', 'epoch-changed') limit 1`,
+    [profileId, localRoot]
+  )
+  console.info('[self-hosted-sync] workspace.binding-checked', {
+    profileId, existing: existing.length > 0,
+  })
+  if (isDefaultLocalWorkspace) {
+    const canonicalWorkspaceId = await createRemoteLibrary(
+      profileId,
+      defaultName,
+      DEFAULT_LIBRARY_IDEMPOTENCY_KEY,
+    )
+    if (existing[0]?.workspaceId === canonicalWorkspaceId) {
+      console.info('[self-hosted-sync] workspace.default-binding-reused', {
+        profileId, workspaceId: canonicalWorkspaceId, localRoot,
+      })
+      return canonicalWorkspaceId
+    }
+    console.info('[self-hosted-sync] workspace.default-binding-converging', {
+      profileId,
+      previousWorkspaceId: existing[0]?.workspaceId ?? null,
+      workspaceId: canonicalWorkspaceId,
+      localRoot,
+    })
+    await bindLibrary(profileId, canonicalWorkspaceId, localRoot, true)
+    return canonicalWorkspaceId
+  }
+  if (existing[0]) {
+    console.info('[self-hosted-sync] workspace.binding-reused', {
+      profileId, workspaceId: existing[0].workspaceId, localRoot,
+    })
+    return existing[0].workspaceId
+  }
+
+  console.info('[self-hosted-sync] workspace.library-list-started', { profileId })
+  const libraries = await listLibraries(profileId)
+  console.info('[self-hosted-sync] workspace.library-list-completed', {
+    profileId, total: libraries.length,
+  })
+  const owned = libraries.filter(library => library.owner)
+  if (owned.length === 0) {
+    console.info('[self-hosted-sync] workspace.default-library-creating', { profileId, localRoot })
+    return createLibrary(profileId, defaultName, localRoot, DEFAULT_LIBRARY_IDEMPOTENCY_KEY)
+  }
+
+  const unboundOwned = owned.filter(library => !library.localRoot)
+  if (unboundOwned.length === 1) {
+    console.info('[self-hosted-sync] workspace.unbound-library-selected', {
+      profileId, workspaceId: unboundOwned[0]!.id, localRoot,
+    })
+    await bindLibrary(profileId, unboundOwned[0]!.id, localRoot, true)
+    return unboundOwned[0]!.id
+  }
+  if (unboundOwned.length === 0) {
+    console.info('[self-hosted-sync] workspace.local-library-creating', { profileId, localRoot })
+    return createLibrary(profileId, defaultName, localRoot)
+  }
+  console.warn('[self-hosted-sync] workspace.selection-required', {
+    profileId, localRoot, candidates: unboundOwned.length,
+  })
+  return null
+}
+
+function normalizeLocalRoot(value: string) {
+  return value.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+export async function getCurrentWorkspaceRoot() {
+  const workspace = await getWorkspacePath()
+  return workspace.isCustom ? workspace.path : getDefaultArticleAbsolutePath('')
 }
 
 export async function bindLibrary(
@@ -74,13 +227,19 @@ export async function bindLibrary(
   localRoot: string,
   scanLocal: boolean,
 ) {
+  console.info('[self-hosted-sync] workspace.bind-started', { profileId, workspaceId, localRoot, scanLocal })
   const { client } = await authenticatedClient(profileId)
   const workspace = (await client.workspaces()).find(item => item.id === workspaceId && item.type === 'library')
-  if (!workspace) throw new Error('资料库不存在或当前账号无权访问')
-  await ensureManagedWorkspaceKey(profileId, workspaceId, workspace.latestKeyVersion)
+  if (!workspace) throw new Error('工作区不存在或当前账号无权访问')
   const session = await client.syncSession(workspaceId, '0')
   const database = await getDb()
   const now = Date.now()
+  await database.execute(
+    `update self_hosted_workspace_bindings
+     set local_root = null, binding_state = 'unbound', updated_at = $1
+     where local_root = $2 and workspace_id <> $3`,
+    [now, localRoot, workspaceId]
+  )
   await database.execute(
     `insert into self_hosted_workspace_bindings(
        workspace_id, profile_id, workspace_type, local_root, binding_state,
@@ -99,6 +258,7 @@ export async function bindLibrary(
       now,
     ]
   )
+  await ensureManagedWorkspaceKey(profileId, workspaceId, workspace.latestKeyVersion)
   const store = await Store.load('store.json')
   const deferred = await store.get<string[]>('selfHostedDeferredWorkspacePaths') ?? []
   if (deferred.includes(localRoot)) {
@@ -112,6 +272,7 @@ export async function bindLibrary(
       else await enqueueAssetSnapshot(entry.relativePath, 'upsert', workspaceId, 'import')
     }
   }
+  console.info('[self-hosted-sync] workspace.bind-completed', { profileId, workspaceId, localRoot })
 }
 
 export async function unbindLibrary(workspaceId: string) {
@@ -119,6 +280,16 @@ export async function unbindLibrary(workspaceId: string) {
   await database.execute(
     `update self_hosted_workspace_bindings
      set binding_state = 'unbound', local_root = null, updated_at = $1 where workspace_id = $2`,
+    [Date.now(), workspaceId]
+  )
+}
+
+export async function markLibraryRemoteDeleted(workspaceId: string) {
+  const database = await getDb()
+  await database.execute(
+    `update self_hosted_workspace_bindings
+     set binding_state = 'remote-deleted', access_mode = 'read-only', updated_at = $1
+     where workspace_id = $2`,
     [Date.now(), workspaceId]
   )
 }
@@ -210,13 +381,8 @@ export async function connectedProfileId() {
 }
 
 export async function ensureManagedWorkspaceKey(profileId: string, workspaceId: string, keyVersion: number) {
-  const { client } = await authenticatedClient(profileId)
-  const keys = await client.workspaceKeys(workspaceId)
-  const managedKey = keys.find(item => item.keyVersion === keyVersion)?.envelopes
-    .find(envelope => envelope.type === 'managed')?.wrappedKey
-  if (!managedKey) throw new Error('该资料库没有可用的 managed key')
+  const managedKey = await loadManagedWorkspaceKey(profileId, workspaceId, keyVersion)
   const secureStorageKey = workspaceSecretKey(workspaceId, keyVersion)
-  await secureSet(secureStorageKey, managedKey)
   const database = await getDb()
   await database.execute(
     `insert into self_hosted_workspace_keys(workspace_id, key_version, secure_storage_key, created_at)
@@ -224,6 +390,17 @@ export async function ensureManagedWorkspaceKey(profileId: string, workspaceId: 
      on conflict(workspace_id, key_version) do update set secure_storage_key = excluded.secure_storage_key`,
     [workspaceId, keyVersion, secureStorageKey, Date.now()]
   )
+  return managedKey
+}
+
+async function loadManagedWorkspaceKey(profileId: string, workspaceId: string, keyVersion: number) {
+  const { client } = await authenticatedClient(profileId)
+  const keys = await client.workspaceKeys(workspaceId)
+  const managedKey = keys.find(item => item.keyVersion === keyVersion)?.envelopes
+    .find(envelope => envelope.type === 'managed')?.wrappedKey
+  if (!managedKey) throw new Error('该工作区没有可用的 managed key')
+  const secureStorageKey = workspaceSecretKey(workspaceId, keyVersion)
+  await secureSet(secureStorageKey, managedKey)
   return managedKey
 }
 

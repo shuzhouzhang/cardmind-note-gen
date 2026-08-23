@@ -6,7 +6,7 @@ import { TipTapEditor } from './tiptap-editor'
 import { Outline } from './outline'
 import { Loader2, Download } from 'lucide-react'
 import { useTranslations } from 'next-intl'
-import emitter from '@/lib/emitter'
+import emitter, { type Events } from '@/lib/emitter'
 import {
   DEFAULT_OUTLINE_WIDTH,
   normalizeOutlineWidth,
@@ -15,7 +15,12 @@ import {
 import { Store } from '@tauri-apps/plugin-store'
 import { useShallow } from 'zustand/react/shallow'
 import useSettingStore from '@/stores/setting'
-import { prepareActiveEditorDeactivationDurably } from '@/lib/editor-deactivation'
+import {
+  editorPathsReferToSameFile,
+  getCurrentEditorWorkspaceRoot,
+  prepareActiveEditorDeactivationDurably,
+  workspaceRootsReferToSameLocation,
+} from '@/lib/editor-deactivation'
 import { writeSelfHostedWorkspaceText } from '@/lib/self-hosted-sync/files'
 
 interface MdEditorProps {
@@ -44,10 +49,12 @@ export function MdEditor({ tabContentsRef, filePath, isActive }: MdEditorProps) 
     enableOutline,
     outlinePosition,
     setEnableOutline,
+    workspacePath,
   } = useSettingStore(useShallow((state) => ({
     enableOutline: state.enableOutline,
     outlinePosition: state.outlinePosition,
     setEnableOutline: state.setEnableOutline,
+    workspacePath: state.workspacePath,
   })))
 
   const t = useTranslations('article.file.sync')
@@ -102,6 +109,66 @@ export function MdEditor({ tabContentsRef, filePath, isActive }: MdEditorProps) 
       emitter.off('article-opened', handleArticleOpened as any)
     }
   }, [filePath])
+
+  // Keep the wrapper-owned tab cache aligned with snapshots applied by the
+  // sync runtime. TipTap handles the same path-scoped event itself; this
+  // listener only updates the surrounding React/store caches and must not
+  // schedule another save.
+  useEffect(() => {
+    let disposed = false
+    let syncEventSequence = 0
+    const currentWorkspaceRootPromise = getCurrentEditorWorkspaceRoot()
+      .catch(() => null)
+    const handleSyncContentUpdated = async (event: Events['sync-content-updated']) => {
+      if (!event || typeof event.content !== 'string') return
+
+      const eventSequence = ++syncEventSequence
+      const cachedContentBeforeRootCheck = tabContentsRef.current?.[filePath]
+      if (event.workspaceRoot) {
+        const currentWorkspaceRoot = await currentWorkspaceRootPromise
+        if (
+          disposed
+          || eventSequence !== syncEventSequence
+          || !currentWorkspaceRoot
+          || !workspaceRootsReferToSameLocation(
+            currentWorkspaceRoot,
+            event.workspaceRoot,
+          )
+          || (
+            tabContentsRef.current?.[filePath] !== cachedContentBeforeRootCheck
+            && tabContentsRef.current?.[filePath] !== event.content
+          )
+        ) {
+          return
+        }
+      }
+      if (!editorPathsReferToSameFile(event.path, filePath, event.workspaceRoot)) {
+        return
+      }
+
+      expectedContentRef.current = event.content
+      contentInitializedRef.current = true
+      const targetIsActive = editorPathsReferToSameFile(
+        useArticleStore.getState().activeFilePath,
+        filePath,
+        event.workspaceRoot,
+      )
+      currentArticlePathRef.current = targetIsActive ? filePath : null
+      if (tabContentsRef.current) {
+        tabContentsRef.current[filePath] = event.content
+      }
+      if (targetIsActive) {
+        useArticleStore.getState().setCurrentArticle(event.content)
+      }
+      setInitialContent(event.content)
+    }
+
+    emitter.on('sync-content-updated', handleSyncContentUpdated)
+    return () => {
+      disposed = true
+      emitter.off('sync-content-updated', handleSyncContentUpdated)
+    }
+  }, [filePath, tabContentsRef, workspacePath])
 
   // Listen for AI streaming state
   useEffect(() => {

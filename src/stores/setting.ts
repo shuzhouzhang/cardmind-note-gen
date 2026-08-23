@@ -1309,6 +1309,8 @@ const useSettingStore = create<SettingState>((set, get) => ({
       if (path && !get().workspaceHistory.includes(path)) {
         await get().addWorkspaceHistory(path)
       }
+      const { refreshSelfHostedSyncRuntime } = await import('@/lib/self-hosted-sync/lifecycle')
+      await refreshSelfHostedSyncRuntime()
     } finally {
       syncPushQueue.finishWorkspaceSwitch()
     }

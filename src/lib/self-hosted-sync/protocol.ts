@@ -92,7 +92,10 @@ export interface SyncSession {
     oldestAvailableSequence: string | null
   }
   latestSequence: string
-  bootstrap: { required: boolean; reason: 'cursor_ahead' | 'cursor_expired' | null }
+  bootstrap: {
+    required: boolean
+    reason: 'cursor_ahead' | 'cursor_expired' | 'device_uninitialized' | 'lag_too_large' | null
+  }
   limits: {
     maxCommandsPerBatch: number
     maxEventsPerPage: number

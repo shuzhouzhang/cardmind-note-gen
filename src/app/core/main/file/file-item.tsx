@@ -352,7 +352,7 @@ export function FileItem({
         // 获取当前主要备份方式
         const store = await Store.load('store.json');
         const backupMethod = await store.get<'github' | 'gitee' | 'gitlab' | 'gitea' | 's3' | 'webdav' | 'cloudFolder' | 'selfHosted'>('primaryBackupMethod') || 'github';
-        if (backupMethod === 'cloudFolder') {
+        if (backupMethod === 'cloudFolder' || backupMethod === 'selfHosted') {
           setEntryLoading(currentPath, false)
           return
         }

@@ -319,7 +319,7 @@ export async function syncConversationMessageCount(conversationId: number): Prom
   const actualCount = result[0]?.count || 0
 
   await db.execute(
-    "update conversations set messageCount = $1 where id = $2",
+    "update conversations set messageCount = $1 where id = $2 and messageCount <> $1",
     [actualCount, conversationId]
   )
 }

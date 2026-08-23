@@ -14,13 +14,22 @@ export interface NormalizedServerUrl {
 
 export class SelfHostedApiError extends Error {
   constructor(readonly body: ApiErrorBody, readonly status: number) {
-    super(body.message)
+    super(formatApiErrorMessage(body))
     this.name = 'SelfHostedApiError'
   }
 }
 
+function formatApiErrorMessage(body: ApiErrorBody) {
+  const fieldErrors = body.details?.fieldErrors
+  if (!fieldErrors || typeof fieldErrors !== 'object' || Array.isArray(fieldErrors)) return body.message
+  const first = Object.entries(fieldErrors)[0]
+  if (!first) return body.message
+  return `${body.message}: ${first[0]} ${String(first[1])}`
+}
+
 export function normalizeServerUrl(value: string): NormalizedServerUrl {
-  const parsed = new URL(value.trim())
+  const trimmed = value.trim()
+  const parsed = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`)
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error('服务器地址必须使用 HTTP 或 HTTPS')
   }
@@ -40,7 +49,11 @@ export function normalizeServerUrl(value: string): NormalizedServerUrl {
 export class SelfHostedClient {
   readonly baseUrl: string
 
-  constructor(serverUrl: string, private readonly accessToken?: string) {
+  constructor(
+    serverUrl: string,
+    private readonly accessToken?: string,
+    private readonly onAuthenticationRejected?: () => Promise<void>,
+  ) {
     this.baseUrl = normalizeServerUrl(serverUrl).url
   }
 
@@ -52,9 +65,9 @@ export class SelfHostedClient {
     return this.request<ClientSession>('/v1/auth/login', { method: 'POST', body: input })
   }
 
-  refresh(refreshToken: string, deviceId: string) {
+  refresh(refreshToken: string, deviceId: string, refreshRequestId: string) {
     return this.request<ClientSession>('/v1/auth/refresh', {
-      method: 'POST', body: { refreshToken, deviceId, refreshRequestId: crypto.randomUUID() },
+      method: 'POST', body: { refreshToken, deviceId, refreshRequestId },
     })
   }
 
@@ -97,6 +110,16 @@ export class SelfHostedClient {
       '/v1/workspaces',
       { method: 'POST', body: { nameCiphertext, managedKey }, headers: { 'idempotency-key': idempotencyKey } },
     )
+  }
+
+  workspaceCreationRequest(idempotencyKey: string) {
+    return this.request<{ id: string; createdAt: string }>(
+      `/v1/workspace-creation-requests/${encodeURIComponent(idempotencyKey)}`,
+    )
+  }
+
+  deleteWorkspace(workspaceId: string) {
+    return this.request<null>(`/v1/workspaces/${workspaceId}`, { method: 'DELETE' })
   }
 
   workspaceKeys(workspaceId: string) {
@@ -228,7 +251,10 @@ export class SelfHostedClient {
       }
     )
     const value = await response.json() as { partNumber: number; etag: string; receivedSize: string } | ApiErrorBody
-    if (!response.ok) throw new SelfHostedApiError(value as ApiErrorBody, response.status)
+    if (!response.ok) {
+      if (response.status === 401) await this.onAuthenticationRejected?.()
+      throw new SelfHostedApiError(value as ApiErrorBody, response.status)
+    }
     return value as { partNumber: number; etag: string; receivedSize: string }
   }
 
@@ -248,6 +274,7 @@ export class SelfHostedClient {
     })
     if (!response.ok) {
       const value = await response.json() as ApiErrorBody
+      if (response.status === 401) await this.onAuthenticationRejected?.()
       throw new SelfHostedApiError(value, response.status)
     }
     return new Uint8Array(await response.arrayBuffer())
@@ -264,6 +291,41 @@ export class SelfHostedClient {
     if (bootstrapId) query.set('bootstrapId', bootstrapId)
     if (afterObjectId) query.set('afterObjectId', afterObjectId)
     return this.request<SyncBootstrapPage>(`/v1/workspaces/${workspaceId}/sync/bootstrap?${query}`)
+  }
+
+  documentUpdates(
+    workspaceId: string,
+    documentId: string,
+    after: string,
+    expectedSyncEpoch: string,
+    limit = 500,
+  ) {
+    const query = new URLSearchParams({ after, expectedSyncEpoch, limit: String(limit) })
+    return this.request<{
+      checkpoint?: {
+        objectId: string
+        documentSequence: string
+        checkpointId: string
+        keyVersion: number
+        ciphertext: string
+        ciphertextHash: string
+      } | null
+      updates: Array<{
+        workspaceId: string
+        documentId: string
+        documentSequence: string
+        updateId: string
+        eventSequence: string
+        sourceDeviceId: string
+        keyVersion: number
+        ciphertext: string
+        ciphertextHash: string
+        createdAt: string
+      }>
+      nextDocumentSequence: string
+      hasMore: boolean
+      syncEpoch: string
+    }>(`/v1/workspaces/${workspaceId}/documents/${encodeURIComponent(documentId)}/updates?${query}`)
   }
 
   async request<T>(path: string, options: {
@@ -284,6 +346,7 @@ export class SelfHostedClient {
     const value: unknown = response.status === 204 ? null : await response.json()
     if (!response.ok) {
       const body = value as Partial<ApiErrorBody>
+      if (response.status === 401) await this.onAuthenticationRejected?.()
       throw new SelfHostedApiError({
         code: body.code ?? 'request_failed',
         message: body.message ?? `服务器请求失败 (${response.status})`,

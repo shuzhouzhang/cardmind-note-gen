@@ -19,8 +19,17 @@ import {
   syntaxHighlighting,
 } from '@codemirror/language'
 import { highlightSelectionMatches, openSearchPanel, searchKeymap } from '@codemirror/search'
-import { Compartment, EditorState, Transaction } from '@codemirror/state'
 import {
+  Compartment,
+  EditorState,
+  StateEffect,
+  StateField,
+  Transaction,
+  type Range,
+} from '@codemirror/state'
+import {
+  Decoration,
+  type DecorationSet,
   drawSelection,
   EditorView,
   highlightActiveLine,
@@ -28,15 +37,24 @@ import {
   highlightSpecialChars,
   keymap,
   lineNumbers,
+  WidgetType,
 } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
+
+export interface SourceMarkdownRemoteCursor {
+  deviceId: string
+  label: string
+  anchor: number
+  head: number
+}
 
 interface SourceMarkdownEditorProps {
   value: string
   onChange: (value: string) => void
   onSelectionChange?: (selection: { from: number; to: number }) => void
   selection?: { from: number; to: number }
+  remoteCursors?: readonly SourceMarkdownRemoteCursor[]
   onControllerChange?: (controller: SourceMarkdownEditorController | null) => void
   onUndoRedoChange?: (state: { undo: boolean; redo: boolean }) => void
   onViewStateChange?: (state: SourceMarkdownEditorViewState) => void
@@ -66,6 +84,87 @@ export interface SourceMarkdownEditorViewState {
   selection: { from: number; to: number }
   scrollTop: number
 }
+
+const REMOTE_CURSOR_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2']
+
+function remoteCursorColor(deviceId: string) {
+  let hash = 0
+  for (const character of deviceId) hash = (Math.imul(hash, 31) + character.charCodeAt(0)) | 0
+  return REMOTE_CURSOR_COLORS[Math.abs(hash) % REMOTE_CURSOR_COLORS.length]!
+}
+
+class RemoteCursorWidget extends WidgetType {
+  constructor(
+    private readonly deviceId: string,
+    private readonly label: string,
+    private readonly color: string,
+  ) {
+    super()
+  }
+
+  eq(other: WidgetType) {
+    return other instanceof RemoteCursorWidget
+      && other.deviceId === this.deviceId
+      && other.label === this.label
+      && other.color === this.color
+  }
+
+  toDOM() {
+    const cursor = document.createElement('span')
+    cursor.className = 'cm-self-hosted-remote-cursor'
+    cursor.style.borderLeftColor = this.color
+    cursor.setAttribute('aria-label', `${this.label} 的光标`)
+
+    const label = document.createElement('span')
+    label.className = 'cm-self-hosted-remote-cursor-label'
+    label.style.backgroundColor = this.color
+    label.textContent = this.label
+    cursor.append(label)
+    return cursor
+  }
+}
+
+function createRemoteCursorDecorations(
+  cursors: readonly SourceMarkdownRemoteCursor[],
+  documentLength: number,
+): DecorationSet {
+  const decorations: Range<Decoration>[] = []
+  for (const cursor of cursors) {
+    const anchor = Math.max(0, Math.min(cursor.anchor, documentLength))
+    const head = Math.max(0, Math.min(cursor.head, documentLength))
+    const color = remoteCursorColor(cursor.deviceId)
+    const label = cursor.label.trim() || '其他设备'
+    if (anchor !== head) {
+      decorations.push(Decoration.mark({
+        class: 'cm-self-hosted-remote-selection',
+        attributes: {
+          style: `background-color: color-mix(in srgb, ${color} 22%, transparent);`,
+        },
+      }).range(Math.min(anchor, head), Math.max(anchor, head)))
+    }
+    decorations.push(Decoration.widget({
+      widget: new RemoteCursorWidget(cursor.deviceId, label, color),
+      side: 1,
+    }).range(head))
+  }
+  return Decoration.set(decorations, true)
+}
+
+const setRemoteCursors = StateEffect.define<readonly SourceMarkdownRemoteCursor[]>()
+
+const remoteCursorDecorations = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations, transaction) {
+    let next = decorations.map(transaction.changes)
+    for (const effect of transaction.effects) {
+      if (effect.is(setRemoteCursors)) {
+        next = createRemoteCursorDecorations(effect.value, transaction.newDoc.length)
+      }
+    }
+    return next
+  },
+  provide: field => EditorView.decorations.from(field),
+})
 
 function createEditorTheme(fontSize: number, lineHeight: number) {
   return EditorView.theme({
@@ -111,6 +210,35 @@ function createEditorTheme(fontSize: number, lineHeight: number) {
     '.cm-cursor, .cm-dropCursor': {
       borderLeftColor: 'hsl(var(--foreground))',
     },
+    '.cm-self-hosted-remote-selection': {
+      borderRadius: '2px',
+    },
+    '.cm-self-hosted-remote-cursor': {
+      position: 'relative',
+      zIndex: '2',
+      display: 'inline-block',
+      width: '0',
+      height: '1.25em',
+      marginLeft: '-1px',
+      borderLeft: '2px solid',
+      pointerEvents: 'none',
+      verticalAlign: 'text-bottom',
+    },
+    '.cm-self-hosted-remote-cursor-label': {
+      position: 'absolute',
+      bottom: 'calc(100% + 2px)',
+      left: '-2px',
+      maxWidth: '8rem',
+      overflow: 'hidden',
+      borderRadius: '4px 4px 4px 0',
+      padding: '1px 5px',
+      color: 'white',
+      fontSize: '10px',
+      fontWeight: '600',
+      lineHeight: '16px',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    },
   })
 }
 
@@ -119,6 +247,7 @@ export function SourceMarkdownEditor({
   onChange,
   onSelectionChange,
   selection,
+  remoteCursors = [],
   onControllerChange,
   onUndoRedoChange,
   onViewStateChange,
@@ -188,6 +317,7 @@ export function SourceMarkdownEditor({
           bracketMatching(),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           markdown(),
+          remoteCursorDecorations,
           highlightActiveLine(),
           highlightSelectionMatches(),
           keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
@@ -362,6 +492,12 @@ export function SourceMarkdownEditor({
       isApplyingExternalValueRef.current = false
     }
   }, [selection, value])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: setRemoteCursors.of(remoteCursors) })
+  }, [remoteCursors])
 
   return (
     <div

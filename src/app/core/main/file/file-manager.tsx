@@ -75,9 +75,6 @@ import {
 import { useFileTree } from './use-file-tree'
 import { useSyncAvailability } from './use-sync-availability'
 import useSettingStore from '@/stores/setting'
-import { useSettingsDialogStore } from '@/stores/settings-dialog'
-import { getDb } from '@/db'
-import { getDefaultArticleAbsolutePath, getWorkspacePath } from '@/lib/workspace'
 import { buildFileTreeSyncStatusMap } from './file-tree-action-policy'
 import { deleteRemoteFile } from '@/lib/sync/remote-library'
 import {
@@ -143,7 +140,6 @@ export function FileManager({
   const [searchProgress, setSearchProgress] = useState({ loaded: 0, total: 0 })
   const [treeScrollMargin, setTreeScrollMargin] = useState(44)
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null)
-  const [unboundSelfHostedRoot, setUnboundSelfHostedRoot] = useState<string | null>(null)
   const dragDepthRef = useRef(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const treeContainerRef = useRef<HTMLDivElement>(null)
@@ -159,9 +155,7 @@ export function FileManager({
   const scrollSaveTimerRef = useRef<number | null>(null)
   const workspacePath = useSettingStore(state => state.workspacePath)
   const primaryBackupMethod = useSettingStore(state => state.primaryBackupMethod)
-  const openSettings = useSettingsDialogStore(state => state.openSettings)
   const t = useTranslations('article.file')
-  const tSelfHosted = useTranslations('settings.sync.selfHosted')
   const tRecordToolbar = useTranslations('record.mark.toolbar')
   const {
     configurationRevision: syncConfigurationRevision,
@@ -169,45 +163,16 @@ export function FileManager({
   } = useSyncAvailability()
 
   useEffect(() => {
-    let active = true
-    if (primaryBackupMethod !== 'selfHosted') {
-      setUnboundSelfHostedRoot(null)
-      return
-    }
+    if (primaryBackupMethod !== 'selfHosted') return
     void (async () => {
-      const workspace = await getWorkspacePath()
-      const root = workspace.isCustom ? workspace.path : await getDefaultArticleAbsolutePath('')
-      const store = await Store.load('store.json')
-      const deferred = await store.get<string[]>('selfHostedDeferredWorkspacePaths') ?? []
-      const database = await getDb()
-      const bindings = await database.select<Array<{ workspaceId: string }>>(
-        `select b.workspace_id as workspaceId from self_hosted_workspace_bindings b
-         join self_hosted_sync_profiles p on p.id = b.profile_id and p.state = 'connected'
-         where b.local_root = $1 and b.binding_state = 'bound' limit 1`,
-        [root]
-      )
-      if (active) setUnboundSelfHostedRoot(bindings.length === 0 && !deferred.includes(root) ? root : null)
-    })()
-    return () => { active = false }
-  }, [primaryBackupMethod, workspacePath])
+      const { refreshSelfHostedSyncRuntime } = await import('@/lib/self-hosted-sync/lifecycle')
+      await refreshSelfHostedSyncRuntime()
+      await refreshSyncAvailability()
+    })().catch(error => {
+      console.warn('[self-hosted-sync] Unable to prepare the current workspace', error)
+    })
+  }, [primaryBackupMethod, refreshSyncAvailability, workspacePath])
 
-  async function deferSelfHostedBinding() {
-    if (!unboundSelfHostedRoot) return
-    const store = await Store.load('store.json')
-    const deferred = await store.get<string[]>('selfHostedDeferredWorkspacePaths') ?? []
-    await store.set('selfHostedDeferredWorkspacePaths', [...new Set([...deferred, unboundSelfHostedRoot])])
-    await store.save()
-    setUnboundSelfHostedRoot(null)
-  }
-
-  async function configureSelfHostedBinding() {
-    if (unboundSelfHostedRoot) {
-      const store = await Store.load('store.json')
-      await store.set('selfHostedSuggestedRoot', unboundSelfHostedRoot)
-      await store.save()
-    }
-    openSettings('sync')
-  }
   const {
     activeFilePath,
     fileTree,
@@ -1076,16 +1041,6 @@ export function FileManager({
       onScroll={handleScroll}
     >
       <div className="flex h-full min-h-full min-w-0 flex-col p-0">
-        {unboundSelfHostedRoot ? (
-          <div className="m-2 rounded-lg border border-dashed bg-muted/40 p-3">
-            <p className="text-sm font-medium">{tSelfHosted('unboundWorkspaceTitle')}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{tSelfHosted('unboundWorkspaceDescription')}</p>
-            <div className="mt-3 flex gap-2">
-              <Button size="sm" onClick={() => void configureSelfHostedBinding()}>{tSelfHosted('configureLibrary')}</Button>
-              <Button size="sm" variant="ghost" onClick={() => void deferSelfHostedBinding()}>{tSelfHosted('notNow')}</Button>
-            </div>
-          </div>
-        ) : null}
         {isDragging && dragItemCount > 0 ? (
           <Badge variant="outline" className="pointer-events-none absolute right-2 top-12">
             {t('context.dropTarget', { name: t('mobile.root'), count: dragItemCount })}

@@ -30,6 +30,7 @@ import { S3Sync } from './s3-sync'
 import { WebDAVSync } from './webdav-sync'
 import { CloudFolderSync } from './cloud-folder-sync'
 import { SelfHostedSync } from './self-hosted-sync'
+import { SelfHostedPersonalDataOptions } from './self-hosted-personal-data-options'
 import { UsePlatformButton } from './components/use-platform-button'
 import { WorkspaceRepoMapping } from './components/workspace-repo-mapping'
 import { DataSyncOverview } from './components/data-sync-overview'
@@ -467,16 +468,20 @@ export default function SyncPage() {
                 </CardContent>
               </Card>
 
-              <DataSyncOverview
-                autoRecordSyncEnabled={autoRecordSyncEnabled}
-                autoSettingsSyncEnabled={autoSettingsSyncEnabled}
-                autoConversationSyncEnabled={autoConversationSyncEnabled}
-                excludeSensitiveConfig={excludeSensitiveConfig}
-                onRecordSyncChange={setAutoRecordSyncEnabled}
-                onSettingsSyncChange={setAutoSettingsSyncEnabled}
-                onConversationSyncChange={setAutoConversationSyncEnabled}
-                onSensitiveConfigChange={handleExcludeSensitiveConfigChange}
-              />
+              {platform === 'selfHosted' ? (
+                <SelfHostedPersonalDataOptions />
+              ) : (
+                <DataSyncOverview
+                  autoRecordSyncEnabled={autoRecordSyncEnabled}
+                  autoSettingsSyncEnabled={autoSettingsSyncEnabled}
+                  autoConversationSyncEnabled={autoConversationSyncEnabled}
+                  excludeSensitiveConfig={excludeSensitiveConfig}
+                  onRecordSyncChange={setAutoRecordSyncEnabled}
+                  onSettingsSyncChange={setAutoSettingsSyncEnabled}
+                  onConversationSyncChange={setAutoConversationSyncEnabled}
+                  onSensitiveConfigChange={handleExcludeSensitiveConfigChange}
+                />
+              )}
 
             </TabsContent>
           </Tabs>

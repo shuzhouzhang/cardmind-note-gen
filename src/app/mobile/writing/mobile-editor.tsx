@@ -6,6 +6,13 @@ import { TipTapEditor } from '@/app/core/main/editor/markdown/tiptap-editor'
 import type { Editor } from '@tiptap/react'
 import { Loader2 } from 'lucide-react'
 import useArticleStore from '@/stores/article'
+import useSettingStore from '@/stores/setting'
+import emitter, { type Events } from '@/lib/emitter'
+import {
+  editorPathsReferToSameFile,
+  getCurrentEditorWorkspaceRoot,
+  workspaceRootsReferToSameLocation,
+} from '@/lib/editor-deactivation'
 
 interface MobileEditorProps {
   onEditorReady?: (editor: Editor | null) => void
@@ -20,6 +27,7 @@ export const MobileEditor = forwardRef<MobileEditorHandle, MobileEditorProps>(fu
   ref,
 ) {
   const tEditor = useTranslations('editor')
+  const workspacePath = useSettingStore((state) => state.workspacePath)
   const {
     saveCurrentArticle,
     activeFilePath,
@@ -34,7 +42,6 @@ export const MobileEditor = forwardRef<MobileEditorHandle, MobileEditorProps>(fu
   const activePathRef = useRef<string>('')
   const contentRef = useRef<string>('')
   const awaitingInitialContentRef = useRef(Boolean(activeFilePath))
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const savePromiseRef = useRef<Promise<void> | null>(null)
 
   // 监听 activeFilePath 变化
@@ -72,19 +79,74 @@ export const MobileEditor = forwardRef<MobileEditorHandle, MobileEditorProps>(fu
     setIsLoading(false)
   }, [activeFilePath, articleLoading, currentArticle])
 
+  // TipTap consumes this event to replace the visible document. Mirror the
+  // accepted snapshot into the mobile wrapper as well, otherwise its stale
+  // contentRef can be written back when the editor is closed.
+  useEffect(() => {
+    let disposed = false
+    let syncEventSequence = 0
+    const currentWorkspaceRootPromise = getCurrentEditorWorkspaceRoot()
+      .catch(() => null)
+    const handleSyncContentUpdated = async (event: Events['sync-content-updated']) => {
+      if (!event || typeof event.content !== 'string') return
+
+      const eventSequence = ++syncEventSequence
+      const contentBeforeRootCheck = contentRef.current
+      if (event.workspaceRoot) {
+        const currentWorkspaceRoot = await currentWorkspaceRootPromise
+        if (
+          disposed
+          || eventSequence !== syncEventSequence
+          || !currentWorkspaceRoot
+          || !workspaceRootsReferToSameLocation(
+            currentWorkspaceRoot,
+            event.workspaceRoot,
+          )
+          || (
+            contentRef.current !== contentBeforeRootCheck
+            && contentRef.current !== event.content
+          )
+        ) {
+          return
+        }
+      }
+      if (!editorPathsReferToSameFile(
+        event.path,
+        activePathRef.current,
+        event.workspaceRoot,
+      )) {
+        return
+      }
+
+      awaitingInitialContentRef.current = false
+      contentRef.current = event.content
+      setContent(event.content)
+      setIsLoading(false)
+      if (editorPathsReferToSameFile(
+        useArticleStore.getState().activeFilePath,
+        event.path,
+        event.workspaceRoot,
+      )) {
+        useArticleStore.getState().setCurrentArticle(event.content)
+      }
+    }
+
+    emitter.on('sync-content-updated', handleSyncContentUpdated)
+    return () => {
+      disposed = true
+      emitter.off('sync-content-updated', handleSyncContentUpdated)
+    }
+  }, [workspacePath])
+
   // 保存文件
   const doSave = useCallback(async () => {
-    const path = activePathRef.current
-    const newContent = contentRef.current
-
-    if (!path || !isEditorReady) {
-      return
-    }
-
     if (savePromiseRef.current) {
       await savePromiseRef.current
-      return
     }
+
+    const path = activePathRef.current
+    const newContent = contentRef.current
+    if (!path || !isEditorReady) return
 
     const savePromise = saveCurrentArticle(newContent, path)
     savePromiseRef.current = savePromise
@@ -99,14 +161,12 @@ export const MobileEditor = forwardRef<MobileEditorHandle, MobileEditorProps>(fu
 
   useImperativeHandle(ref, () => ({
     flushPendingSave: async () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current)
-        saveTimeoutRef.current = null
-      }
       if (savePromiseRef.current) {
         await savePromiseRef.current
       }
       await doSave()
+      const path = activePathRef.current
+      if (path) await useArticleStore.getState().flushPendingArticleSave(path)
     },
   }), [doSave])
 
@@ -115,13 +175,9 @@ export const MobileEditor = forwardRef<MobileEditorHandle, MobileEditorProps>(fu
     setContent(newContent)
     contentRef.current = newContent
 
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current)
-    }
-
-    saveTimeoutRef.current = setTimeout(() => {
-      doSave()
-    }, 500)
+    // The article store already owns the 500ms debounce and path write gate.
+    // Queue there immediately so remote writes can observe or drain it.
+    void doSave()
   }, [doSave])
 
   // 处理编辑器就绪
@@ -133,9 +189,6 @@ export const MobileEditor = forwardRef<MobileEditorHandle, MobileEditorProps>(fu
   useEffect(() => {
     return () => {
       onEditorReady?.(null)
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current)
-      }
     }
   }, [onEditorReady])
 

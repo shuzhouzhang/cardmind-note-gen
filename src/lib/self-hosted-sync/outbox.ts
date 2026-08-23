@@ -6,7 +6,7 @@ import { getDb } from '@/db'
 import { filterSyncData } from '@/config/sync-exclusions'
 import { encryptJson, loadWorkspaceKey, objectAssociatedData } from './crypto'
 import type { SyncObjectKind, WorkspaceType } from './protocol'
-import { uploadAsset } from './blob'
+import { base64UrlByteLength, uploadAsset } from './blob'
 import { getDefaultArticleAbsolutePath, getWorkspacePath } from '@/lib/workspace'
 
 interface PendingChange {
@@ -35,6 +35,10 @@ export async function enqueueFileSnapshot(
   const resolvedWorkspaceId = workspaceId ?? await activeLibraryWorkspaceId()
   if (!resolvedWorkspaceId) return
   const now = Date.now()
+  if (await hasUnsentChange(database, resolvedWorkspaceId, 'file', relativePath, operation)) return
+  if (operation === 'upsert' && await fileSnapshotMatchesMapping(
+    database, resolvedWorkspaceId, relativePath,
+  )) return
   if (operation === 'upsert') {
     await enqueueParentFolderChanges(database, resolvedWorkspaceId, relativePath, now, identityMode)
   }
@@ -43,6 +47,32 @@ export async function enqueueFileSnapshot(
      values ($1, 'file', $2, $3, $4, $5, $5)`,
     [resolvedWorkspaceId, relativePath, operation, `workspace:file-${identityMode}`, now]
   )
+}
+
+async function fileSnapshotMatchesMapping(
+  database: Awaited<ReturnType<typeof getDb>>,
+  workspaceId: string,
+  relativePath: string,
+) {
+  const rows = await database.select<Array<{ localRoot: string; contentHash: string }>>(
+    `select b.local_root as localRoot, m.content_hash as contentHash
+     from self_hosted_workspace_bindings b
+     join self_hosted_object_mappings m on m.workspace_id = b.workspace_id
+     where b.workspace_id = $1 and b.binding_state = 'bound'
+       and m.relative_path = $2 and m.kind = 'note' and m.deleted_at is null
+       and b.local_root is not null and m.content_hash is not null
+     limit 1`,
+    [workspaceId, relativePath],
+  )
+  const current = rows[0]
+  if (!current) return false
+  try {
+    const content = await readTextFile(await join(current.localRoot, relativePath))
+    const hash = await invoke<string>('self_hosted_sha256', { value: content })
+    return hash === current.contentHash
+  } catch {
+    return false
+  }
 }
 
 export async function enqueueAssetSnapshot(
@@ -55,6 +85,7 @@ export async function enqueueAssetSnapshot(
   const resolvedWorkspaceId = workspaceId ?? await activeLibraryWorkspaceId()
   if (!resolvedWorkspaceId) return
   const now = Date.now()
+  if (await hasUnsentChange(database, resolvedWorkspaceId, 'asset', relativePath, operation)) return
   if (operation === 'upsert') {
     await enqueueParentFolderChanges(database, resolvedWorkspaceId, relativePath, now, identityMode)
   }
@@ -75,11 +106,29 @@ export async function enqueueFolderSnapshot(
   if (!resolvedWorkspaceId) return
   const database = await getDb()
   const now = Date.now()
+  if (await hasUnsentChange(database, resolvedWorkspaceId, 'folder', relativePath, operation)) return
   await database.execute(
     `insert into self_hosted_local_changes(workspace_id, domain, local_key, operation, reason, created_at, updated_at)
      values ($1, 'folder', $2, $3, $4, $5, $5)`,
     [resolvedWorkspaceId, relativePath, operation, `workspace:folder-${identityMode}`, now]
   )
+}
+
+async function hasUnsentChange(
+  database: Awaited<ReturnType<typeof getDb>>,
+  workspaceId: string,
+  domain: string,
+  localKey: string,
+  operation: 'upsert' | 'delete',
+) {
+  const rows = await database.select<Array<{ id: number }>>(
+    `select id from self_hosted_local_changes
+     where workspace_id = $1 and domain = $2 and local_key = $3
+       and operation = $4 and state in ('pending', 'queued')
+     limit 1`,
+    [workspaceId, domain, localKey, operation]
+  )
+  return rows.length > 0
 }
 
 export async function enqueuePathMove(oldPath: string, newPath: string) {
@@ -124,7 +173,7 @@ export async function enqueuePathMove(oldPath: string, newPath: string) {
 
 export async function enqueueCanvasSnapshot(canvasId: string, operation: 'upsert' | 'delete' = 'upsert') {
   const database = await getDb()
-  const workspaceId = await activeLibraryWorkspaceId()
+  const workspaceId = await activeAccountDataWorkspaceId()
   if (!workspaceId) return null
   const now = Date.now()
   await database.execute(
@@ -133,6 +182,18 @@ export async function enqueueCanvasSnapshot(canvasId: string, operation: 'upsert
     [workspaceId, canvasId, operation, now]
   )
   return workspaceId
+}
+
+async function activeAccountDataWorkspaceId() {
+  const database = await getDb()
+  const bindings = await database.select<Array<{ workspaceId: string }>>(
+    `select b.workspace_id as workspaceId
+     from self_hosted_workspace_bindings b
+     join self_hosted_sync_profiles p on p.id = b.profile_id and p.state = 'connected'
+     where b.workspace_type = 'account-data' and b.binding_state = 'bound'
+     order by b.updated_at desc limit 1`
+  )
+  return bindings[0]?.workspaceId ?? null
 }
 
 async function activeLibraryWorkspaceId() {
@@ -156,10 +217,18 @@ async function enqueueParentFolderChanges(
 ) {
   const segments = relativePath.replaceAll('\\', '/').split('/').filter(Boolean)
   for (let count = 1; count < segments.length; count++) {
+    const relativePath = segments.slice(0, count).join('/')
+    const existing = await database.select<Array<{ objectId: string }>>(
+      `select object_id as objectId from self_hosted_object_mappings
+       where workspace_id = $1 and kind = 'folder' and relative_path = $2
+         and deleted_at is null limit 1`,
+      [workspaceId, relativePath],
+    )
+    if (existing.length > 0) continue
     await database.execute(
       `insert into self_hosted_local_changes(workspace_id, domain, local_key, operation, reason, created_at, updated_at)
        values ($1, 'folder', $2, 'upsert', $3, $4, $4)`,
-      [workspaceId, segments.slice(0, count).join('/'), `workspace:folder-${identityMode}`, now]
+      [workspaceId, relativePath, `workspace:folder-${identityMode}`, now]
     )
   }
 }
@@ -181,8 +250,12 @@ export async function materializeOutbox(
   profileId?: string,
   syncEpoch?: string,
   keyVersion = 1,
+  maxObjectBytes = Number.MAX_SAFE_INTEGER,
 ) {
   const database = await getDb()
+  await recoverSupersededMappingCommands(database, workspaceId)
+  await recoverRejectedLibraryChanges(database, workspaceId)
+  await recoverOrphanedQueuedChanges(database, workspaceId, workspaceType)
   const toggleRows = await database.select<Array<{ domainToggles: string }>>(
     `select p.domain_toggles as domainToggles
      from self_hosted_workspace_bindings b join self_hosted_sync_profiles p on p.id = b.profile_id
@@ -190,6 +263,12 @@ export async function materializeOutbox(
     [workspaceId]
   )
   const domainToggles = JSON.parse(toggleRows[0]?.domainToggles ?? '{}') as Record<string, boolean>
+  const allowedDomains = workspaceType === 'library'
+    ? ['file', 'asset', 'folder']
+    : [...Object.keys(STRUCTURED_DOMAINS), 'setting'].filter(domain => (
+        isDomainEnabled(domain, domainToggles)
+      ))
+  if (allowedDomains.length === 0) return
   const pending = await database.select<PendingChange[]>(
     `select c.id, c.domain, c.local_key as localKey, c.operation, c.reason,
        case when exists (
@@ -201,19 +280,25 @@ export async function materializeOutbox(
      from self_hosted_local_changes c
      where c.state = 'pending'
        and ((c.workspace_id = $1) or (c.workspace_id is null and $2 = 'account-data'))
+       and c.domain in (select value from json_each($4))
        and c.id = (
          select max(latest.id) from self_hosted_local_changes latest
          where latest.state = 'pending' and latest.domain = c.domain and latest.local_key = c.local_key
            and coalesce(latest.workspace_id, '') = coalesce(c.workspace_id, '')
        )
-     order by c.id
+     order by
+       case when $2 = 'library' and c.domain = 'folder' then 0
+            when $2 = 'library' then 1 else 0 end,
+       case when $2 = 'library' and c.domain = 'folder'
+         then length(c.local_key) - length(replace(c.local_key, '/', '')) else 0 end,
+       c.id
      limit $3`,
-    [workspaceId, workspaceType, maxCommands]
+    [workspaceId, workspaceType, maxCommands, JSON.stringify(allowedDomains)]
   )
   const workspaceKey = await loadWorkspaceKey(workspaceId, keyVersion)
   for (const change of pending) {
-    if (workspaceType === 'library' && !['file', 'asset', 'folder', 'canvas'].includes(change.domain)) continue
-    if (workspaceType === 'account-data' && ['file', 'asset', 'folder', 'canvas'].includes(change.domain)) continue
+    if (workspaceType === 'library' && !['file', 'asset', 'folder'].includes(change.domain)) continue
+    if (workspaceType === 'account-data' && ['file', 'asset', 'folder'].includes(change.domain)) continue
     if (workspaceType === 'account-data' && !isDomainEnabled(change.domain, domainToggles)) continue
     if ((change.domain === 'file' || change.domain === 'asset') && !localRoot) continue
     const kind = change.domain === 'file' ? 'note'
@@ -234,10 +319,14 @@ export async function materializeOutbox(
     const commandId = crypto.randomUUID()
     const aad = objectAssociatedData(workspaceId, mapping.objectId, kind)
     let command: Record<string, unknown>
-    let localContentHash: string | null = null
     if (change.operation === 'delete') {
       if (!mapping.revision) {
         await markChanges(sourceIds.map(item => item.id), 'superseded')
+        await database.execute(
+          `update self_hosted_object_mappings set deleted_at = $1, updated_at = $1
+           where workspace_id = $2 and object_id = $3`,
+          [Date.now(), workspaceId, mapping.objectId]
+        )
         continue
       }
       const encrypted = await encryptJson(workspaceKey, {
@@ -261,7 +350,7 @@ export async function materializeOutbox(
         ciphertextHash: encrypted.packedCiphertextHash,
       }
     } else {
-      const asset = change.domain === 'asset' && profileId && syncEpoch
+      let blob = change.domain === 'asset' && profileId && syncEpoch
         ? await uploadAsset({
             profileId,
             workspaceId,
@@ -271,24 +360,39 @@ export async function materializeOutbox(
             keyVersion,
           })
         : null
-      const payload = change.domain === 'file'
+      let payload = change.domain === 'file'
         ? await filePayload(localRoot!, change.localKey)
         : change.domain === 'folder'
           ? { version: 1, domain: 'folder', relativePath: change.localKey }
-        : asset
-          ? { version: 1, domain: 'asset', relativePath: change.localKey, ...asset }
+        : blob
+          ? { version: 1, domain: 'asset', relativePath: change.localKey, ...blob }
           : await structuredPayload(workspaceId, change.domain, change.localKey)
       if (!payload) {
         await markChanges(sourceIds.map(item => item.id), 'superseded')
         continue
       }
-      const encrypted = await encryptJson(workspaceKey, payload, aad)
-      if (change.domain === 'file') {
-        localContentHash = await invoke<string>('self_hosted_sha256', {
-          value: String(payload.content ?? ''),
+      let encrypted = await encryptJson(workspaceKey, payload, aad)
+      if (
+        change.domain === 'file'
+        && base64UrlByteLength(encrypted.packedCiphertext) > maxObjectBytes
+        && profileId
+        && syncEpoch
+      ) {
+        blob = await uploadAsset({
+          profileId,
+          workspaceId,
+          syncEpoch,
+          localRoot: localRoot!,
+          relativePath: change.localKey,
+          keyVersion,
         })
-      } else if (asset) {
-        localContentHash = asset.plaintextHash
+        payload = {
+          version: 1,
+          domain: 'file',
+          relativePath: change.localKey,
+          ...blob,
+        }
+        encrypted = await encryptJson(workspaceKey, payload, aad)
       }
       const parentObjectId = ['file', 'asset', 'folder'].includes(change.domain)
         ? await parentFolderObjectId(workspaceId, change.localKey)
@@ -301,9 +405,8 @@ export async function materializeOutbox(
         parentObjectId,
         nameCiphertext: null,
         nameBlindIndex: null,
-        nameBlindIndexKeyVersion: null,
         baseRevision: mapping.revision,
-        blobRefs: asset ? [asset.blobId] : [],
+        blobRefs: blob ? [blob.blobId] : [],
         keyVersion,
         ciphertext: encrypted.packedCiphertext,
         ciphertextHash: encrypted.packedCiphertextHash,
@@ -317,14 +420,7 @@ export async function materializeOutbox(
        ) values ($1, $2, $3, $4, $5, 'pending', $6, $6)`,
       [commandId, workspaceId, JSON.stringify(sourceIds.map(item => item.id)), String(command.type), JSON.stringify(command), now]
     )
-    if (localContentHash) {
-      await database.execute(
-        `update self_hosted_object_mappings set content_hash = $1, updated_at = $2
-         where workspace_id = $3 and object_id = $4`,
-        [localContentHash, Date.now(), workspaceId, mapping.objectId]
-      )
-    }
-    if (change.domain === 'asset' && command.type === 'upsert-object') {
+    if (command.type === 'upsert-object' && Array.isArray(command.blobRefs) && command.blobRefs.length > 0) {
       await database.execute(
         `update self_hosted_object_mappings set blob_refs = $1, updated_at = $2
          where workspace_id = $3 and object_id = $4`,
@@ -333,6 +429,117 @@ export async function materializeOutbox(
     }
     await markChanges(sourceIds.map(item => item.id), 'queued')
   }
+}
+
+async function recoverSupersededMappingCommands(
+  database: Awaited<ReturnType<typeof getDb>>,
+  workspaceId: string,
+) {
+  const commands = await database.select<Array<{
+    commandId: string
+    sourceChangeIds: string
+  }>>(
+    `select o.command_id as commandId, o.source_change_ids as sourceChangeIds
+     from self_hosted_outbox o
+     join self_hosted_object_mappings mapping
+       on mapping.workspace_id = o.workspace_id
+      and mapping.object_id = json_extract(o.payload, '$.objectId')
+     where o.workspace_id = $1 and o.state in ('pending', 'retry', 'blocked')
+       and mapping.local_identity like 'superseded:%'`,
+    [workspaceId],
+  )
+  for (const command of commands) {
+    const sourceIds = JSON.parse(command.sourceChangeIds) as number[]
+    const requeueSources = sourceIds.length > 0
+    await database.execute(
+      `update self_hosted_outbox set state = 'superseded', next_attempt_at = 0,
+         last_error_code = $1, updated_at = $2 where command_id = $3`,
+      [
+        requeueSources ? 'mapping_superseded_requeue' : 'mapping_superseded',
+        Date.now(),
+        command.commandId,
+      ],
+    )
+    for (const sourceId of sourceIds) {
+      await database.execute(
+        `update self_hosted_local_changes set state = 'pending', updated_at = $1
+         where id = $2 and state = 'queued'`,
+        [Date.now(), sourceId],
+      )
+    }
+  }
+}
+
+async function recoverRejectedLibraryChanges(
+  database: Awaited<ReturnType<typeof getDb>>,
+  workspaceId: string,
+) {
+  const rejected = await database.select<Array<{ commandId: string; sourceChangeIds: string }>>(
+    `select command_id as commandId, source_change_ids as sourceChangeIds
+     from self_hosted_outbox
+     where workspace_id = $1 and state = 'failed'
+       and last_error_code in ('object_too_large', 'object_parent_invalid')`,
+    [workspaceId]
+  )
+  for (const row of rejected) {
+    for (const id of JSON.parse(row.sourceChangeIds) as number[]) {
+      await database.execute(
+        "update self_hosted_local_changes set state = 'pending', updated_at = $1 where id = $2",
+        [Date.now(), id]
+      )
+    }
+    await database.execute('delete from self_hosted_outbox where command_id = $1', [row.commandId])
+  }
+}
+
+async function recoverOrphanedQueuedChanges(
+  database: Awaited<ReturnType<typeof getDb>>,
+  workspaceId: string,
+  workspaceType: WorkspaceType,
+) {
+  const now = Date.now()
+  await database.execute(
+    `update self_hosted_local_changes set state = 'sent', updated_at = $1
+     where state = 'queued' and exists (
+       select 1 from self_hosted_outbox o, json_each(o.source_change_ids) source
+       where o.workspace_id = $2 and o.state = 'sent'
+         and cast(source.value as integer) = self_hosted_local_changes.id
+     )`,
+    [now, workspaceId]
+  )
+  await database.execute(
+    `update self_hosted_local_changes set state = 'pending', updated_at = $1
+     where state = 'queued' and exists (
+       select 1 from self_hosted_outbox o, json_each(o.source_change_ids) source
+       where o.workspace_id = $2 and o.state = 'superseded'
+         and o.last_error_code = 'mapping_superseded_requeue'
+         and cast(source.value as integer) = self_hosted_local_changes.id
+     )`,
+    [now, workspaceId]
+  )
+  await database.execute(
+    `update self_hosted_local_changes set state = 'superseded', updated_at = $1
+     where state = 'queued' and exists (
+       select 1 from self_hosted_outbox o, json_each(o.source_change_ids) source
+       where o.workspace_id = $2 and o.state in ('failed', 'superseded')
+         and cast(source.value as integer) = self_hosted_local_changes.id
+     ) and not exists (
+       select 1 from self_hosted_outbox active, json_each(active.source_change_ids) source
+       where active.workspace_id = $2 and active.state in ('pending', 'retry', 'blocked')
+         and cast(source.value as integer) = self_hosted_local_changes.id
+     )`,
+    [now, workspaceId]
+  )
+  await database.execute(
+    `update self_hosted_local_changes set state = 'pending', updated_at = $1
+     where state = 'queued'
+       and (workspace_id = $2 or (workspace_id is null and $3 = 'account-data'))
+       and not exists (
+       select 1 from self_hosted_outbox o, json_each(o.source_change_ids) source
+       where cast(source.value as integer) = self_hosted_local_changes.id
+     )`,
+    [now, workspaceId, workspaceType]
+  )
 }
 
 function isDomainEnabled(domain: string, toggles: Record<string, boolean>) {
@@ -437,26 +644,93 @@ async function ensureObjectMapping(
   deterministicImport = false,
 ): Promise<ObjectMapping> {
   const database = await getDb()
-  const rows = await database.select<Array<{ objectId: string; blobRefs: string }>>(
-    `select object_id as objectId, blob_refs as blobRefs from self_hosted_object_mappings
-     where workspace_id = $1 and kind = $2 and local_identity = $3 limit 1`,
-    [workspaceId, kind, `${domain}:${localKey}`]
-  )
-  const objectId = rows[0]?.objectId ?? (deterministicImport
+  const portable = domain === 'file' || domain === 'asset' || domain === 'folder'
+    ? await invoke<{ normalized: string; caseFolded: string }>(
+        'self_hosted_portable_path',
+        { relativePath: localKey },
+      )
+    : null
+  const normalizedLocalKey = portable?.normalized ?? localKey
+  const localIdentity = `${domain}:${normalizedLocalKey}`
+  const rows = portable
+    ? await database.select<Array<{
+        objectId: string
+        blobRefs: string
+        localIdentity: string
+        relativePath: string | null
+        pathCasefold: string | null
+      }>>(
+        `select object_id as objectId, blob_refs as blobRefs,
+           local_identity as localIdentity, relative_path as relativePath,
+           path_casefold as pathCasefold
+         from self_hosted_object_mappings
+         where workspace_id = $1 and kind = $2 and (
+           local_identity = $3
+           or (path_casefold = $4 and deleted_at is null)
+         )
+         order by case when local_identity = $3 then 0 else 1 end
+         limit 1`,
+        [workspaceId, kind, localIdentity, portable.caseFolded],
+      )
+    : await database.select<Array<{
+        objectId: string
+        blobRefs: string
+        localIdentity: string
+        relativePath: string | null
+        pathCasefold: string | null
+      }>>(
+        `select object_id as objectId, blob_refs as blobRefs,
+           local_identity as localIdentity, relative_path as relativePath,
+           path_casefold as pathCasefold
+         from self_hosted_object_mappings
+         where workspace_id = $1 and kind = $2 and local_identity = $3 limit 1`,
+        [workspaceId, kind, localIdentity],
+      )
+  const existing = rows[0]
+  if (
+    portable
+    && existing
+    && (
+      existing.localIdentity !== localIdentity
+      || existing.relativePath !== portable.normalized
+      || existing.pathCasefold !== portable.caseFolded
+    )
+  ) {
+    await database.execute(
+      `update self_hosted_object_mappings
+       set local_identity = $1, relative_path = $2, path_casefold = $3, updated_at = $4
+       where workspace_id = $5 and object_id = $6`,
+      [
+        localIdentity,
+        portable.normalized,
+        portable.caseFolded,
+        Date.now(),
+        workspaceId,
+        existing.objectId,
+      ],
+    )
+  }
+  const stablePersonalIdentity = domain === 'setting' || domain in STRUCTURED_DOMAINS
+  const objectId = existing?.objectId ?? (deterministicImport || stablePersonalIdentity
     ? await invoke<string>('self_hosted_import_object_id', {
         workspaceId,
-        relativePath: `${domain}/${localKey}`,
+        relativePath: `${domain}/${normalizedLocalKey}`,
       })
     : crypto.randomUUID())
-  if (!rows[0]) {
-    const portable = domain === 'file' || domain === 'asset' || domain === 'folder'
-      ? await invoke<{ normalized: string; caseFolded: string }>('self_hosted_portable_path', { relativePath: localKey })
-      : null
+  if (!existing) {
     await database.execute(
       `insert into self_hosted_object_mappings(
          workspace_id, object_id, kind, local_identity, relative_path, path_casefold, updated_at
        ) values ($1, $2, $3, $4, $5, $6, $7)`,
-      [workspaceId, objectId, kind, `${domain}:${localKey}`, portable?.normalized ?? null, portable?.caseFolded ?? null, Date.now()]
+      [
+        workspaceId,
+        objectId,
+        kind,
+        localIdentity,
+        portable?.normalized ?? null,
+        portable?.caseFolded ?? null,
+        Date.now(),
+      ]
     )
   }
   const revisions = await database.select<Array<{ revision: string }>>(
@@ -473,7 +747,7 @@ async function ensureObjectMapping(
   return {
     objectId,
     revision: revisions[0]?.revision ?? null,
-    blobRefs: JSON.parse(rows[0]?.blobRefs ?? '[]') as string[],
+    blobRefs: JSON.parse(existing?.blobRefs ?? '[]') as string[],
     documentSequence: documents[0]?.sequence ?? '0',
   }
 }

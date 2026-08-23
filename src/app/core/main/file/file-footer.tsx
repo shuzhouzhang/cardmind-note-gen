@@ -71,7 +71,9 @@ export function FileFooter() {
   const currentWorkspacePath = workspacePath
     || defaultWorkspacePath
     || defaultWorkspaceName
-  const syncStatusText = sync.status === 'available'
+  const syncStatusText = sync.reason === 'reauthentication-required'
+    ? tContext('syncReauthenticationRequired')
+    : sync.status === 'available'
     ? tContext('syncAvailable', { platform: sync.platform })
     : sync.status === 'checking'
       ? tContext('syncChecking', { platform: sync.platform })

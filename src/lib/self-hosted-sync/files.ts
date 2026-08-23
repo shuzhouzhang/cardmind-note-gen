@@ -3,6 +3,23 @@ import { Store } from '@tauri-apps/plugin-store'
 import { getDb } from '@/db'
 import { getDefaultArticleAbsolutePath, getWorkspacePath } from '@/lib/workspace'
 
+function normalizeSlashes(path: string) {
+  return path.normalize('NFC').replaceAll('\\', '/').replace(/\/{2,}/g, '/').replace(/\/$/, '')
+}
+
+function workspaceRelativePath(path: string, workspaceRoot: string) {
+  const normalizedPath = normalizeSlashes(path.trim())
+  const normalizedRoot = normalizeSlashes(workspaceRoot.trim())
+  const windowsAbsolute = /^[a-zA-Z]:\//.test(normalizedPath)
+  const absolute = normalizedPath.startsWith('/') || windowsAbsolute
+  if (!absolute) return normalizedPath.replace(/^\.\//, '') || null
+
+  const comparablePath = windowsAbsolute ? normalizedPath.toLocaleLowerCase() : normalizedPath
+  const comparableRoot = windowsAbsolute ? normalizedRoot.toLocaleLowerCase() : normalizedRoot
+  if (!comparablePath.startsWith(`${comparableRoot}/`)) return null
+  return normalizedPath.slice(normalizedRoot.length + 1) || null
+}
+
 export async function moveSelfHostedWorkspacePath(sourceRelativePath: string, targetRelativePath: string) {
   const store = await Store.load('store.json')
   if (await store.get<string>('primaryBackupMethod') !== 'selfHosted') return false
@@ -16,11 +33,14 @@ export async function moveSelfHostedWorkspacePath(sourceRelativePath: string, ta
   )
   const workspaceId = bindings[0]?.workspaceId
   if (!workspaceId) return false
+  const normalizedSourcePath = workspaceRelativePath(sourceRelativePath, workspaceRoot)
+  const normalizedTargetPath = workspaceRelativePath(targetRelativePath, workspaceRoot)
+  if (!normalizedSourcePath || !normalizedTargetPath) return false
   await invoke('self_hosted_move_path', {
     workspaceId,
     workspaceRoot,
-    sourceRelativePath,
-    targetRelativePath,
+    sourceRelativePath: normalizedSourcePath,
+    targetRelativePath: normalizedTargetPath,
   })
   return true
 }
@@ -28,11 +48,13 @@ export async function moveSelfHostedWorkspacePath(sourceRelativePath: string, ta
 export async function writeSelfHostedWorkspaceText(relativePath: string, content: string) {
   const binding = await activeBinding()
   if (!binding) return false
+  const normalizedPath = workspaceRelativePath(relativePath, binding.workspaceRoot)
+  if (!normalizedPath) return false
   const database = await getDb()
   const mappings = await database.select<Array<{ objectId: string }>>(
     `select object_id as objectId from self_hosted_object_mappings
      where workspace_id = $1 and relative_path = $2 and deleted_at is null limit 1`,
-    [binding.workspaceId, relativePath]
+    [binding.workspaceId, normalizedPath]
   )
   const bytes = new TextEncoder().encode(content)
   let binary = ''
@@ -41,7 +63,7 @@ export async function writeSelfHostedWorkspaceText(relativePath: string, content
     workspaceId: binding.workspaceId,
     objectId: mappings[0]?.objectId ?? null,
     workspaceRoot: binding.workspaceRoot,
-    relativePath,
+    relativePath: normalizedPath,
     contents: btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, ''),
     expectedHash: await invoke<string>('self_hosted_sha256', { value: content }),
   })
@@ -51,6 +73,8 @@ export async function writeSelfHostedWorkspaceText(relativePath: string, content
 export async function deleteSelfHostedWorkspacePath(relativePath: string) {
   const binding = await activeBinding()
   if (!binding) return false
+  const normalizedPath = workspaceRelativePath(relativePath, binding.workspaceRoot)
+  if (!normalizedPath) return false
   const database = await getDb()
   const mappings = await database.select<Array<{
     objectId: string
@@ -60,7 +84,7 @@ export async function deleteSelfHostedWorkspacePath(relativePath: string) {
     `select object_id as objectId, kind, content_hash as contentHash
      from self_hosted_object_mappings where workspace_id = $1 and relative_path = $2
        and deleted_at is null limit 1`,
-    [binding.workspaceId, relativePath]
+    [binding.workspaceId, normalizedPath]
   )
   const mapping = mappings[0]
   if (mapping?.kind === 'folder') {
@@ -68,7 +92,7 @@ export async function deleteSelfHostedWorkspacePath(relativePath: string) {
       workspaceId: binding.workspaceId,
       objectId: mapping.objectId,
       workspaceRoot: binding.workspaceRoot,
-      relativePath,
+      relativePath: normalizedPath,
       allowNonEmpty: true,
     })
   } else {
@@ -76,7 +100,7 @@ export async function deleteSelfHostedWorkspacePath(relativePath: string) {
       workspaceId: binding.workspaceId,
       objectId: mapping?.objectId ?? null,
       workspaceRoot: binding.workspaceRoot,
-      relativePath,
+      relativePath: normalizedPath,
       expectedHash: null,
     })
   }

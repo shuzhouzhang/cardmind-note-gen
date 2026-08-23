@@ -10,7 +10,7 @@ import useSyncStore from '@/stores/sync'
 import type { SyncPlatform } from '@/types/sync'
 import { useShallow } from 'zustand/react/shallow'
 
-import { getSyncConfiguration } from './file-tree-action-policy'
+import { getSyncConfiguration, type SyncConfigurationReason } from './file-tree-action-policy'
 
 export type SyncAvailabilityStatus = 'not-configured' | 'checking' | 'available' | 'unavailable'
 
@@ -39,8 +39,13 @@ export function useSyncAvailability() {
     s3: state.s3Connected,
     webdav: state.webdavConnected,
     cloudFolder: state.cloudFolderConnected,
+    selfHosted: state.selfHostedConnected,
   })))
-  const [state, setState] = useState<{ configured: boolean; platform: SyncPlatform }>({
+  const [state, setState] = useState<{
+    configured: boolean
+    platform: SyncPlatform
+    reason?: SyncConfigurationReason
+  }>({
     configured: false,
     platform: credentials.primaryBackupMethod,
   })
@@ -67,15 +72,24 @@ export function useSyncAvailability() {
 
   useEffect(() => {
     setConfigurationRevision(revision => revision + 1)
-    void refresh()
+    void refresh().catch(error => {
+      console.warn('[sync-availability] Configuration refresh failed', error)
+    })
   }, [credentials, refresh, settingsOpen])
 
   let status: SyncAvailabilityStatus
   if (configurationChecking) {
     status = 'checking'
+  } else if (state.reason === 'reauthentication-required') {
+    status = 'unavailable'
   } else if (!state.configured) {
     status = 'not-configured'
-  } else if (state.platform === 's3' || state.platform === 'webdav' || state.platform === 'cloudFolder') {
+  } else if (
+    state.platform === 's3'
+    || state.platform === 'webdav'
+    || state.platform === 'cloudFolder'
+    || state.platform === 'selfHosted'
+  ) {
     status = providerStates[state.platform] ? 'available' : 'unavailable'
   } else {
     const providerState = providerStates[state.platform]

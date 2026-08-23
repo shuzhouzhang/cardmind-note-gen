@@ -20,7 +20,12 @@ import { BaseDirectory, DirEntry, exists, mkdir, readDir, readTextFile, writeTex
 import { Store } from '@tauri-apps/plugin-store'
 import { cloneDeep, uniq } from 'lodash-es'
 import { create } from 'zustand'
-import { getFilePathOptions, getWorkspacePath, isAbsoluteFsPath, toWorkspaceRelativePath } from '@/lib/workspace'
+import {
+  getFilePathOptions,
+  getWorkspacePath,
+  isAbsoluteFsPath,
+  toWorkspaceRelativePath,
+} from '@/lib/workspace'
 import emitter from '@/lib/emitter'
 import type { Events } from '@/lib/emitter'
 import { isSkillsFolder } from '@/lib/skills/utils'
@@ -36,12 +41,16 @@ import {
   writeCloudFolderTreeCache,
 } from '@/lib/sync/cloud-folder-tree-cache'
 import {
+  editorPathsReferToSameFile,
+  editorPathIsSameOrDescendant,
+  getCurrentEditorWorkspaceRoot,
   getEditorPathMutationRevision,
   prepareActiveEditorDeactivation,
   prepareActiveEditorDeactivationDurably,
   registerActiveEditorDurableSaveFlusher,
   registerEditorPathMutationFlusher,
   registerEditorPathWriteTransactionRunner,
+  workspaceRootsReferToSameLocation,
   type EditorPathWriteTransactionContext,
 } from '@/lib/editor-deactivation'
 import { writeSelfHostedWorkspaceText } from '@/lib/self-hosted-sync/files'
@@ -67,31 +76,58 @@ let vectorCalculationTimer: ReturnType<typeof setTimeout> | null = null
 let pendingVectorCalculation: { path: string; content: string } | null = null
 let inFlightVectorCalculation: { path: string; promise: Promise<void> } | null = null
 
-function pathIsSameOrDescendant(path: string, parentPath: string): boolean {
-  const normalizedParent = parentPath.replace(/\/+$/, '')
-  return Boolean(
-    path
-    && normalizedParent
-    && (path === normalizedParent || path.startsWith(`${normalizedParent}/`))
-  )
+function pathIsSameOrDescendant(
+  path: string,
+  parentPath: string,
+  workspaceRoot?: string,
+): boolean {
+  return editorPathIsSameOrDescendant(path, parentPath, workspaceRoot)
 }
 
-function discardQueuedArticleSaves(path: string): void {
+function pathMatchesMutation(
+  path: string,
+  changedPath: string,
+  workspaceRoot: string | undefined,
+  includeDescendants: boolean,
+): boolean {
+  return includeDescendants
+    ? pathIsSameOrDescendant(path, changedPath, workspaceRoot)
+    : editorPathsReferToSameFile(path, changedPath, workspaceRoot)
+}
+
+function discardQueuedArticleSaves(
+  path: string,
+  workspaceRoot?: string,
+  includeDescendants = true,
+): void {
   for (const [savePath, pendingSave] of pendingArticleSaves) {
-    if (!pathIsSameOrDescendant(savePath, path)) continue
+    if (!pathMatchesMutation(savePath, path, workspaceRoot, includeDescendants)) continue
     if (pendingSave.timer) clearTimeout(pendingSave.timer)
     pendingArticleSaves.delete(savePath)
   }
 }
 
-function discardPendingVectorCalculation(path: string): void {
-  if (!pendingVectorCalculation || !pathIsSameOrDescendant(pendingVectorCalculation.path, path)) {
+function discardPendingVectorCalculation(
+  path: string,
+  workspaceRoot?: string,
+  includeDescendants = true,
+): void {
+  if (
+    !pendingVectorCalculation
+    || !pathMatchesMutation(
+      pendingVectorCalculation.path,
+      path,
+      workspaceRoot,
+      includeDescendants,
+    )
+  ) {
     return
   }
   if (vectorCalculationTimer) clearTimeout(vectorCalculationTimer)
   vectorCalculationTimer = null
   pendingVectorCalculation = null
 }
+
 let vectorIndexedFilesInitPromise: Promise<void> | null = null
 const remoteFolderLoadPromises = new Map<string, Promise<void>>()
 const REMOTE_FOLDER_TIMEOUT_MS = 20_000
@@ -661,8 +697,14 @@ interface NoteState {
   getEditorViewState: (path: string) => EditorViewState | null
   removeEditorViewState: (path: string) => void
   moveEditorViewState: (oldPath: string, newPath: string) => void
-  cleanTabsByDeletedFile: (deletedPath: string) => Promise<void>
-  cleanTabsByDeletedFolder: (deletedFolderPath: string) => Promise<void>
+  cleanTabsByDeletedFile: (
+    deletedPath: string,
+    workspaceRootOverride?: string,
+  ) => Promise<void>
+  cleanTabsByDeletedFolder: (
+    deletedFolderPath: string,
+    workspaceRootOverride?: string,
+  ) => Promise<void>
   clearTabs: () => void
 
   matchPosition: number | null
@@ -748,11 +790,15 @@ interface NoteState {
   setAiTerminateFn: (fn: (() => void) | null) => void
   saveCurrentArticle: (content: string, pathOverride?: string) => Promise<void>
   flushPendingArticleSave: (path: string) => Promise<void>
-  flushPendingArticleSavesForPaths: (paths: string[]) => Promise<void>
+  flushPendingArticleSavesForPaths: (
+    paths: string[],
+    workspaceRoot?: string,
+  ) => Promise<void>
   flushAllPendingArticleSaves: () => Promise<void>
   runPathWriteTransaction: (
     path: string,
     transaction: (context: EditorPathWriteTransactionContext) => Promise<boolean>,
+    workspaceRoot?: string,
   ) => Promise<boolean>
   // 更新文件 sha 状态（推送成功后调用）
   updateFileSha: (path: string, sha: string) => void
@@ -762,7 +808,10 @@ interface NoteState {
   scheduleVectorCalculation: (path: string, content: string) => void
   executeVectorCalculation: (options?: { force?: boolean }) => Promise<void>
   cancelVectorCalculation: () => void
-  settleVectorCalculationsForPaths: (paths: string[]) => Promise<void>
+  settleVectorCalculationsForPaths: (
+    paths: string[],
+    workspaceRoot?: string,
+  ) => Promise<void>
   settleAllVectorCalculations: () => Promise<void>
   triggerVectorCalculation: () => Promise<void> // 手动触发向量计算
   // 向量索引状态
@@ -1111,77 +1160,126 @@ const useArticleStore = create<NoteState>((set, get) => ({
   },
 
   // 清理已被删除的文件对应的 tabs（根据路径匹配）
-  cleanTabsByDeletedFile: async (deletedPath: string) => {
-    discardQueuedArticleSaves(deletedPath)
-    discardPendingVectorCalculation(deletedPath)
+  cleanTabsByDeletedFile: async (
+    deletedPath: string,
+    workspaceRootOverride?: string,
+  ) => {
+    const currentWorkspaceRoot = await getCurrentEditorWorkspaceRoot()
+    if (
+      workspaceRootOverride
+      && !workspaceRootsReferToSameLocation(currentWorkspaceRoot, workspaceRootOverride)
+    ) {
+      return
+    }
+    const workspaceRoot = workspaceRootOverride ?? currentWorkspaceRoot
+    const isDeletedFile = (path: string) => (
+      editorPathsReferToSameFile(path, deletedPath, workspaceRoot)
+    )
+    discardQueuedArticleSaves(deletedPath, workspaceRoot, false)
+    discardPendingVectorCalculation(deletedPath, workspaceRoot, false)
 
-    const currentTabs = get().openTabs
-    const currentActiveTabId = get().activeTabId
-    const currentActiveFilePath = get().activeFilePath
-    const newTabs = currentTabs.filter(t => t.path !== deletedPath)
-    const nextSelectedFilePaths = get().selectedFilePaths.filter(path => path !== deletedPath)
-    const deletedTab = currentTabs.find(t => t.path === deletedPath)
+    const currentState = get()
+    const currentTabs = currentState.openTabs
+    const currentActiveTabId = currentState.activeTabId
+    const currentActiveFilePath = currentState.activeFilePath
+    const currentSelectedFilePaths = currentState.selectedFilePaths
+    const newTabs = currentTabs.filter(tab => !isDeletedFile(tab.path))
+    const nextSelectedFilePaths = currentSelectedFilePaths.filter(path => !isDeletedFile(path))
+    const currentActiveTab = currentTabs.find(tab => tab.id === currentActiveTabId)
+    const activeTabDeleted = Boolean(currentActiveTab && isDeletedFile(currentActiveTab.path))
     const tabsChanged = newTabs.length !== currentTabs.length
 
     let newActiveTabId = currentActiveTabId
     let newActiveFilePath = currentActiveFilePath
-    if (deletedTab && currentActiveTabId === deletedTab.id && newTabs.length > 0) {
+    if (activeTabDeleted && newTabs.length > 0) {
       const targetTab = newTabs[newTabs.length - 1]
       newActiveTabId = targetTab.id
       newActiveFilePath = getActiveFilePathForTab(targetTab)
-    } else if (deletedTab && currentActiveTabId === deletedTab.id) {
+    } else if (activeTabDeleted) {
       newActiveTabId = ''
       newActiveFilePath = ''
-    } else if (currentActiveFilePath === deletedPath) {
+    } else if (isDeletedFile(currentActiveFilePath)) {
       newActiveFilePath = ''
     }
 
     const activeChanged = newActiveTabId !== currentActiveTabId
       || newActiveFilePath !== currentActiveFilePath
-    const selectionChanged = nextSelectedFilePaths.length !== get().selectedFilePaths.length
-    if (!tabsChanged && !activeChanged && !selectionChanged) return
+    const selectionChanged = nextSelectedFilePaths.length !== currentSelectedFilePaths.length
+    const nextEditorViewStates = { ...currentState.editorViewStates }
+    let viewStatesChanged = false
+    Object.keys(nextEditorViewStates).forEach(path => {
+      if (!isDeletedFile(path)) return
+      delete nextEditorViewStates[path]
+      viewStatesChanged = true
+    })
+    if (!tabsChanged && !activeChanged && !selectionChanged && !viewStatesChanged) return
 
-    const nextEditorViewStates = { ...get().editorViewStates }
-    delete nextEditorViewStates[deletedPath]
     set({
       openTabs: newTabs,
       activeTabId: newActiveTabId,
       selectedFilePaths: nextSelectedFilePaths,
       editorViewStates: nextEditorViewStates,
+      ...(activeChanged ? {
+        activeFilePath: newActiveFilePath,
+        currentArticle: '',
+        readFilePath: '',
+        isPulling: false,
+        justPulledFile: false,
+        loading: Boolean(newActiveFilePath && isLikelyFilePath(newActiveFilePath)),
+      } : {}),
     })
 
+    const activatePromise = activeChanged
+      ? get().setActiveFilePath(
+        newActiveFilePath,
+        true,
+        { deactivationAlreadyPrepared: true },
+      )
+      : null
     const store = await getStore()
     if (tabsChanged) {
       await store.set('openTabs', newTabs)
     }
     if (activeChanged) {
       await store.set('activeTabId', newActiveTabId)
-      await get().setActiveFilePath(
-        newActiveFilePath,
-        true,
-        { deactivationAlreadyPrepared: true },
-      )
+      await activatePromise
     }
   },
 
   // 清理已被删除的文件夹对应的 tabs（清理该文件夹下所有文件的 tabs）
-  cleanTabsByDeletedFolder: async (deletedFolderPath: string) => {
-    discardQueuedArticleSaves(deletedFolderPath)
-    discardPendingVectorCalculation(deletedFolderPath)
+  cleanTabsByDeletedFolder: async (
+    deletedFolderPath: string,
+    workspaceRootOverride?: string,
+  ) => {
+    const currentWorkspaceRoot = await getCurrentEditorWorkspaceRoot()
+    if (
+      workspaceRootOverride
+      && !workspaceRootsReferToSameLocation(currentWorkspaceRoot, workspaceRootOverride)
+    ) {
+      return
+    }
+    const workspaceRoot = workspaceRootOverride ?? currentWorkspaceRoot
+    const isInDeletedFolder = (path: string) => (
+      pathIsSameOrDescendant(path, deletedFolderPath, workspaceRoot)
+    )
+    discardQueuedArticleSaves(deletedFolderPath, workspaceRoot)
+    discardPendingVectorCalculation(deletedFolderPath, workspaceRoot)
 
-    const currentTabs = get().openTabs
-    const currentActiveTabId = get().activeTabId
-    const currentActiveFilePath = get().activeFilePath
+    const currentState = get()
+    const currentTabs = currentState.openTabs
+    const currentActiveTabId = currentState.activeTabId
+    const currentActiveFilePath = currentState.activeFilePath
+    const currentSelectedFilePaths = currentState.selectedFilePaths
     const newTabs = currentTabs.filter(
-      tab => !pathIsSameOrDescendant(tab.path, deletedFolderPath)
+      tab => !isInDeletedFolder(tab.path)
     )
     const currentActiveTab = currentTabs.find(tab => tab.id === currentActiveTabId)
     const activeTabDeleted = Boolean(
-      currentActiveTab && pathIsSameOrDescendant(currentActiveTab.path, deletedFolderPath)
+      currentActiveTab && isInDeletedFolder(currentActiveTab.path)
     )
-    const activeFileDeleted = pathIsSameOrDescendant(currentActiveFilePath, deletedFolderPath)
-    const nextSelectedFilePaths = get().selectedFilePaths.filter(
-      path => !pathIsSameOrDescendant(path, deletedFolderPath)
+    const activeFileDeleted = isInDeletedFolder(currentActiveFilePath)
+    const nextSelectedFilePaths = currentSelectedFilePaths.filter(
+      path => !isInDeletedFolder(path)
     )
 
     let newActiveTabId = currentActiveTabId
@@ -1200,11 +1298,11 @@ const useArticleStore = create<NoteState>((set, get) => ({
     const tabsChanged = newTabs.length !== currentTabs.length
     const activeChanged = newActiveTabId !== currentActiveTabId
       || newActiveFilePath !== currentActiveFilePath
-    const selectionChanged = nextSelectedFilePaths.length !== get().selectedFilePaths.length
-    const nextEditorViewStates = { ...get().editorViewStates }
+    const selectionChanged = nextSelectedFilePaths.length !== currentSelectedFilePaths.length
+    const nextEditorViewStates = { ...currentState.editorViewStates }
     let viewStatesChanged = false
     Object.keys(nextEditorViewStates).forEach(path => {
-      if (pathIsSameOrDescendant(path, deletedFolderPath)) {
+      if (isInDeletedFolder(path)) {
         delete nextEditorViewStates[path]
         viewStatesChanged = true
       }
@@ -1217,16 +1315,27 @@ const useArticleStore = create<NoteState>((set, get) => ({
       activeTabId: newActiveTabId,
       selectedFilePaths: nextSelectedFilePaths,
       editorViewStates: nextEditorViewStates,
+      ...(activeChanged ? {
+        activeFilePath: newActiveFilePath,
+        currentArticle: '',
+        readFilePath: '',
+        isPulling: false,
+        justPulledFile: false,
+        loading: Boolean(newActiveFilePath && isLikelyFilePath(newActiveFilePath)),
+      } : {}),
     })
-    const store = await getStore()
-    if (tabsChanged) await store.set('openTabs', newTabs)
-    if (activeChanged) {
-      await store.set('activeTabId', newActiveTabId)
-      await get().setActiveFilePath(
+    const activatePromise = activeChanged
+      ? get().setActiveFilePath(
         newActiveFilePath,
         true,
         { deactivationAlreadyPrepared: true },
       )
+      : null
+    const store = await getStore()
+    if (tabsChanged) await store.set('openTabs', newTabs)
+    if (activeChanged) {
+      await store.set('activeTabId', newActiveTabId)
+      await activatePromise
     }
   },
 
@@ -1671,9 +1780,7 @@ const useArticleStore = create<NoteState>((set, get) => ({
     }
     
     // 确保工作区目录存在
-    if (await writeSelfHostedWorkspaceText(fullPath, '')) {
-      // Rust journal already persisted the file.
-    } else if (workspace.isCustom) {
+    if (workspace.isCustom) {
       // 自定义工作区
       const isWorkspaceExists = await exists(workspace.path)
       if (!isWorkspaceExists) {
@@ -2603,7 +2710,9 @@ const useArticleStore = create<NoteState>((set, get) => ({
     const pathOptions = await getFilePathOptions(fullPath)
     
     // 写入空文件
-    if (workspace.isCustom) {
+    if (await writeSelfHostedWorkspaceText(fullPath, '')) {
+      // Rust journal already persisted the synchronized file.
+    } else if (workspace.isCustom) {
       await writeTextFile(pathOptions.path, '')
     } else {
       await writeTextFile(pathOptions.path, '', { baseDir: pathOptions.baseDir })
@@ -3161,42 +3270,41 @@ const useArticleStore = create<NoteState>((set, get) => ({
           // 检查文件是否存在
           let isLocale = false
           const pathOptions = await getFilePathOptions(savePath)
-          if (await writeSelfHostedWorkspaceText(savePath, saveContent)) {
-            // Rust journal already persisted the file.
-          } else if (!pathOptions.baseDir) {
+          if (!pathOptions.baseDir) {
             isLocale = await exists(pathOptions.path)
           } else {
             isLocale = await exists(pathOptions.path, { baseDir: pathOptions.baseDir })
           }
-
-          // 确保目录结构存在
-          if (savePath.includes('/')) {
-            let dir = ''
-            const dirPath = savePath.split('/')
-            for (let index = 0; index < dirPath.length - 1; index += 1) {
-              dir += `${dirPath[index]}/`
-              const dirOptions = await getFilePathOptions(dir)
-              let dirExists = false
-              if (!dirOptions.baseDir) {
-                dirExists = await exists(dirOptions.path)
-              } else {
-                dirExists = await exists(dirOptions.path, { baseDir: dirOptions.baseDir })
-              }
-              if (!dirExists) {
+          const wroteSelfHosted = await writeSelfHostedWorkspaceText(savePath, saveContent)
+          if (!wroteSelfHosted) {
+            // Ensure the fallback path exists before a regular filesystem write.
+            if (savePath.includes('/')) {
+              let dir = ''
+              const dirPath = savePath.split('/')
+              for (let index = 0; index < dirPath.length - 1; index += 1) {
+                dir += `${dirPath[index]}/`
+                const dirOptions = await getFilePathOptions(dir)
+                let dirExists = false
                 if (!dirOptions.baseDir) {
-                  await mkdir(dirOptions.path)
+                  dirExists = await exists(dirOptions.path)
                 } else {
-                  await mkdir(dirOptions.path, { baseDir: dirOptions.baseDir })
+                  dirExists = await exists(dirOptions.path, { baseDir: dirOptions.baseDir })
+                }
+                if (!dirExists) {
+                  if (!dirOptions.baseDir) {
+                    await mkdir(dirOptions.path)
+                  } else {
+                    await mkdir(dirOptions.path, { baseDir: dirOptions.baseDir })
+                  }
                 }
               }
             }
-          }
 
-          // 保存文件内容
-          if (!pathOptions.baseDir) {
-            await writeTextFile(pathOptions.path, saveContent)
-          } else {
-            await writeTextFile(pathOptions.path, saveContent, { baseDir: pathOptions.baseDir })
+            if (!pathOptions.baseDir) {
+              await writeTextFile(pathOptions.path, saveContent)
+            } else {
+              await writeTextFile(pathOptions.path, saveContent, { baseDir: pathOptions.baseDir })
+            }
           }
           get().markFileDirty(savePath)
 
@@ -3316,14 +3424,14 @@ const useArticleStore = create<NoteState>((set, get) => ({
     }
   },
 
-  flushPendingArticleSavesForPaths: async (paths: string[]) => {
+  flushPendingArticleSavesForPaths: async (paths: string[], workspaceRoot?: string) => {
     while (true) {
       const savePaths = new Set([
         ...pendingArticleSaves.keys(),
         ...inFlightArticleSaves.keys(),
       ])
       const matchingPaths = [...savePaths].filter(savePath => (
-        paths.some(path => pathIsSameOrDescendant(savePath, path))
+        paths.some(path => pathIsSameOrDescendant(savePath, path, workspaceRoot))
       ))
       if (matchingPaths.length === 0) return
       await Promise.all(matchingPaths.map(path => get().flushPendingArticleSave(path)))
@@ -3340,33 +3448,66 @@ const useArticleStore = create<NoteState>((set, get) => ({
     }
   },
 
-  runPathWriteTransaction: async (path, transaction) => {
+  runPathWriteTransaction: async (path, transaction, workspaceRoot) => {
+    if (workspaceRoot) {
+      const currentWorkspaceRoot = await getCurrentEditorWorkspaceRoot()
+      if (!workspaceRootsReferToSameLocation(currentWorkspaceRoot, workspaceRoot)) {
+        // Article save queues only belong to the workspace currently mounted
+        // in the UI. A background library has no editor-local save to drain.
+        return transaction({ hasQueuedSave: () => false })
+      }
+    }
+
     // Promote a queued debounce save into the in-flight chain before installing
     // the transaction gate. Do not call a durable flush from inside the
     // transaction callback: it would wait on this same gate.
-    const pendingSave = pendingArticleSaves.get(path)
-    if (pendingSave) {
-      void pendingSave.commit().catch(() => undefined)
+    const transactionPaths = new Set<string>([path])
+    const activeFilePath = get().activeFilePath
+    if (editorPathsReferToSameFile(activeFilePath, path, workspaceRoot)) {
+      transactionPaths.add(activeFilePath)
     }
-    const previousSave = inFlightArticleSaves.get(path)
+    for (const savePath of new Set([
+      ...pendingArticleSaves.keys(),
+      ...inFlightArticleSaves.keys(),
+    ])) {
+      if (editorPathsReferToSameFile(savePath, path, workspaceRoot)) {
+        transactionPaths.add(savePath)
+      }
+    }
+    for (const transactionPath of transactionPaths) {
+      const pendingSave = pendingArticleSaves.get(transactionPath)
+      if (pendingSave) void pendingSave.commit().catch(() => undefined)
+    }
+    const previousSaves = [...transactionPaths]
+      .map(transactionPath => inFlightArticleSaves.get(transactionPath))
+      .filter((save): save is Promise<void> => Boolean(save))
     let releaseGate = () => {}
     const transactionGate = new Promise<void>((resolve) => {
       releaseGate = () => resolve()
     })
-    inFlightArticleSaves.set(path, transactionGate)
+    for (const transactionPath of transactionPaths) {
+      inFlightArticleSaves.set(transactionPath, transactionGate)
+    }
 
     try {
-      if (previousSave) await previousSave
+      await Promise.all(previousSaves)
       return await transaction({
         hasQueuedSave: () => (
-          pendingArticleSaves.has(path)
-          || inFlightArticleSaves.get(path) !== transactionGate
+          [...pendingArticleSaves.keys()].some(savePath => (
+            editorPathsReferToSameFile(savePath, path, workspaceRoot)
+          ))
+          || [...inFlightArticleSaves.entries()].some(([savePath, save]) => (
+            editorPathsReferToSameFile(savePath, path, workspaceRoot)
+            && save !== transactionGate
+          ))
         ),
       })
     } finally {
       releaseGate()
-      if (inFlightArticleSaves.get(path) === transactionGate) {
-        inFlightArticleSaves.delete(path)
+      for (const transactionPath of transactionPaths) {
+        if (inFlightArticleSaves.get(transactionPath) === transactionGate) {
+          inFlightArticleSaves.delete(transactionPath)
+        }
       }
     }
   },
@@ -3456,16 +3597,18 @@ const useArticleStore = create<NoteState>((set, get) => ({
     pendingVectorCalculation = null
   },
 
-  settleVectorCalculationsForPaths: async (paths: string[]) => {
-    paths.forEach(discardPendingVectorCalculation)
+  settleVectorCalculationsForPaths: async (paths: string[], workspaceRoot?: string) => {
+    paths.forEach(path => discardPendingVectorCalculation(path, workspaceRoot))
     const inFlightCalculation = inFlightVectorCalculation
     if (
       inFlightCalculation
-      && paths.some(path => pathIsSameOrDescendant(inFlightCalculation.path, path))
+      && paths.some(path => (
+        pathIsSameOrDescendant(inFlightCalculation.path, path, workspaceRoot)
+      ))
     ) {
       await inFlightCalculation.promise
     }
-    paths.forEach(discardPendingVectorCalculation)
+    paths.forEach(path => discardPendingVectorCalculation(path, workspaceRoot))
   },
 
   settleAllVectorCalculations: async () => {
@@ -3643,14 +3786,14 @@ registerActiveEditorDurableSaveFlusher(async (path) => {
   await useArticleStore.getState().flushPendingArticleSave(path)
 })
 
-registerEditorPathMutationFlusher(async (paths) => {
+registerEditorPathMutationFlusher(async (paths, workspaceRoot) => {
   const articleState = useArticleStore.getState()
-  await articleState.flushPendingArticleSavesForPaths(paths)
-  await articleState.settleVectorCalculationsForPaths(paths)
+  await articleState.flushPendingArticleSavesForPaths(paths, workspaceRoot)
+  await articleState.settleVectorCalculationsForPaths(paths, workspaceRoot)
 })
 
-registerEditorPathWriteTransactionRunner((path, transaction) => (
-  useArticleStore.getState().runPathWriteTransaction(path, transaction)
+registerEditorPathWriteTransactionRunner((path, transaction, workspaceRoot) => (
+  useArticleStore.getState().runPathWriteTransaction(path, transaction, workspaceRoot)
 ))
 
 export default useArticleStore

@@ -47,11 +47,9 @@ pub async fn track_analytics_event(event: AnalyticsEvent) -> Result<String, Stri
         .map_err(|error| format!("Failed to send analytics event: {error}"))?;
 
     let status = response.status();
-    let response_text = response.text().await.unwrap_or_default();
-
     if status.is_success() {
-        Ok(response_text)
+        Ok(response.text().await.unwrap_or_default())
     } else {
-        Err(format!("Aptabase responded with {status}: {response_text}"))
+        Err(format!("Analytics service responded with HTTP {status}"))
     }
 }

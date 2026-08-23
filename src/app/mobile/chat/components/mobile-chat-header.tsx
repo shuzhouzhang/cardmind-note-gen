@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import dynamic from "next/dynamic"
 import { History, MessageSquareDashed, MessageSquarePlus, Search, Trash2 } from "lucide-react"
 import { useTranslations } from "next-intl"
@@ -22,12 +22,6 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from "@/components/ui/drawer"
-import {
-  getAutoDataSyncState,
-  subscribeAutoDataSyncState,
-  type AutoDataSyncState,
-} from "@/lib/sync/auto-data-sync-queue"
-import useUpdateStore from "@/stores/update"
 import { MobileMeSheet } from "@/app/mobile/components/mobile-me-sheet"
 
 const SearchDialog = dynamic(
@@ -59,9 +53,6 @@ export function MobileChatHeader() {
     loading,
   } = useChatStore()
   const { language } = useSettingStore()
-  const autoRecordSyncEnabled = useSettingStore(state => state.autoRecordSyncEnabled)
-  const autoConversationSyncEnabled = useSettingStore(state => state.autoConversationSyncEnabled)
-  const hasMobileUpdate = useUpdateStore(state => Boolean(state.mobileUpdate))
   const tEmpty = useTranslations("record.chat.empty")
   const tInput = useTranslations("record.chat.input")
   const tSearch = useTranslations("search")
@@ -69,35 +60,6 @@ export function MobileChatHeader() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
-  const [autoDataSyncState, setAutoDataSyncState] = useState<AutoDataSyncState>(
-    getAutoDataSyncState()
-  )
-
-  useEffect(() => subscribeAutoDataSyncState(setAutoDataSyncState), [])
-
-  const meIndicator = hasMobileUpdate
-    || (
-      autoRecordSyncEnabled
-      && (
-        autoDataSyncState.phase === "waiting_provider"
-        || (
-          autoDataSyncState.affectedDomains.includes("records")
-          && (
-            autoDataSyncState.phase === "failed"
-            || autoDataSyncState.phase === "conflict"
-          )
-        )
-      )
-    )
-    || (
-      autoConversationSyncEnabled
-      && autoDataSyncState.affectedDomains.includes("conversations")
-      && (
-        autoDataSyncState.phase === "failed"
-        || autoDataSyncState.phase === "conflict"
-      )
-    )
-
   const hasCurrentMessages = isTemporaryConversation
     ? chats.length > 0
     : conversations.some(
@@ -122,7 +84,7 @@ export function MobileChatHeader() {
   return (
     <>
       <header className="mobile-page-header w-full border-b px-2 flex items-center gap-2 bg-background">
-        <MobileMeSheet indicator={meIndicator} />
+        <MobileMeSheet />
 
         <div className="ml-auto flex shrink-0 items-center">
           <Button

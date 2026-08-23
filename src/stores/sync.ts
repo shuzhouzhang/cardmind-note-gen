@@ -59,6 +59,8 @@ interface SyncState {
 
   selfHostedConnected: boolean
   setSelfHostedConnected: (connected: boolean) => void
+  selfHostedRuntimeReady: boolean
+  setSelfHostedRuntimeReady: (ready: boolean) => void
 
   webdavFileEtags: Record<string, string>
   setWebDAVFileEtags: (etags: Record<string, string>) => void
@@ -164,6 +166,10 @@ const useSyncStore = create<SyncState>((set) => ({
   selfHostedConnected: false,
   setSelfHostedConnected: (connected) => {
     set({ selfHostedConnected: connected })
+  },
+  selfHostedRuntimeReady: false,
+  setSelfHostedRuntimeReady: (ready) => {
+    set({ selfHostedRuntimeReady: ready })
   },
 
   webdavFileEtags: {},

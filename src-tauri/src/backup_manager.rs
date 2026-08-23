@@ -79,7 +79,14 @@ fn canonical_if_exists(path: &Path) -> PathBuf {
 fn should_skip_app_data_entry(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|name| name.to_str()),
-        Some("note.db" | "note.db-wal" | "note.db-shm" | "temp_import.zip")
+        Some(
+            "note.db"
+                | "note.db-wal"
+                | "note.db-shm"
+                | "temp_import.zip"
+                | "self-hosted-secrets.json"
+                | ".self-hosted-secrets.json.tmp"
+        )
     ) || path
         .file_name()
         .and_then(|name| name.to_str())

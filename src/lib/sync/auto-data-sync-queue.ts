@@ -148,6 +148,7 @@ let queue: AutoDataSyncTask[] = []
 let processing = false
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let remoteMetaCheckTimer: ReturnType<typeof setTimeout> | null = null
+const selfHostedWakeTimers = new Map<AutoDataSyncDomain, ReturnType<typeof setTimeout>>()
 let remoteMetaCheckIntervalIndex = 0
 let remoteMetaVisibilityListenerAttached = false
 const remoteMetaCache = new Map<string, {
@@ -475,14 +476,24 @@ export function enqueueAutoDataSync(domain: AutoDataSyncDomain, reason = 'change
   }
 
   if (useSettingStore.getState().primaryBackupMethod === 'selfHosted') {
-    void (async () => {
+    const wakeSelfHosted = async () => {
       if (domain === 'settings') {
         const { enqueueSelfHostedSettingChange } = await import('@/db/self-hosted-sync')
         await enqueueSelfHostedSettingChange(reason)
       }
       const { getSelfHostedSyncRuntime } = await import('@/lib/self-hosted-sync/runtime')
       void getSelfHostedSyncRuntime().wake(`data:${domain}`)
-    })()
+    }
+    if (domain === 'records' && mode === 'auto') {
+      const previousTimer = selfHostedWakeTimers.get(domain)
+      if (previousTimer) clearTimeout(previousTimer)
+      selfHostedWakeTimers.set(domain, setTimeout(() => {
+        selfHostedWakeTimers.delete(domain)
+        void wakeSelfHosted()
+      }, 250))
+    } else {
+      void wakeSelfHosted()
+    }
     return
   }
 

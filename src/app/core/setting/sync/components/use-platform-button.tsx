@@ -4,6 +4,7 @@ import { Check, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { confirm } from '@tauri-apps/plugin-dialog'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import useSettingStore from '@/stores/setting'
@@ -44,6 +45,13 @@ export function UsePlatformButton({
       }
       pauseSyncEngine(primaryBackupMethod)
       await setPrimaryBackupMethod(platform)
+    } catch (error) {
+      console.error('[sync] Failed to switch primary provider', {
+        current: primaryBackupMethod,
+        next: platform,
+        error,
+      })
+      toast.error(error instanceof Error ? error.message : String(error))
     } finally {
       setIsSaving(false)
     }

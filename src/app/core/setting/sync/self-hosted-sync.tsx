@@ -11,17 +11,18 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 import { getDb } from '@/db'
 import { connectWithBrowser, connectWithPassword, disconnectProfile } from '@/lib/self-hosted-sync/profile'
 import { refreshSelfHostedSyncRuntime } from '@/lib/self-hosted-sync/lifecycle'
 import { normalizeServerUrl } from '@/lib/self-hosted-sync/client'
+import { ensureDefaultLibraryForCurrentWorkspace } from '@/lib/self-hosted-sync/workspaces'
 import useSyncStore from '@/stores/sync'
 import { SelfHostedWorkspaces } from './self-hosted-workspaces'
 
+let serverUrlDraftWrite: Promise<void> = Promise.resolve()
+
 export function SelfHostedSync() {
   const t = useTranslations('settings.sync.selfHosted')
-  const [experimental, setExperimental] = useState(false)
   const [serverUrl, setServerUrl] = useState('')
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
@@ -30,35 +31,66 @@ export function SelfHostedSync() {
   const [connecting, setConnecting] = useState(false)
   const [insecureHttp, setInsecureHttp] = useState(false)
   const [profileId, setProfileId] = useState<string | null>(null)
+  const [reauthenticationRequired, setReauthenticationRequired] = useState(false)
+  const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const { selfHostedConnected, setSelfHostedConnected } = useSyncStore()
 
   useEffect(() => {
+    const handleProfileStateChange = () => {
+      setProfileId(null)
+      setReauthenticationRequired(true)
+      setSelfHostedConnected(false)
+      void refreshSelfHostedSyncRuntime().catch(error => {
+        console.warn('[self-hosted-sync] Runtime refresh after session invalidation failed', error)
+      })
+    }
+    window.addEventListener('self-hosted-profile-state-changed', handleProfileStateChange)
     void (async () => {
       const store = await Store.load('store.json')
-      setExperimental(await store.get<boolean>('experimentalSelfHostedSync') === true)
-      const database = await getDb()
-      const profiles = await database.select<Array<{ id: string; serverUrl: string }>>(
-        "select id, server_url as serverUrl from self_hosted_sync_profiles where state = 'connected' limit 1"
-      )
-      if (profiles[0]) {
-        setProfileId(profiles[0].id)
-        setServerUrl(profiles[0].serverUrl)
-        setSelfHostedConnected(true)
-        setInsecureHttp(normalizeServerUrl(profiles[0].serverUrl).insecureHttp)
+      const serverUrlDraft = await store.get<string>('selfHostedServerUrlDraft')
+      if (serverUrlDraft) {
+        setServerUrl(serverUrlDraft)
+        try {
+          setInsecureHttp(normalizeServerUrl(serverUrlDraft).insecureHttp)
+        } catch {
+          setInsecureHttp(false)
+        }
       }
-    })()
-  }, [setSelfHostedConnected])
-
-  async function updateExperimental(enabled: boolean) {
-    const store = await Store.load('store.json')
-    await store.set('experimentalSelfHostedSync', enabled)
-    await store.save()
-    setExperimental(enabled)
-    await refreshSelfHostedSyncRuntime()
-  }
+      const database = await getDb()
+      const profiles = await database.select<Array<{
+        id: string
+        serverUrl: string
+        state: 'connected' | 'disconnected' | 'reauthentication-required'
+      }>>(
+        "select id, server_url as serverUrl, state from self_hosted_sync_profiles order by updated_at desc limit 1"
+      )
+      if (profiles[0]?.state === 'connected') {
+        setServerUrl(profiles[0].serverUrl)
+        setInsecureHttp(normalizeServerUrl(profiles[0].serverUrl).insecureHttp)
+        await ensureDefaultLibraryForCurrentWorkspace(profiles[0].id, t('newLibraryDefaultName'))
+        setProfileId(profiles[0].id)
+        setSelfHostedConnected(true)
+        setReauthenticationRequired(false)
+        setWorkspaceRevision(revision => revision + 1)
+        await refreshSelfHostedSyncRuntime()
+      } else {
+        if (profiles[0]?.serverUrl) {
+          setServerUrl(profiles[0].serverUrl)
+          setInsecureHttp(normalizeServerUrl(profiles[0].serverUrl).insecureHttp)
+        }
+        setProfileId(null)
+        setSelfHostedConnected(false)
+        setReauthenticationRequired(profiles[0]?.state === 'reauthentication-required')
+      }
+    })().catch(error => {
+      toast.error(error instanceof Error ? error.message : t('operationFailed'))
+    })
+    return () => window.removeEventListener('self-hosted-profile-state-changed', handleProfileStateChange)
+  }, [setSelfHostedConnected, t])
 
   function updateServerUrl(value: string) {
     setServerUrl(value)
+    void persistServerUrlDraft(value).catch(() => undefined)
     try {
       setInsecureHttp(normalizeServerUrl(value).insecureHttp)
     } catch {
@@ -69,19 +101,30 @@ export function SelfHostedSync() {
   async function connect(mode: 'browser' | 'password') {
     setConnecting(true)
     try {
-      if (!experimental) await updateExperimental(true)
+      await persistServerUrlDraft(serverUrl)
+      let connectedProfileId: string
+      let connectedServerUrl: string
       if (mode === 'browser') {
         const profile = await connectWithBrowser({ serverUrl, deviceName: 'NoteGen' })
-        setProfileId(profile.id)
+        connectedProfileId = profile.id
+        connectedServerUrl = profile.serverUrl
+        await persistServerUrlDraft(profile.serverUrl)
       } else {
         const profile = await connectWithPassword({
           serverUrl, login, password,
           ...(totpCode.trim() ? { totpCode: totpCode.trim() } : {}),
           deviceName: 'NoteGen',
         })
-        setProfileId(profile.id)
+        connectedProfileId = profile.id
+        connectedServerUrl = profile.serverUrl
+        await persistServerUrlDraft(profile.serverUrl)
       }
+      await ensureDefaultLibraryForCurrentWorkspace(connectedProfileId, t('newLibraryDefaultName'))
+      setProfileId(connectedProfileId)
+      setServerUrl(connectedServerUrl)
       setSelfHostedConnected(true)
+      setReauthenticationRequired(false)
+      setWorkspaceRevision(revision => revision + 1)
       await refreshSelfHostedSyncRuntime()
       toast.success(t('connectedToast'))
     } catch (error) {
@@ -102,26 +145,6 @@ export function SelfHostedSync() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('experimentalTitle')}</CardTitle>
-          <CardDescription>{t('experimentalDescription')}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Field orientation="horizontal">
-            <div className="flex-1">
-              <FieldLabel htmlFor="self-hosted-experimental">{t('experimentalLabel')}</FieldLabel>
-              <FieldDescription>{t('experimentalHint')}</FieldDescription>
-            </div>
-            <Switch
-              id="self-hosted-experimental"
-              checked={experimental}
-              onCheckedChange={enabled => void updateExperimental(enabled)}
-            />
-          </Field>
-        </CardContent>
-      </Card>
-
       <Card>
         <CardHeader>
           <CardTitle>{t('connectionTitle')}</CardTitle>
@@ -151,6 +174,14 @@ export function SelfHostedSync() {
             </Alert>
           ) : null}
 
+          {reauthenticationRequired ? (
+            <Alert className="mt-4" variant="destructive">
+              <AlertTriangle />
+              <AlertTitle>{t('reauthenticationTitle')}</AlertTitle>
+              <AlertDescription>{t('reauthenticationDescription')}</AlertDescription>
+            </Alert>
+          ) : null}
+
           {showPasswordLogin && !selfHostedConnected ? (
             <FieldGroup className="mt-4">
               <Field>
@@ -170,10 +201,15 @@ export function SelfHostedSync() {
         </CardContent>
         <CardFooter className="flex-wrap gap-2">
           {selfHostedConnected ? (
-            <Button variant="secondary" disabled>
-              <Server data-icon="inline-start" />
-              {t('connected')}
-            </Button>
+            <>
+              <Button variant="secondary" disabled>
+                <Server data-icon="inline-start" />
+                {t('connected')}
+              </Button>
+              <Button variant="outline" onClick={() => void disconnect()}>
+                <LogOut data-icon="inline-start" />{t('disconnect')}
+              </Button>
+            </>
           ) : (
             <>
               <Button disabled={connecting || !serverUrl.trim()} onClick={() => void connect('browser')}>
@@ -192,21 +228,17 @@ export function SelfHostedSync() {
         </CardFooter>
       </Card>
       {selfHostedConnected && profileId ? (
-        <>
-          <SelfHostedWorkspaces profileId={profileId} />
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('disconnectTitle')}</CardTitle>
-              <CardDescription>{t('disconnectDescription')}</CardDescription>
-            </CardHeader>
-            <CardFooter>
-              <Button variant="outline" onClick={() => void disconnect()}>
-                <LogOut data-icon="inline-start" />{t('disconnect')}
-              </Button>
-            </CardFooter>
-          </Card>
-        </>
+        <SelfHostedWorkspaces key={`${profileId}:${workspaceRevision}`} profileId={profileId} />
       ) : null}
     </div>
   )
+}
+
+function persistServerUrlDraft(value: string) {
+  serverUrlDraftWrite = serverUrlDraftWrite.catch(() => undefined).then(async () => {
+    const store = await Store.load('store.json')
+    await store.set('selfHostedServerUrlDraft', value)
+    await store.save()
+  })
+  return serverUrlDraftWrite
 }

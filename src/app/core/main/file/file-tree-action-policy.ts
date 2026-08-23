@@ -11,6 +11,11 @@ import {
 } from '@/types/sync'
 
 export type FileTreeSyncStatus = 'loading' | 'error' | 'dirty' | 'synced' | 'local-only' | 'remote-only'
+export type SyncConfigurationReason =
+  | 'missing-credentials'
+  | 'missing-repository'
+  | 'unsupported-platform'
+  | 'reauthentication-required'
 
 export function validateFileTreeName(name: string): 'empty' | 'invalid' | null {
   const trimmed = name.trim()
@@ -69,7 +74,7 @@ export function buildFileTreeSyncStatusMap(tree: DirTree[]) {
 export async function getSyncConfiguration(): Promise<{
   configured: boolean
   platform: SyncPlatform
-  reason?: 'missing-credentials' | 'missing-repository' | 'unsupported-platform'
+  reason?: SyncConfigurationReason
 }> {
   const store = await Store.load('store.json')
   const storedPlatform = await store.get<string>('primaryBackupMethod') ?? 'github'
@@ -102,11 +107,40 @@ export async function getSyncConfiguration(): Promise<{
   if (platform === 'selfHosted') {
     const { getDb } = await import('@/db')
     const database = await getDb()
+    const profiles = await database.select<Array<{
+      id: string
+      state: 'connected' | 'disconnected' | 'reauthentication-required'
+    }>>(
+      "select id, state from self_hosted_sync_profiles order by updated_at desc limit 1"
+    )
+    const profile = profiles[0]
+    if (profile?.state === 'reauthentication-required') {
+      console.info('[self-hosted-sync] availability.reauthentication-required', { profileId: profile.id })
+      return { platform, configured: false, reason: 'reauthentication-required' }
+    }
+    const profileId = profile?.state === 'connected' ? profile.id : undefined
+    if (!profileId) {
+      console.info('[self-hosted-sync] availability.no-connected-profile')
+      return { platform, configured: false, reason: 'missing-credentials' }
+    }
+    try {
+      console.info('[self-hosted-sync] availability.prepare-workspace', { profileId })
+      const { ensureDefaultLibraryForCurrentWorkspace } = await import('@/lib/self-hosted-sync/workspaces')
+      await ensureDefaultLibraryForCurrentWorkspace(profileId, '我的工作区')
+    } catch (error) {
+      console.warn('[self-hosted-sync] availability.prepare-workspace-failed', { profileId, error })
+      return { platform, configured: false, reason: 'missing-credentials' }
+    }
+    const { getCurrentWorkspaceRoot } = await import('@/lib/self-hosted-sync/workspaces')
+    const localRoot = await getCurrentWorkspaceRoot()
     const rows = await database.select<Array<{ total: number }>>(
       `select count(*) as total from self_hosted_workspace_bindings
-       where workspace_type = 'library' and binding_state = 'bound'`
+       where workspace_type = 'library' and local_root = $1 and binding_state = 'bound'`,
+      [localRoot]
     )
-    return { platform, configured: (rows[0]?.total ?? 0) > 0 }
+    const configured = (rows[0]?.total ?? 0) > 0
+    console.info('[self-hosted-sync] availability.result', { profileId, configured })
+    return { platform, configured }
   }
 
   const credentials: Record<Exclude<SyncPlatform, 's3' | 'webdav' | 'cloudFolder' | 'selfHosted'>, [string, string]> = {

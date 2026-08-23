@@ -516,6 +516,10 @@ async function downloadRemoteBytesRaw(
     return file.content
   }
 
+  if (platform === 'selfHosted') {
+    throw new Error('自托管同步不使用旧远端工作区下载接口')
+  }
+
   const repo = await getGitRepository(platform, scope)
   let file: unknown
   switch (platform) {
@@ -642,6 +646,10 @@ async function uploadRemoteContentRaw(
     return result.etag
   }
 
+  if (platform === 'selfHosted') {
+    throw new Error('自托管同步不使用旧远端工作区上传接口')
+  }
+
   const repo = await getGitRepository(platform, scope)
   const sha = await getExistingRemoteSha(platform, path, repo)
   const filename = path.split('/').pop() || path
@@ -731,6 +739,8 @@ async function remoteFileExistsRaw(
     return scope === 'data' ? Boolean(await cloudFolderHeadObject(config, path)) : false
   }
 
+  if (platform === 'selfHosted') return false
+
   const repo = await getGitRepository(platform, scope)
   return Boolean(await getExistingRemoteSha(platform, path, repo))
 }
@@ -780,6 +790,8 @@ export async function deleteRemoteFile(
     if (scope === 'data') return cloudFolderDelete(config, path)
     return false
   }
+
+  if (platform === 'selfHosted') return false
 
   const repo = await getGitRepository(platform, scope)
   const sha = await getExistingRemoteSha(platform, path, repo)
