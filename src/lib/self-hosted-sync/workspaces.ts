@@ -307,10 +307,22 @@ export async function reconcileLibraryFiles(workspaceId: string, localRoot: stri
   const localPaths = new Set(entries.map(entry => entry.relativePath))
   for (const entry of entries) {
     const absolutePath = await join(localRoot, entry.relativePath)
-    const content = entry.kind === 'markdown' ? await readTextFile(absolutePath) : null
-    const hash = entry.kind === 'folder' ? null : entry.kind === 'markdown'
-      ? await invoke<string>('self_hosted_sha256', { value: content! })
-      : await hashFileBytes(await readFile(absolutePath))
+    let content: string | null
+    let hash: string | null
+    try {
+      content = entry.kind === 'markdown' ? await readTextFile(absolutePath) : null
+      hash = entry.kind === 'folder' ? null : entry.kind === 'markdown'
+        ? await invoke<string>('self_hosted_sha256', { value: content! })
+        : await hashFileBytes(await readFile(absolutePath))
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error
+      console.info('[Self-hosted sync] Skipped library entry removed during reconciliation', {
+        workspaceId,
+        relativePath: entry.relativePath,
+      })
+      localPaths.delete(entry.relativePath)
+      continue
+    }
     let current = mappedByPath.get(entry.relativePath)
     let identityMoved = false
     if (!current && hash && entry.kind !== 'folder') {
@@ -346,14 +358,10 @@ export async function reconcileLibraryFiles(workspaceId: string, localRoot: stri
     }
     mappedByPath.delete(entry.relativePath)
   }
-  for (const [relativePath, mapping] of mappedByPath) {
-    if (writable) {
-      if (mapping.kind === 'folder') await enqueueFolderSnapshot(relativePath, 'delete', workspaceId)
-      else if (mapping.kind === 'note') await enqueueFileSnapshot(relativePath, 'delete', workspaceId)
-      else await enqueueAssetSnapshot(relativePath, 'delete', workspaceId)
-    }
-    else await recordViewerConflict(workspaceId, relativePath, null)
-  }
+  // A missing local path is not evidence of a user deletion. Another device
+  // may not have hydrated the remote tree yet, or the workspace may have been
+  // temporarily unavailable while scanning. Deletions are journaled by the
+  // explicit file-manager operation instead of being inferred here.
 }
 
 async function recordViewerConflict(workspaceId: string, relativePath: string, localSnapshot: string | null) {
@@ -418,7 +426,13 @@ async function scanPortableEntries(root: string, workspaceId: string) {
   const result: Array<{ relativePath: string; kind: 'folder' | 'markdown' | 'asset' }> = []
   const caseFoldedPaths = new Map<string, string>()
   async function visit(absolute: string, prefix: string) {
-    const entries = await readDir(absolute)
+    let entries: Awaited<ReturnType<typeof readDir>>
+    try {
+      entries = await readDir(absolute)
+    } catch (error) {
+      if (prefix && isMissingPathError(error)) return
+      throw error
+    }
     for (const entry of entries) {
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name
       if (entry.isSymlink) {
@@ -441,6 +455,11 @@ async function scanPortableEntries(root: string, workspaceId: string) {
   }
   await visit(root, '')
   return result
+}
+
+function isMissingPathError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('No such file or directory') || message.includes('(os error 2)')
 }
 
 async function recordIgnoredSymlink(workspaceId: string, relativePath: string) {

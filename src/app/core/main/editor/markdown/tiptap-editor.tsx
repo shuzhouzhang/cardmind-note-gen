@@ -1064,6 +1064,14 @@ function projectRemoteCursor(
   }
 }
 
+function getEditorPresenceSelection(editor: TipTapReactEditor) {
+  const selection = editor.state.selection
+  if (isFullDocumentSelection(selection, editor.state.doc.content.size)) {
+    return { anchor: selection.head, head: selection.head }
+  }
+  return { anchor: selection.anchor, head: selection.head }
+}
+
 interface TextReplacement {
   from: number
   to: number
@@ -1699,6 +1707,8 @@ export function TipTapEditor({
   const contentVersionRef = useRef(0)
   const sourceSelectionQuoteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const markdownChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const collaborationChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingCollaborationEditorRef = useRef<TipTapReactEditor | null>(null)
   const hasPendingMarkdownChangeRef = useRef(false)
   const onChangeRef = useRef(onChange)
   const classifyCanonicalMarkdownRef = useRef<(value: string) => boolean>(() => false)
@@ -1765,6 +1775,28 @@ export function TipTapEditor({
       flushMarkdownChange(targetEditor)
     }, 500)
   }, [flushMarkdownChange])
+
+  const flushCollaborationChange = useCallback(() => {
+    if (collaborationChangeTimerRef.current) {
+      clearTimeout(collaborationChangeTimerRef.current)
+      collaborationChangeTimerRef.current = null
+    }
+    const targetEditor = pendingCollaborationEditorRef.current
+    pendingCollaborationEditorRef.current = null
+    if (!targetEditor || targetEditor.isDestroyed || externalUpdateCounterRef.current > 0) return
+    selfHostedCollaborationRef.current?.applyLocal(
+      normalizeMarkdownPlaceholders(targetEditor.getMarkdown()),
+    )
+  }, [])
+
+  const scheduleCollaborationChange = useCallback((targetEditor: TipTapReactEditor) => {
+    pendingCollaborationEditorRef.current = targetEditor
+    if (collaborationChangeTimerRef.current) return
+    collaborationChangeTimerRef.current = setTimeout(() => {
+      collaborationChangeTimerRef.current = null
+      flushCollaborationChange()
+    }, 120)
+  }, [flushCollaborationChange])
 
   const runEditorShortcutCommand = useCallback((id: EditorShortcutCommandId, targetEditor: CoreEditor) => {
     return editorShortcutHandlersRef.current[id]?.(targetEditor) ?? false
@@ -2093,6 +2125,7 @@ export function TipTapEditor({
         markEditorPathMutation(activeFilePathRef.current)
         selfHostedCollaborationRef.current?.markLocalActivity()
         onContentDirtyRef.current?.()
+        scheduleCollaborationChange(editor)
         scheduleMarkdownChange(editor)
         // Mark that we've processed the first update
         isFirstUpdateRef.current = false
@@ -2298,16 +2331,19 @@ export function TipTapEditor({
             }
           })
           if (isSourceViewRef.current) {
+            if (sourceEditorControllerRef.current?.isFocused()) {
+              controller.updatePresence(
+                sourceSelectionRef.current.from,
+                sourceSelectionRef.current.to,
+                isMobile ? '移动端' : '桌面端',
+                'markdown',
+              )
+            }
+          } else if (editor.isFocused) {
+            const selection = getEditorPresenceSelection(editor)
             controller.updatePresence(
-              sourceSelectionRef.current.from,
-              sourceSelectionRef.current.to,
-              isMobile ? '移动端' : '桌面端',
-              'markdown',
-            )
-          } else {
-            controller.updatePresence(
-              editor.state.selection.anchor,
-              editor.state.selection.head,
+              selection.anchor,
+              selection.head,
               isMobile ? '移动端' : '桌面端',
               'prosemirror',
             )
@@ -2322,12 +2358,14 @@ export function TipTapEditor({
       cancelled = true
       stopPresence?.()
       setSelfHostedCollaborators([])
+      flushCollaborationChange()
       selfHostedCollaborationRef.current?.close()
       selfHostedCollaborationRef.current = null
     }
   }, [
     activeFilePath,
     editor,
+    flushCollaborationChange,
     isActive,
     isMobile,
     isSectionScope,
@@ -2347,17 +2385,26 @@ export function TipTapEditor({
   useEffect(() => {
     if (!editor) return
     const updatePresence = () => {
-      if (isSourceViewRef.current) return
+      if (isSourceViewRef.current || !editor.isFocused) return
+      const selection = getEditorPresenceSelection(editor)
       selfHostedCollaborationRef.current?.updatePresence(
-        editor.state.selection.anchor,
-        editor.state.selection.head,
+        selection.anchor,
+        selection.head,
         isMobile ? '移动端' : '桌面端',
         'prosemirror',
       )
     }
+    const clearPresence = () => {
+      if (isSourceViewRef.current) return
+      selfHostedCollaborationRef.current?.clearPresence()
+    }
     editor.on('selectionUpdate', updatePresence)
+    editor.on('focus', updatePresence)
+    editor.on('blur', clearPresence)
     return () => {
       editor.off('selectionUpdate', updatePresence)
+      editor.off('focus', updatePresence)
+      editor.off('blur', clearPresence)
     }
   }, [activeFilePath, editor, isMobile])
 
@@ -2365,6 +2412,10 @@ export function TipTapEditor({
     const controller = selfHostedCollaborationRef.current
     if (!controller || !editor) return
     if (isSourceView) {
+      if (!sourceEditorControllerRef.current?.isFocused()) {
+        controller.clearPresence()
+        return
+      }
       controller.updatePresence(
         sourceSelectionRef.current.from,
         sourceSelectionRef.current.to,
@@ -2373,12 +2424,17 @@ export function TipTapEditor({
       )
       return
     }
-    controller.updatePresence(
-      editor.state.selection.anchor,
-      editor.state.selection.head,
-      isMobile ? '移动端' : '桌面端',
-      'prosemirror',
-    )
+    if (editor.isFocused) {
+      const selection = getEditorPresenceSelection(editor)
+      controller.updatePresence(
+        selection.anchor,
+        selection.head,
+        isMobile ? '移动端' : '桌面端',
+        'prosemirror',
+      )
+    } else {
+      controller.clearPresence()
+    }
   }, [editor, isMobile, isSourceView])
 
   const flushSectionedMarkdown = useCallback(() => {
@@ -2502,6 +2558,7 @@ export function TipTapEditor({
     sourceSelectionRef.current = selection
     if (isSectionScope) return
     if (!isActive) return
+    if (!sourceEditorControllerRef.current?.isFocused()) return
 
     selfHostedCollaborationRef.current?.updatePresence(
       selection.from,
@@ -2551,6 +2608,21 @@ export function TipTapEditor({
     }, 120)
   }, [activeFilePath, isActive, isMobile, isSectionScope])
 
+  const handleSourceFocusChange = useCallback((focused: boolean) => {
+    const controller = selfHostedCollaborationRef.current
+    if (!controller || !isActive || !isSourceViewRef.current) return
+    if (!focused) {
+      controller.clearPresence()
+      return
+    }
+    controller.updatePresence(
+      sourceSelectionRef.current.from,
+      sourceSelectionRef.current.to,
+      isMobile ? '移动端' : '桌面端',
+      'markdown',
+    )
+  }, [isActive, isMobile])
+
   const handleSourceControllerChange = useCallback((controller: SourceMarkdownEditorController | null) => {
     sourceEditorControllerRef.current = controller
     if (!controller) return
@@ -2576,7 +2648,7 @@ export function TipTapEditor({
 
   const handleSourceViewStateChange = useCallback((state: SourceMarkdownEditorViewState) => {
     sourceSelectionRef.current = state.selection
-    if (isSourceViewRef.current) {
+    if (isSourceViewRef.current && sourceEditorControllerRef.current?.isFocused()) {
       selfHostedCollaborationRef.current?.updatePresence(
         state.selection.from,
         state.selection.to,
@@ -7015,6 +7087,7 @@ export function TipTapEditor({
               onSelectionChange={handleSourceSelectionChange}
               onUndoRedoChange={handleSourceUndoRedoChange}
               onViewStateChange={handleSourceViewStateChange}
+              onFocusChange={handleSourceFocusChange}
               initialScrollTop={initialEditorViewState?.sourceScrollTop ?? 0}
               selection={sourceSelectionRef.current}
               remoteCursors={selfHostedMarkdownCursors}

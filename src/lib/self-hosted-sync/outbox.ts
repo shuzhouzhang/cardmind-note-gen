@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { readTextFile } from '@tauri-apps/plugin-fs'
+import { exists, readTextFile } from '@tauri-apps/plugin-fs'
 import { join } from '@tauri-apps/api/path'
 import { Store } from '@tauri-apps/plugin-store'
 import { getDb } from '@/db'
@@ -287,10 +287,13 @@ export async function materializeOutbox(
            and coalesce(latest.workspace_id, '') = coalesce(c.workspace_id, '')
        )
      order by
-       case when $2 = 'library' and c.domain = 'folder' then 0
+       case when $2 = 'library' and c.operation = 'delete' and c.domain = 'folder' then 2
+            when $2 = 'library' and c.domain = 'folder' then 0
             when $2 = 'library' then 1 else 0 end,
        case when $2 = 'library' and c.domain = 'folder'
-         then length(c.local_key) - length(replace(c.local_key, '/', '')) else 0 end,
+         then (case when c.operation = 'delete' then -1 else 1 end)
+           * (length(c.local_key) - length(replace(c.local_key, '/', '')))
+         else 0 end,
        c.id
      limit $3`,
     [workspaceId, workspaceType, maxCommands, JSON.stringify(allowedDomains)]
@@ -301,13 +304,6 @@ export async function materializeOutbox(
     if (workspaceType === 'account-data' && ['file', 'asset', 'folder'].includes(change.domain)) continue
     if (workspaceType === 'account-data' && !isDomainEnabled(change.domain, domainToggles)) continue
     if ((change.domain === 'file' || change.domain === 'asset') && !localRoot) continue
-    const kind = change.domain === 'file' ? 'note'
-      : change.domain === 'asset' ? 'asset'
-        : change.domain === 'folder' ? 'folder'
-        : STRUCTURED_DOMAINS[change.domain]?.kind ?? 'setting'
-    const mapping = await ensureObjectMapping(
-      workspaceId, change.domain, change.localKey, kind, change.deterministicImport === 1,
-    )
     const sourceIds = await database.select<Array<{ id: number }>>(
       `select id from self_hosted_local_changes
        where state = 'pending' and domain = $1 and local_key = $2
@@ -316,6 +312,27 @@ export async function materializeOutbox(
       [change.domain, change.localKey, workspaceId, workspaceType]
     )
     if (sourceIds.length === 0) continue
+    if (
+      workspaceType === 'library'
+      && change.operation === 'upsert'
+      && localRoot
+      && !await librarySourceExists(localRoot, change.localKey)
+    ) {
+      await markChanges(sourceIds.map(item => item.id), 'superseded')
+      console.info('[Self-hosted sync] Skipped stale library upsert because its local source no longer exists', {
+        workspaceId,
+        domain: change.domain,
+        localKey: change.localKey,
+      })
+      continue
+    }
+    const kind = change.domain === 'file' ? 'note'
+      : change.domain === 'asset' ? 'asset'
+        : change.domain === 'folder' ? 'folder'
+        : STRUCTURED_DOMAINS[change.domain]?.kind ?? 'setting'
+    const mapping = await ensureObjectMapping(
+      workspaceId, change.domain, change.localKey, kind, change.deterministicImport === 1,
+    )
     const commandId = crypto.randomUUID()
     const aad = objectAssociatedData(workspaceId, mapping.objectId, kind)
     let command: Record<string, unknown>
@@ -478,7 +495,7 @@ async function recoverRejectedLibraryChanges(
     `select command_id as commandId, source_change_ids as sourceChangeIds
      from self_hosted_outbox
      where workspace_id = $1 and state = 'failed'
-       and last_error_code in ('object_too_large', 'object_parent_invalid')`,
+       and last_error_code in ('object_too_large', 'object_parent_invalid', 'folder_not_empty')`,
     [workspaceId]
   )
   for (const row of rejected) {
@@ -552,7 +569,25 @@ function isDomainEnabled(domain: string, toggles: Record<string, boolean>) {
 
 async function filePayload(localRoot: string, relativePath: string) {
   const absolutePath = await join(localRoot, relativePath)
-  return { version: 1, domain: 'file', relativePath, content: await readTextFile(absolutePath) }
+  try {
+    return { version: 1, domain: 'file', relativePath, content: await readTextFile(absolutePath) }
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error
+    return null
+  }
+}
+
+async function librarySourceExists(localRoot: string, relativePath: string) {
+  try {
+    return await exists(await join(localRoot, relativePath))
+  } catch {
+    return false
+  }
+}
+
+function isMissingPathError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('No such file or directory') || message.includes('(os error 2)')
 }
 
 async function structuredPayload(
@@ -659,10 +694,11 @@ async function ensureObjectMapping(
         localIdentity: string
         relativePath: string | null
         pathCasefold: string | null
+        deletedAt: number | null
       }>>(
         `select object_id as objectId, blob_refs as blobRefs,
            local_identity as localIdentity, relative_path as relativePath,
-           path_casefold as pathCasefold
+           path_casefold as pathCasefold, deleted_at as deletedAt
          from self_hosted_object_mappings
          where workspace_id = $1 and kind = $2 and (
            local_identity = $3
@@ -678,15 +714,32 @@ async function ensureObjectMapping(
         localIdentity: string
         relativePath: string | null
         pathCasefold: string | null
+        deletedAt: number | null
       }>>(
         `select object_id as objectId, blob_refs as blobRefs,
            local_identity as localIdentity, relative_path as relativePath,
-           path_casefold as pathCasefold
+           path_casefold as pathCasefold, deleted_at as deletedAt
          from self_hosted_object_mappings
          where workspace_id = $1 and kind = $2 and local_identity = $3 limit 1`,
         [workspaceId, kind, localIdentity],
       )
-  const existing = rows[0]
+  let existing: (typeof rows)[number] | undefined = rows[0]
+  let canUseDeterministicImport = deterministicImport
+  if (portable && existing && existing.deletedAt !== null) {
+    await database.execute(
+      `update self_hosted_object_mappings
+       set local_identity = $1, relative_path = null, path_casefold = null, updated_at = $2
+       where workspace_id = $3 and object_id = $4`,
+      [
+        `superseded:${kind}:${existing.objectId}`,
+        Date.now(),
+        workspaceId,
+        existing.objectId,
+      ],
+    )
+    existing = undefined
+    canUseDeterministicImport = false
+  }
   if (
     portable
     && existing
@@ -711,7 +764,7 @@ async function ensureObjectMapping(
     )
   }
   const stablePersonalIdentity = domain === 'setting' || domain in STRUCTURED_DOMAINS
-  const objectId = existing?.objectId ?? (deterministicImport || stablePersonalIdentity
+  const objectId = existing?.objectId ?? (canUseDeterministicImport || stablePersonalIdentity
     ? await invoke<string>('self_hosted_import_object_id', {
         workspaceId,
         relativePath: `${domain}/${normalizedLocalKey}`,

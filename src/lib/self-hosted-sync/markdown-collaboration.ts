@@ -16,6 +16,7 @@ export interface MarkdownCollaborationController {
     label: string,
     coordinateSpace: PresenceCoordinateSpace,
   ): void
+  clearPresence(): void
   subscribePresence(listener: (message: Record<string, unknown>) => void): () => void
   close(): void
 }
@@ -91,8 +92,10 @@ export async function openMarkdownCollaboration(
         try {
           await transport.consume(update => {
             receivedRemoteUpdate = true
+            const previousMarkdown = currentMarkdown()
             applyRemoteUpdate(update)
-            if (!closed) onRemoteMarkdown(currentMarkdown())
+            const nextMarkdown = currentMarkdown()
+            if (!closed && nextMarkdown !== previousMarkdown) onRemoteMarkdown(nextMarkdown)
           })
         } catch (error) {
           if (strict && !receivedRemoteUpdate) throw error
@@ -151,6 +154,7 @@ export async function openMarkdownCollaboration(
         }, LOCAL_ORIGIN)
       },
       updatePresence: transport.updatePresence,
+      clearPresence: transport.clearPresence,
       subscribePresence: transport.subscribePresence,
       close() {
         closed = true

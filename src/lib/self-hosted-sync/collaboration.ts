@@ -73,6 +73,7 @@ function openCollaborativeBinding(binding: DocumentBinding) {
         presenceOwner,
       )
     },
+    clearPresence: () => runtime.clearPresence(presenceOwner),
     updateCanvasPresence: (nodes: Array<{ id: string; x: number; y: number }>, label: string) => {
       runtime.updateCanvasPresence(
         binding.workspaceId,
@@ -370,9 +371,31 @@ async function resolveDocument(localRoot: string, relativePath: string): Promise
   )
   const workspaceId = bindings[0]?.workspaceId
   if (!workspaceId) throw new Error('文档尚未绑定到自托管工作区')
-  const objectId = await invoke<string>('self_hosted_import_object_id', {
-    workspaceId, relativePath: `file/${portable.normalized}`,
-  })
+  const deletedMappings = await database.select<Array<{ objectId: string }>>(
+    `select object_id as objectId from self_hosted_object_mappings
+     where workspace_id = $1 and kind = 'note' and local_identity = $2
+       and deleted_at is not null limit 1`,
+    [workspaceId, `file:${portable.normalized}`],
+  )
+  const deletedMapping = deletedMappings[0]
+  if (deletedMapping) {
+    await database.execute(
+      `update self_hosted_object_mappings
+       set local_identity = $1, relative_path = null, path_casefold = null, updated_at = $2
+       where workspace_id = $3 and object_id = $4`,
+      [
+        `superseded:note:${deletedMapping.objectId}`,
+        Date.now(),
+        workspaceId,
+        deletedMapping.objectId,
+      ],
+    )
+  }
+  const objectId = deletedMapping
+    ? crypto.randomUUID()
+    : await invoke<string>('self_hosted_import_object_id', {
+        workspaceId, relativePath: `file/${portable.normalized}`,
+      })
   await database.execute(
     `insert or ignore into self_hosted_object_mappings(
        workspace_id, object_id, kind, local_identity, relative_path, path_casefold, updated_at
@@ -381,7 +404,8 @@ async function resolveDocument(localRoot: string, relativePath: string): Promise
   )
   const mappings = await database.select<Array<{ objectId: string }>>(
     `select object_id as objectId from self_hosted_object_mappings
-     where workspace_id = $1 and kind = 'note' and local_identity = $2 limit 1`,
+     where workspace_id = $1 and kind = 'note' and local_identity = $2
+       and deleted_at is null limit 1`,
     [workspaceId, `file:${portable.normalized}`],
   )
   const resolvedObjectId = mappings[0]?.objectId ?? objectId

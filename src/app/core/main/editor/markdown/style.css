@@ -1570,9 +1570,14 @@
   height: 1.25em;
   margin-left: -1px;
   border-left: 2px solid;
-  pointer-events: none;
+  opacity: 0.5;
+  pointer-events: auto;
+  transition: opacity 150ms ease;
   vertical-align: text-bottom;
-  animation: self-hosted-cursor-blink 1.2s steps(2, start) infinite;
+}
+
+.self-hosted-remote-cursor:hover {
+  opacity: 1;
 }
 
 .self-hosted-remote-cursor-label {
@@ -1589,9 +1594,4 @@
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-@keyframes self-hosted-cursor-blink {
-  0%, 55% { opacity: 1; }
-  56%, 100% { opacity: 0.38; }
 }

@@ -282,7 +282,11 @@ export class SelfHostedSyncRuntime {
     )
     if (await pushOutbox(binding, session)) this.#rerun = true
     await pullEvents(binding, session)
-    const appliedThrough = await applyInbox(binding, profile.deviceId)
+    const appliedThrough = await applyInbox(
+      binding,
+      profile.deviceId,
+      objectId => this.#documentSubscriptions.has(`${binding.workspaceId}\0${objectId}`),
+    )
     for (const listener of this.#realtimeListeners) listener({
       type: 'inbox.applied', workspaceId: binding.workspaceId,
     })
@@ -514,9 +518,12 @@ async function pushOutbox(binding: Binding, session: SyncSession) {
       and m.object_id = json_extract(o.payload, '$.objectId')
      where o.workspace_id = $1 and o.state in ('pending', 'retry') and o.next_attempt_at <= $2
      order by
-       case when m.kind = 'folder' then 0 else 1 end,
+       case when json_extract(o.payload, '$.type') = 'delete-object' and m.kind = 'folder' then 2
+            when m.kind = 'folder' then 0 else 1 end,
        case when m.kind = 'folder' and m.relative_path is not null
-         then length(m.relative_path) - length(replace(m.relative_path, '/', '')) else 0 end,
+         then (case when json_extract(o.payload, '$.type') = 'delete-object' then -1 else 1 end)
+           * (length(m.relative_path) - length(replace(m.relative_path, '/', '')))
+         else 0 end,
        o.created_at, o.rowid limit $3`,
     [binding.workspaceId, Date.now(), session.limits.maxCommandsPerBatch]
   )
@@ -676,7 +683,11 @@ async function pullEvents(binding: Binding, session: SyncSession) {
   }
 }
 
-async function applyInbox(binding: Binding, deviceId: string | null): Promise<string> {
+async function applyInbox(
+  binding: Binding,
+  deviceId: string | null,
+  isDocumentSubscribed: (objectId: string) => boolean,
+): Promise<string> {
   const database = await getDb()
   const rows = await database.select<Array<{ sequence: string; payload: string }>>(
     `select sequence, payload from self_hosted_inbox
@@ -710,8 +721,20 @@ async function applyInbox(binding: Binding, deviceId: string | null): Promise<st
         && latestSnapshotSequence.get(event.objectId!) !== row.sequence
       if (!supersededSnapshot) {
         if (event.sourceDeviceId !== deviceId) {
-          await applyRemoteEvent(binding, event)
-          if (isCoalescibleSnapshot(event)) bindingStoresChanged = true
+          const collaborativeSnapshotEcho = event.type === 'object.upserted'
+            && event.objectId !== null
+            && event.metadata.kind === 'note'
+            && isDocumentSubscribed(event.objectId)
+          if (collaborativeSnapshotEcho) {
+            console.info('[self-hosted-sync] Deferred remote note snapshot to active collaboration', {
+              workspaceId: binding.workspaceId,
+              objectId: event.objectId,
+              sequence: event.sequence,
+            })
+          } else {
+            await applyRemoteEvent(binding, event)
+            if (isCoalescibleSnapshot(event)) bindingStoresChanged = true
+          }
         }
         await recordEventRevision(binding.workspaceId, event)
       } else {

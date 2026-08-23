@@ -58,6 +58,7 @@ interface SourceMarkdownEditorProps {
   onControllerChange?: (controller: SourceMarkdownEditorController | null) => void
   onUndoRedoChange?: (state: { undo: boolean; redo: boolean }) => void
   onViewStateChange?: (state: SourceMarkdownEditorViewState) => void
+  onFocusChange?: (focused: boolean) => void
   initialScrollTop?: number
   editable: boolean
   showLineNumbers: boolean
@@ -69,6 +70,7 @@ interface SourceMarkdownEditorProps {
 }
 
 export interface SourceMarkdownEditorController {
+  isFocused: () => boolean
   undo: () => boolean
   redo: () => boolean
   getUndoRedoState: () => { undo: boolean; redo: boolean }
@@ -221,8 +223,13 @@ function createEditorTheme(fontSize: number, lineHeight: number) {
       height: '1.25em',
       marginLeft: '-1px',
       borderLeft: '2px solid',
-      pointerEvents: 'none',
+      opacity: '0.5',
+      pointerEvents: 'auto',
+      transition: 'opacity 150ms ease',
       verticalAlign: 'text-bottom',
+    },
+    '.cm-self-hosted-remote-cursor:hover': {
+      opacity: '1',
     },
     '.cm-self-hosted-remote-cursor-label': {
       position: 'absolute',
@@ -251,6 +258,7 @@ export function SourceMarkdownEditor({
   onControllerChange,
   onUndoRedoChange,
   onViewStateChange,
+  onFocusChange,
   initialScrollTop = 0,
   editable,
   showLineNumbers,
@@ -267,6 +275,7 @@ export function SourceMarkdownEditor({
   const onControllerChangeRef = useRef(onControllerChange)
   const onUndoRedoChangeRef = useRef(onUndoRedoChange)
   const onViewStateChangeRef = useRef(onViewStateChange)
+  const onFocusChangeRef = useRef(onFocusChange)
   const appliedValueRef = useRef(value)
   const isApplyingExternalValueRef = useRef(false)
   const editableCompartmentRef = useRef(new Compartment())
@@ -294,6 +303,10 @@ export function SourceMarkdownEditor({
   useEffect(() => {
     onViewStateChangeRef.current = onViewStateChange
   }, [onViewStateChange])
+
+  useEffect(() => {
+    onFocusChangeRef.current = onFocusChange
+  }, [onFocusChange])
 
   useEffect(() => {
     const container = containerRef.current
@@ -358,6 +371,10 @@ export function SourceMarkdownEditor({
     })
 
     viewRef.current = view
+    const handleFocus = () => onFocusChangeRef.current?.(true)
+    const handleBlur = () => onFocusChangeRef.current?.(false)
+    view.contentDOM.addEventListener('focus', handleFocus)
+    view.contentDOM.addEventListener('blur', handleBlur)
     let restoreScrollFrame = window.requestAnimationFrame(() => {
       restoreScrollFrame = 0
       view.scrollDOM.scrollTop = initialScrollTop
@@ -367,6 +384,7 @@ export function SourceMarkdownEditor({
       redo: redoDepth(view.state) > 0,
     })
     onControllerChangeRef.current?.({
+      isFocused: () => view.hasFocus,
       undo: () => {
         const didUndo = undo(view)
         if (didUndo) view.focus()
@@ -420,6 +438,8 @@ export function SourceMarkdownEditor({
       to: initialSelection.to,
     })
     return () => {
+      view.contentDOM.removeEventListener('focus', handleFocus)
+      view.contentDOM.removeEventListener('blur', handleBlur)
       if (restoreScrollFrame) window.cancelAnimationFrame(restoreScrollFrame)
       const finalSelection = view.state.selection.main
       onViewStateChangeRef.current?.({
