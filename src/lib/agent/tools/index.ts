@@ -13,11 +13,6 @@ export function getAllToolsSync(): AgentTool[] {
   return agentToolRegistry.listTools()
 }
 
-export async function reloadMcpTools(): Promise<void> {
-  // MCP tools are exposed through mcp_call_tool and the prompt-side catalog,
-  // so there is no runtime cache to refresh here.
-}
-
 export function getToolByName(name: string): AgentTool | undefined {
   return agentToolRegistry.getTool(name)
 }
@@ -42,6 +37,5 @@ export * from './chat-tools'
 export * from './tag-tools'
 export * from './mark-tools'
 export * from './folder-tools'
-export * from './system-tools'
-export * from './memory-tools'
+export { getCurrentTimeTool } from './system-tools'
 export * from './editor-tools'

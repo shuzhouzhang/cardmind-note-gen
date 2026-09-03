@@ -1,7 +1,17 @@
 import OpenAI from 'openai'
 import useChatStore from '@/stores/chat'
+import { awaitAgentHandlerCallback } from './agent-handler-callbacks'
 import { AgentRuntime } from './runtime'
-import type { AgentChange, AgentRuntimeResult, AgentSkillSummary, AgentStep, AgentTraceEvent, ToolCall } from './types'
+import type {
+  AgentApprovalDecision,
+  AgentApprovalRequest,
+  AgentChange,
+  AgentRuntimeResult,
+  AgentSkillSummary,
+  AgentStep,
+  AgentTraceEvent,
+  ToolCall,
+} from './types'
 
 export interface AgentHandlerConfig {
   activeChatId?: number
@@ -9,20 +19,19 @@ export interface AgentHandlerConfig {
   onThought?: (thought: string) => void
   onAction?: (action: string, params: Record<string, any>) => void
   onObservation?: (observation: string) => void
-  onComplete?: (result: string, steps?: AgentStep[], stopped?: boolean) => void
-  onError?: (error: string) => void
+  onComplete?: (
+    result: string,
+    steps?: AgentStep[],
+    stopped?: boolean,
+    runtimeResult?: AgentRuntimeResult
+  ) => void | Promise<void>
+  onError?: (error: string) => void | Promise<void>
   onFinalAnswerRender?: (markdownContent: string) => void
   formatAutoFinalAnswer?: (key: string, values?: Record<string, string>) => string
   requestConfirmation?: (
-    toolName: string,
-    params: Record<string, any>,
-    context?: {
-      previewParams?: Record<string, any>
-      originalContent?: string
-      modifiedContent?: string
-      filePath?: string
-    }
-  ) => Promise<boolean>
+    request: AgentApprovalRequest,
+    signal: AbortSignal
+  ) => Promise<AgentApprovalDecision>
   currentQuote?: {
     fileName: string
     startLine: number
@@ -126,13 +135,22 @@ export class AgentHandler {
           })
           this.config.onFinalAnswerRender?.(content)
         },
-        requestConfirmation: async (toolName, params, context) => {
-          return Boolean(await this.config.requestConfirmation?.(toolName, params, context))
+        requestConfirmation: async (request, signal) => {
+          return await this.config.requestConfirmation?.(request, signal) || {
+            approved: false,
+            reason: signal.aborted ? 'aborted' : 'denied',
+          }
         },
       })
 
       this.finishRun(result)
-      this.config.onComplete?.(result.content, result.steps, result.stopped)
+      await awaitAgentHandlerCallback(
+        this.config.onComplete,
+        result.content,
+        result.steps,
+        result.stopped,
+        result
+      )
       return result.content
     } catch (error) {
       store.setAgentState({
@@ -141,7 +159,7 @@ export class AgentHandler {
         status: 'failed',
       })
       const errorMessage = error instanceof Error ? error.message : String(error)
-      this.config.onError?.(errorMessage)
+      await awaitAgentHandlerCallback(this.config.onError, errorMessage)
       throw error
     }
   }
@@ -159,6 +177,7 @@ export class AgentHandler {
         event,
       ],
       currentThought: event.message || event.title,
+      currentIteration: event.iteration ?? current.currentIteration,
     })
     this.config.onThought?.(event.message || event.title)
   }
@@ -203,7 +222,12 @@ export class AgentHandler {
       runId: result.runId,
       isRunning: false,
       isThinking: false,
-      status: result.stopped ? 'stopped' : 'completed',
+      status: result.outcome === 'success'
+        ? 'completed'
+        : result.outcome === 'stopped'
+          ? 'stopped'
+          : 'failed',
+      currentIteration: result.metrics.currentIteration,
       completedSteps: result.steps,
       toolCalls: result.toolCalls,
       changes: result.changes,

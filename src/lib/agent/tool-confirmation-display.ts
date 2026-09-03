@@ -67,15 +67,15 @@ const TOOL_CONFIRMATION_DISPLAY: Record<string, ToolConfirmationDisplayConfig> =
     descriptionKey: 'record.chat.input.agent.confirmation.tools.delete_markdown_file.description',
     summaryFields: ['filePath'],
   },
+  note_copy_file: {
+    titleKey: 'record.chat.input.agent.confirmation.tools.copy_file.title',
+    descriptionKey: 'record.chat.input.agent.confirmation.tools.copy_file.description',
+    summaryFields: ['filePath', 'targetFolderPath', 'newName'],
+  },
   folder_delete: {
     titleKey: 'record.chat.input.agent.confirmation.fallback.title',
     descriptionKey: 'record.chat.input.agent.confirmation.fallback.description',
     summaryFields: ['folderPath'],
-  },
-  skill_execute_script: {
-    titleKey: 'record.chat.input.agent.confirmation.tools.execute_skill_script.title',
-    descriptionKey: 'record.chat.input.agent.confirmation.tools.execute_skill_script.description',
-    summaryFields: ['skill_id', 'command', 'args'],
   },
   create_files_batch: {
     titleKey: 'record.chat.input.agent.confirmation.tools.create_files_batch.title',
@@ -132,11 +132,6 @@ const TOOL_CONFIRMATION_DISPLAY: Record<string, ToolConfirmationDisplayConfig> =
     descriptionKey: 'record.chat.input.agent.confirmation.fallback.description',
     summaryFields: ['count', 'fileCount', 'foldersPreview', 'filesPreview'],
     contentFields: ['foldersPreview', 'filesPreview'],
-  },
-  execute_skill_script: {
-    titleKey: 'record.chat.input.agent.confirmation.tools.execute_skill_script.title',
-    descriptionKey: 'record.chat.input.agent.confirmation.tools.execute_skill_script.description',
-    summaryFields: ['scriptName', 'command'],
   },
 }
 

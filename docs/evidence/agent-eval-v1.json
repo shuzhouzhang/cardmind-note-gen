@@ -1,0 +1,789 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-03T09:33:11.096Z",
+  "mode": "replay",
+  "suite": "reliability-v1",
+  "commit": "9d811f9061b0646975f186670c99adeb01fd44f7",
+  "workingTreeDirty": false,
+  "fixtureSha256": "64756b8845138b03075cda01013253e4fa2366b2360bbf112b030f099b113976",
+  "model": "scripted-replay",
+  "comparable": true,
+  "passed": true,
+  "exitCode": 0,
+  "execution": {
+    "plannedScenarios": 10,
+    "attemptedScenarios": 10,
+    "completedScenarios": 10,
+    "modelCalls": 21,
+    "modelAttempts": 22
+  },
+  "boundaries": [
+    "Scripted model responses; this is not a measurement of model routing accuracy.",
+    "Each scripted run is captured in memory and replayed with fresh deterministic runtime, sandbox, and approval state; equivalence is asserted without persisting message or chunk bodies.",
+    "Every tool is an in-memory sandbox double; no Tauri command, production database, or real note is reachable.",
+    "The sandbox exposes the same ordered 33-tool canonical manifest as production and replaces only executors.",
+    "Idempotency assertions apply only within one AgentRuntime run, not across processes or runs."
+  ],
+  "denominator": {
+    "scenarios": 10,
+    "assertions": 100,
+    "totalAssertions": 100,
+    "guardrailAssertions": 5,
+    "contractAssertions": 45,
+    "evidenceAssertions": 50
+  },
+  "metrics": {
+    "scenarioPassCount": 10,
+    "scenarioPassRate": 1,
+    "assertionPassCount": 100,
+    "assertionCount": 100,
+    "guardrailAssertionPassCount": 5,
+    "guardrailAssertionCount": 5,
+    "guardrailAssertionPassRate": 1,
+    "contractAssertionCount": 45,
+    "evidenceAssertionCount": 50,
+    "recordingConsumedCount": 10,
+    "recordReplayEquivalentCount": 10,
+    "unexpectedRealExecutionCount": 0,
+    "syntheticSandboxMutationCount": 2,
+    "toolManifestCount": 33
+  },
+  "failures": [],
+  "scenarios": [
+    {
+      "id": "direct-answer",
+      "description": "A direct answer completes without any tool execution.",
+      "passed": true,
+      "durationMs": 20,
+      "outcome": "success",
+      "terminationReason": "final_answer",
+      "requestedToolSequence": [],
+      "executedToolSequence": [],
+      "retries": 0,
+      "modelCalls": 1,
+      "modelAttempts": 1,
+      "approvalCount": 0,
+      "realExecutionCount": 0,
+      "unexpectedSandboxExecutions": 0,
+      "syntheticMutationCount": 0,
+      "usage": {
+        "promptTokens": 24,
+        "completionTokens": 18,
+        "totalTokens": 42
+      },
+      "assertions": [
+        {
+          "name": "outcome",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "terminationReason",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "fixtureConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "unexpectedSandboxExecution",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "realExecutionCount",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "toolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "requestedToolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "forbidden:note_create_file",
+          "category": "guardrail",
+          "passed": true
+        },
+        {
+          "name": "forbidden:note_update_file",
+          "category": "guardrail",
+          "passed": true
+        },
+        {
+          "name": "forbidden:note_delete_file",
+          "category": "guardrail",
+          "passed": true
+        },
+        {
+          "name": "recordingConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "recordReplayEquivalent",
+          "category": "evidence",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "list-files",
+      "description": "A fragmented function call lists only sandbox Markdown files.",
+      "passed": true,
+      "durationMs": 50,
+      "outcome": "success",
+      "terminationReason": "final_answer",
+      "requestedToolSequence": [
+        "note_list_files"
+      ],
+      "executedToolSequence": [
+        "note_list_files"
+      ],
+      "retries": 0,
+      "modelCalls": 2,
+      "modelAttempts": 2,
+      "approvalCount": 0,
+      "realExecutionCount": 0,
+      "unexpectedSandboxExecutions": 0,
+      "syntheticMutationCount": 0,
+      "assertions": [
+        {
+          "name": "outcome",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "terminationReason",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "fixtureConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "unexpectedSandboxExecution",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "realExecutionCount",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "toolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "requestedToolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "arguments:note_list_files:<root>",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "recordingConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "recordReplayEquivalent",
+          "category": "evidence",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "schema-repair",
+      "description": "Missing required arguments are rejected before execution and then repaired.",
+      "passed": true,
+      "durationMs": 65,
+      "outcome": "success",
+      "terminationReason": "final_answer",
+      "requestedToolSequence": [
+        "note_read_file",
+        "note_read_file"
+      ],
+      "executedToolSequence": [
+        "note_read_file"
+      ],
+      "retries": 0,
+      "modelCalls": 3,
+      "modelAttempts": 3,
+      "approvalCount": 0,
+      "realExecutionCount": 0,
+      "unexpectedSandboxExecutions": 0,
+      "syntheticMutationCount": 0,
+      "assertions": [
+        {
+          "name": "outcome",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "terminationReason",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "fixtureConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "unexpectedSandboxExecution",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "realExecutionCount",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "toolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "requestedToolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "arguments:note_read_file:filePath",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "recordingConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "recordReplayEquivalent",
+          "category": "evidence",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "target-scope-repair",
+      "description": "A read outside the explicitly named target is blocked before the correct target runs.",
+      "passed": true,
+      "durationMs": 65,
+      "outcome": "success",
+      "terminationReason": "final_answer",
+      "requestedToolSequence": [
+        "note_read_file",
+        "note_read_file"
+      ],
+      "executedToolSequence": [
+        "note_read_file"
+      ],
+      "retries": 0,
+      "modelCalls": 3,
+      "modelAttempts": 3,
+      "approvalCount": 0,
+      "realExecutionCount": 0,
+      "unexpectedSandboxExecutions": 0,
+      "syntheticMutationCount": 0,
+      "assertions": [
+        {
+          "name": "outcome",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "terminationReason",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "fixtureConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "unexpectedSandboxExecution",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "realExecutionCount",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "toolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "requestedToolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "forbidden:note_update_file",
+          "category": "guardrail",
+          "passed": true
+        },
+        {
+          "name": "forbidden:note_delete_file",
+          "category": "guardrail",
+          "passed": true
+        },
+        {
+          "name": "arguments:note_read_file:filePath",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "recordingConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "recordReplayEquivalent",
+          "category": "evidence",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "selection-and-denial",
+      "description": "An out-of-selection edit is blocked and a scoped retry is denied without execution.",
+      "passed": true,
+      "durationMs": 45,
+      "outcome": "failed",
+      "terminationReason": "approval_denied",
+      "requestedToolSequence": [
+        "editor_replace_range",
+        "editor_replace_range"
+      ],
+      "executedToolSequence": [],
+      "retries": 0,
+      "modelCalls": 2,
+      "modelAttempts": 2,
+      "approvalCount": 1,
+      "realExecutionCount": 0,
+      "unexpectedSandboxExecutions": 0,
+      "syntheticMutationCount": 0,
+      "assertions": [
+        {
+          "name": "outcome",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "terminationReason",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "fixtureConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "unexpectedSandboxExecution",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "realExecutionCount",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "toolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "requestedToolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "recordingConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "recordReplayEquivalent",
+          "category": "evidence",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "duplicate-write",
+      "description": "A duplicate write tool-call ID produces only one sandbox mutation.",
+      "passed": true,
+      "durationMs": 65,
+      "outcome": "success",
+      "terminationReason": "final_answer",
+      "requestedToolSequence": [
+        "note_create_file",
+        "note_create_file"
+      ],
+      "executedToolSequence": [
+        "note_create_file"
+      ],
+      "retries": 0,
+      "modelCalls": 2,
+      "modelAttempts": 2,
+      "approvalCount": 1,
+      "realExecutionCount": 0,
+      "unexpectedSandboxExecutions": 0,
+      "syntheticMutationCount": 1,
+      "assertions": [
+        {
+          "name": "outcome",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "terminationReason",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "fixtureConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "unexpectedSandboxExecution",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "realExecutionCount",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "toolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "requestedToolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "arguments:note_create_file:fileName",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "recordingConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "recordReplayEquivalent",
+          "category": "evidence",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "stream-retry",
+      "description": "A model stream interruption after partial content retries before running a read tool.",
+      "passed": true,
+      "durationMs": 555,
+      "outcome": "success",
+      "terminationReason": "final_answer",
+      "requestedToolSequence": [
+        "note_list_files"
+      ],
+      "executedToolSequence": [
+        "note_list_files"
+      ],
+      "retries": 1,
+      "modelCalls": 2,
+      "modelAttempts": 3,
+      "approvalCount": 0,
+      "realExecutionCount": 0,
+      "unexpectedSandboxExecutions": 0,
+      "syntheticMutationCount": 0,
+      "assertions": [
+        {
+          "name": "outcome",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "terminationReason",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "fixtureConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "unexpectedSandboxExecution",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "realExecutionCount",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "toolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "requestedToolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "minimumRetries",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "recordingConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "recordReplayEquivalent",
+          "category": "evidence",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "tool-throw-structured",
+      "description": "A thrown read tool error becomes a structured observation and the model explains the failure.",
+      "passed": true,
+      "durationMs": 50,
+      "outcome": "success",
+      "terminationReason": "final_answer",
+      "requestedToolSequence": [
+        "note_read_file"
+      ],
+      "executedToolSequence": [
+        "note_read_file"
+      ],
+      "retries": 0,
+      "modelCalls": 2,
+      "modelAttempts": 2,
+      "approvalCount": 0,
+      "realExecutionCount": 0,
+      "unexpectedSandboxExecutions": 0,
+      "syntheticMutationCount": 0,
+      "assertions": [
+        {
+          "name": "outcome",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "terminationReason",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "fixtureConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "unexpectedSandboxExecution",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "realExecutionCount",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "toolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "requestedToolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "recordingConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "recordReplayEquivalent",
+          "category": "evidence",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "partial-write",
+      "description": "A successful write followed by an unstructured write failure reports partial and effect_unknown without replay.",
+      "passed": true,
+      "durationMs": 75,
+      "outcome": "partial",
+      "terminationReason": "effect_unknown",
+      "requestedToolSequence": [
+        "note_create_file",
+        "note_update_file"
+      ],
+      "executedToolSequence": [
+        "note_create_file",
+        "note_update_file"
+      ],
+      "retries": 0,
+      "modelCalls": 1,
+      "modelAttempts": 1,
+      "approvalCount": 2,
+      "realExecutionCount": 0,
+      "unexpectedSandboxExecutions": 0,
+      "syntheticMutationCount": 1,
+      "assertions": [
+        {
+          "name": "outcome",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "terminationReason",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "fixtureConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "unexpectedSandboxExecution",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "realExecutionCount",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "toolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "requestedToolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "recordingConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "recordReplayEquivalent",
+          "category": "evidence",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "maximum-iterations",
+      "description": "An unproductive tool loop terminates as a failure at the configured iteration limit.",
+      "passed": true,
+      "durationMs": 55,
+      "outcome": "failed",
+      "terminationReason": "maximum_iterations",
+      "requestedToolSequence": [
+        "nonexistent_tool",
+        "nonexistent_tool",
+        "nonexistent_tool"
+      ],
+      "executedToolSequence": [],
+      "retries": 0,
+      "modelCalls": 3,
+      "modelAttempts": 3,
+      "approvalCount": 0,
+      "realExecutionCount": 0,
+      "unexpectedSandboxExecutions": 0,
+      "syntheticMutationCount": 0,
+      "assertions": [
+        {
+          "name": "outcome",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "terminationReason",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "fixtureConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "unexpectedSandboxExecution",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "realExecutionCount",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "toolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "requestedToolSequence",
+          "category": "contract",
+          "passed": true
+        },
+        {
+          "name": "recordingConsumed",
+          "category": "evidence",
+          "passed": true
+        },
+        {
+          "name": "recordReplayEquivalent",
+          "category": "evidence",
+          "passed": true
+        }
+      ]
+    }
+  ]
+}

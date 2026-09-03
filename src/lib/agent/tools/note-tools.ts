@@ -3,6 +3,7 @@ import { BaseDirectory, readTextFile, writeTextFile, remove, rename, copyFile, s
 import { appDataDir } from '@tauri-apps/api/path'
 import { getAllMarkdownFiles, MarkdownFile } from '@/lib/files'
 import { ensureSafeWorkspaceRelativePath, getFilePathOptions } from '@/lib/workspace'
+import { normalizeOptionalWorkspaceFolderInput } from '@/lib/workspace-path-safety'
 import useArticleStore from '@/stores/article'
 import useChatStore from '@/stores/chat'
 import { isLinkedFolder } from '@/lib/files'
@@ -287,7 +288,7 @@ export const createFileTool: Tool = {
     {
       name: 'folderPath',
       type: 'string',
-      description: 'Optional: subfolder path, defaults to root directory. For temporary scripts executed by execute_skill_script, prefer paths like "skills/pptx/runtime"',
+      description: 'Optional: subfolder path, defaults to the notes root directory.',
       required: false,
     },
   ],
@@ -1103,7 +1104,10 @@ export const renameFileTool: Tool = {
       const isCurrentFile = articleStore.activeFilePath === normalizedFilePath
 
       // 验证新文件名以 .md 结尾
-      let newName = params.newName
+      let newName = typeof params.newName === 'string' ? params.newName.trim() : ''
+      if (!newName || /[\\/]/.test(newName) || newName === '.' || newName === '..') {
+        return { success: false, error: '新文件名必须是当前文件夹内的单个文件名' }
+      }
       if (!newName.endsWith('.md')) {
         newName += '.md'
       }
@@ -1127,7 +1131,7 @@ export const renameFileTool: Tool = {
       // 构建新路径（保持原文件夹，只改文件名）
       const pathParts = normalizedFilePath.split('/')
       pathParts[pathParts.length - 1] = newName
-      const newRelativePath = pathParts.join('/')
+      const newRelativePath = await ensureSafeWorkspaceRelativePath(pathParts.join('/'))
 
       const { path: newPath, baseDir: newBaseDir } = await getFilePathOptions(newRelativePath)
 
@@ -1229,7 +1233,10 @@ export const moveFileTool: Tool = {
     try {
       const articleStore = useArticleStore.getState()
       const normalizedFilePath = await ensureSafeWorkspaceRelativePath(params.filePath)
-      const normalizedTargetFolderPath = await ensureSafeWorkspaceRelativePath(params.targetFolderPath)
+      const targetFolderInput = normalizeOptionalWorkspaceFolderInput(params.targetFolderPath)
+      const normalizedTargetFolderPath = targetFolderInput
+        ? await ensureSafeWorkspaceRelativePath(targetFolderInput)
+        : ''
 
       // 检查是否是当前打开的文件
       const isCurrentFile = articleStore.activeFilePath === normalizedFilePath
@@ -1238,9 +1245,9 @@ export const moveFileTool: Tool = {
       const fileName = normalizedFilePath.split('/').pop() || normalizedFilePath
 
       // 构建新路径
-      const newRelativePath = normalizedTargetFolderPath
+      const newRelativePath = await ensureSafeWorkspaceRelativePath(normalizedTargetFolderPath
         ? `${normalizedTargetFolderPath}/${fileName}`
-        : fileName
+        : fileName)
 
       // 验证目标文件夹是否存在
       const { exists } = await import('@tauri-apps/plugin-fs')
@@ -1393,6 +1400,7 @@ export const copyFileTool: Tool = {
       let newRelativePath = normalizedTargetFolderPath
         ? `${normalizedTargetFolderPath}/${newFileName}`
         : newFileName
+      newRelativePath = await ensureSafeWorkspaceRelativePath(newRelativePath)
 
       // 验证目标文件夹是否存在（如果指定了目标文件夹）
       if (normalizedTargetFolderPath) {
@@ -1430,6 +1438,7 @@ export const copyFileTool: Tool = {
           newRelativePath = normalizedTargetFolderPath
             ? `${normalizedTargetFolderPath}/${newFileName}`
             : newFileName
+          newRelativePath = await ensureSafeWorkspaceRelativePath(newRelativePath)
 
           const { path: checkPath, baseDir: checkBaseDir } = await getFilePathOptions(newRelativePath)
           targetExists = checkBaseDir
@@ -1437,6 +1446,15 @@ export const copyFileTool: Tool = {
             : await exists(checkPath)
           counter++
         } while (targetExists && counter < 1000)
+      }
+
+      // Agent calls now provide an explicit destination. Never silently
+      // overwrite that approved target; return a structured failure instead.
+      if (targetExists && params.newName) {
+        return {
+          success: false,
+          error: `目标文件 "${newRelativePath}" 已存在，未执行复制`,
+        }
       }
 
       // 重新获取最终的新路径
@@ -1514,7 +1532,10 @@ export const moveFilesBatchTool: Tool = {
       for (const file of params.files) {
         try {
           const filePath = await ensureSafeWorkspaceRelativePath(file.filePath)
-          const targetFolderPath = await ensureSafeWorkspaceRelativePath(file.targetFolderPath)
+          const targetFolderInput = normalizeOptionalWorkspaceFolderInput(file.targetFolderPath)
+          const targetFolderPath = targetFolderInput
+            ? await ensureSafeWorkspaceRelativePath(targetFolderInput)
+            : ''
 
           // 检查是否是当前打开的文件
           if (articleStore.activeFilePath === filePath) {
@@ -1782,7 +1803,11 @@ export const renameFilesBatchTool: Tool = {
       for (const file of params.files) {
         try {
           const filePath = await ensureSafeWorkspaceRelativePath(file.filePath)
-          let newName = file.newName
+          let newName = typeof file.newName === 'string' ? file.newName.trim() : ''
+          if (!newName || /[\\/]/.test(newName) || newName === '.' || newName === '..') {
+            errors.push({ filePath, error: '新文件名必须是当前文件夹内的单个文件名' })
+            continue
+          }
 
           // 验证新文件名以 .md 结尾
           if (!newName.endsWith('.md')) {
@@ -1800,7 +1825,7 @@ export const renameFilesBatchTool: Tool = {
           // 构建新路径（保持原文件夹，只改文件名）
           const pathParts = filePath.split('/')
           pathParts[pathParts.length - 1] = newName
-          const newRelativePath = pathParts.join('/')
+          const newRelativePath = await ensureSafeWorkspaceRelativePath(pathParts.join('/'))
 
           const { path: newPath, baseDir: newBaseDir } = await getFilePathOptions(newRelativePath)
 

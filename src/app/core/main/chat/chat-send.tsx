@@ -13,8 +13,8 @@ import { readTextFile } from "@tauri-apps/plugin-fs"
 import { getFilePathOptions, getWorkspacePath } from "@/lib/workspace"
 import { AgentHandler } from "@/lib/agent/agent-handler"
 import { agentDebugLog, previewText } from "@/lib/agent/debug-log"
-import { getToolByName } from "@/lib/agent/tools"
-import { getSessionApprovalScope, matchesSessionApproval } from "@/lib/agent/session-approval"
+import type { AgentApprovalDecision, AgentApprovalRequest } from "@/lib/agent/types"
+import { sanitizeAgentTraceValue } from "@/lib/agent/trace-recorder"
 import { ImageAttachment } from "./image-attachments"
 import type { RagSource } from "@/lib/rag"
 import { cn } from "@/lib/utils"
@@ -165,46 +165,39 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
 
   // Agent 确认回调 - 使用内联确认而不是弹窗
   const requestConfirmation = (
-    toolName: string,
-    params: Record<string, any>,
-    context?: {
-      previewParams?: Record<string, any>
-      originalContent?: string
-      modifiedContent?: string
-      filePath?: string
-    }
-  ): Promise<boolean> => {
-    const tool = getToolByName(toolName)
-    const sessionApprovalScope = getSessionApprovalScope(toolName, tool, params)
-    const canApproveForSession = !!sessionApprovalScope
-
-    const currentChatState = useChatStore.getState()
-    const activeConversationId = currentChatState.currentConversationId
-    const autoApproveConversationId = currentChatState.agentAutoApproveConversationId
-    const autoApproveRuntimeSkillId = currentChatState.agentAutoApproveRuntimeSkillId
-
-    if (matchesSessionApproval(
-      autoApproveConversationId,
-      activeConversationId,
-      autoApproveRuntimeSkillId,
-      sessionApprovalScope
-    )) {
-      agentDebugLog('approval_auto_approved', {
-        toolName,
-        params,
-        activeConversationId,
-        sessionApprovalScope,
-      })
-      return Promise.resolve(true)
-    }
+    request: AgentApprovalRequest,
+    signal: AbortSignal
+  ): Promise<AgentApprovalDecision> => {
+    const { toolName, params } = request
+    const requestedAt = Date.now()
 
     return new Promise((resolve) => {
+      let settled = false
+      const finish = (decision: AgentApprovalDecision) => {
+        if (settled) return
+        settled = true
+        clearInterval(checkInterval)
+        signal.removeEventListener('abort', onAbort)
+        resolve(decision)
+      }
+      const isSamePendingRequest = () => {
+        const pending = useChatStore.getState().agentState.pendingConfirmation
+        return pending?.toolName === toolName && JSON.stringify(pending.params) === JSON.stringify(params)
+      }
+      const onAbort = () => {
+        if (isSamePendingRequest()) {
+          setAgentState({ pendingConfirmation: undefined })
+        }
+        finish({ approved: false, reason: 'aborted' })
+      }
+
       agentDebugLog('approval_pending_set', {
         toolName,
         params,
-        context,
-        canApproveForSession,
-        sessionApprovalScope,
+        target: request.target,
+        operationKey: request.operationKey,
+        approvalScopeKey: request.approvalScopeKey,
+        canApproveForSession: request.canApproveForSession,
       })
 
       // 将确认请求保存到 store，在对话中显示
@@ -212,24 +205,26 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
         pendingConfirmation: {
           toolName,
           params,
-          previewParams: context?.previewParams,
-          ...context,
-          canApproveForSession,
-          sessionApprovalType: sessionApprovalScope?.type,
-          sessionApprovalSkillId: sessionApprovalScope?.skillId,
+          previewParams: request.previewParams,
+          originalContent: request.originalContent,
+          modifiedContent: request.modifiedContent,
+          filePath: request.filePath,
+          canApproveForSession: request.canApproveForSession,
         }
       })
-      
+
+      signal.addEventListener('abort', onAbort, { once: true })
+
       // 轮询检查用户是否已确认或取消
       const checkInterval = setInterval(() => {
         const currentState = useChatStore.getState()
-        
+
         // 如果 pendingConfirmation 被清除，说明用户已操作
         if (!currentState.agentState.pendingConfirmation) {
-          clearInterval(checkInterval)
           const latestRecord = [...currentState.agentState.confirmationHistory]
             .reverse()
             .find((record) =>
+              record.timestamp >= requestedAt &&
               record.toolName === toolName &&
               JSON.stringify(record.params) === JSON.stringify(params)
             )
@@ -239,11 +234,22 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
             params,
             latestRecord,
             resolved: latestRecord?.status === 'confirmed',
+            scope: latestRecord?.scope,
           })
 
-          resolve(latestRecord?.status === 'confirmed')
+          finish({
+            approved: latestRecord?.status === 'confirmed',
+            scope: latestRecord?.status === 'confirmed' &&
+              latestRecord.scope === 'session' &&
+              request.canApproveForSession
+              ? 'session'
+              : 'once',
+            reason: latestRecord?.status === 'confirmed' ? 'approved' : 'denied',
+          })
         }
       }, 100)
+
+      if (signal.aborted) onAbort()
     })
   }
 
@@ -291,7 +297,7 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
         })
       },
       formatAutoFinalAnswer: (key, values) => t(key as any, values),
-      onComplete: async (result, steps, stopped) => {
+      onComplete: async (result, steps, stopped, runtimeResult) => {
         // 获取 Agent 执行历史，保存结构化运行轨迹
         const { agentState } = useChatStore.getState()
         // 使用 agentState.completedSteps 而不是 steps 参数，因为 completedSteps 包含 duration 信息
@@ -302,9 +308,13 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
           changes: agentState.changes || [],
           runId: agentState.runId,
           status: agentState.status,
+          outcome: runtimeResult?.outcome,
+          terminationReason: runtimeResult?.terminationReason,
+          metrics: runtimeResult?.metrics,
           loadedSkills: agentState.loadedSkills || [],
-          iterations: agentState.currentIteration,
+          iterations: runtimeResult?.metrics.currentIteration ?? agentState.currentIteration,
         }
+        const persistedAgentHistory = sanitizeAgentTraceValue(agentHistory)
 
         // 如果是被终止的，构建包含终止信息的消息
         let finalContent = result
@@ -349,7 +359,7 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
           ragSourceDetails: currentMessage?.ragSourceDetails,
           // 设置新的内容
           content: finalContent,
-          agentHistory: JSON.stringify(agentHistory),
+          agentHistory: JSON.stringify(persistedAgentHistory),
         }, true)
 
         // 清空 Final Answer 模式状态

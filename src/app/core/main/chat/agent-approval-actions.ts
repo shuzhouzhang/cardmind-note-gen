@@ -1,7 +1,7 @@
 import { agentDebugLog } from "@/lib/agent/debug-log"
 import useChatStore from "@/stores/chat"
 
-export type AgentApprovalScope = "once" | "conversation"
+export type AgentApprovalScope = "once" | "session"
 
 export function confirmPendingAgentAction(scope: AgentApprovalScope = "once") {
   const latestState = useChatStore.getState()
@@ -14,17 +14,6 @@ export function confirmPendingAgentAction(scope: AgentApprovalScope = "once") {
     status: "confirmed" as const,
     timestamp: Date.now(),
     scope,
-    sessionApprovalType: pendingConfirmation.sessionApprovalType,
-    sessionApprovalSkillId: pendingConfirmation.sessionApprovalSkillId,
-  }
-
-  if (scope === "conversation" && latestState.currentConversationId !== null) {
-    latestState.setAgentAutoApproveConversationId(latestState.currentConversationId)
-    latestState.setAgentAutoApproveRuntimeSkillId(
-      pendingConfirmation.sessionApprovalType === "runtime-script-skill"
-        ? pendingConfirmation.sessionApprovalSkillId || null
-        : null
-    )
   }
 
   agentDebugLog("approval_user_confirmed", confirmationRecord)

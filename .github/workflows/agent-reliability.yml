@@ -1,0 +1,87 @@
+name: Agent Reliability
+
+on:
+  pull_request:
+  push:
+    branches:
+      - cardmind/base-20260903
+      - feature/agent-reliability
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-reliability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CI: 'true'
+      NODE_OPTIONS: --max-old-space-size=6144
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm 11.19
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies from lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Scan repository for credentials
+        run: pnpm security:secrets
+
+      - name: TypeScript typecheck
+        run: pnpm exec tsc --noEmit --incremental false
+
+      - name: Node specifications
+        run: pnpm test:node
+
+      - name: Python knowledge-engine tests
+        run: pnpm test:knowledge-engine
+
+      - name: Agent unit and replay tests
+        run: pnpm test:agent
+
+      - name: Agent replay evidence gate
+        run: pnpm agent:eval -- --mode replay --suite reliability-v1 --output-dir "${{ runner.temp }}\agent-evidence"
+
+      - name: Rust tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Rust check
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Next production build
+        run: pnpm build
+
+      - name: Upload redacted Agent evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-reliability-evidence
+          path: |
+            ${{ runner.temp }}/agent-evidence/agent-eval-v1.json
+            ${{ runner.temp }}/agent-evidence/agent-eval-v1.md
+          if-no-files-found: warn
+          retention-days: 14

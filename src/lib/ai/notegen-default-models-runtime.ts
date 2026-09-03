@@ -177,10 +177,20 @@ export function applyNoteGenDefaultConfig(aiModelList: AiConfig[], noteGenConfig
       return config
     }
 
+    const configuredModels = config.models || []
+    const defaultModelIds = new Set((noteGenConfig.models || []).map((model) => model.id))
+    const mergedModels = [
+      ...(noteGenConfig.models || []).map((model) => ({
+        ...model,
+        ...configuredModels.find((configured) => configured.id === model.id),
+      })),
+      ...configuredModels.filter((model) => !defaultModelIds.has(model.id)),
+    ]
+
     return {
-      ...config,
       ...noteGenConfig,
-      models: noteGenConfig.models,
+      ...config,
+      models: mergedModels,
     }
   })
 }

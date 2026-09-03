@@ -16,13 +16,11 @@ export interface PendingAgentConfirmation {
   modifiedContent?: string
   filePath?: string
   canApproveForSession?: boolean
-  sessionApprovalType?: "write" | "runtime-script-skill"
-  sessionApprovalSkillId?: string
 }
 
 interface AgentApprovalPanelProps {
   pendingConfirmation?: PendingAgentConfirmation
-  onConfirm?: (scope?: "once" | "conversation") => void
+  onConfirm?: (scope?: "once" | "session") => void
   onCancel?: () => void
 }
 
@@ -135,7 +133,7 @@ export function AgentApprovalPanel({
             size="sm"
             variant="secondary"
             className="h-7 px-2 text-xs"
-            onClick={() => onConfirm?.("conversation")}
+            onClick={() => onConfirm?.("session")}
           >
             本会话允许
           </Button>

@@ -12,7 +12,17 @@ CardMind 是一个基于 [NoteGen](https://github.com/codexu/note-gen) 改造的
       Agent 基于个人材料继续工作
 ```
 
-> 当前有效应用仓库是 `E:\CardMind\note-gen`。外层 `E:\CardMind` 是历史工作区和数据目录，不是运行命令的位置。
+> CardMind 是对 NoteGen 的二次开发，不是从零自研。公开材料和简历都应保留这一归属边界。
+
+## 来源、基线与许可
+
+- 上游项目：[codexu/note-gen](https://github.com/codexu/note-gen)
+- 冻结基线：[70e356981a360a59136043e97d7899007aa1022e](https://github.com/codexu/note-gen/commit/70e356981a360a59136043e97d7899007aa1022e)
+- CardMind 修改者：GitHub 用户 [shuzhouzhang](https://github.com/shuzhouzhang)
+- 本可靠性版本修改日期：2026-09-03
+- 许可：与上游一致，使用 [GPL-3.0-only](LICENSE)；第三方归属与二次开发范围见 [NOTICE](NOTICE)
+
+本分支冻结在上述基线，只移植经过审查的小范围修复，不合并整段上游历史；逐项来源见 [Selective upstream references](docs/UPSTREAM_FIXES.md)。CardMind 的二次开发范围包括知识卡片/图谱/摄取，以及单 Agent 工具循环的失败语义、权限边界、取消/超时、追踪脱敏和回放评测。
 
 ## 当前产品边界
 
@@ -27,7 +37,7 @@ CardMind 是一个基于 [NoteGen](https://github.com/codexu/note-gen) 改造的
 仍保留但不是当前产品主线：
 
 - NoteGen 上游的移动端、同步、模板、音频等代码
-- Agent 的 Memory、Skill、MCP 工具定义；当前活动注册表没有启用这些类别
+- Agent 的 MCP、Skills、Memory 能力在 Reliability v1 中明确禁用；现有本机配置不会被删除，但不会进入模型工具面
 - `cm_*` 结构化知识引擎；它已实现导入和存储，但尚未成为前端图谱的唯一数据源
 
 更详细的实现边界和调用链见 [架构与阅读指南](docs/ARCHITECTURE.md)。
@@ -77,10 +87,26 @@ pnpm check
 它依次执行：
 
 1. TypeScript 类型检查
-2. 卡片分块测试
+2. 仓库全部 Node specifications
 3. Python 知识引擎测试
+4. Agent 单元测试与纯内存 Replay Eval
 
-知识引擎测试不得使用正式数据库。正式数据库位于 `E:\CardMind\data\note.db`。
+桌面应用使用 Tauri 应用数据目录下的 `sqlite:note.db`。知识引擎测试和 Agent Eval 均使用临时或纯内存数据，不读取真实笔记、Tauri 命令或生产数据库。
+
+Agent 专项验证：
+
+```powershell
+pnpm test:agent
+pnpm agent:eval -- --mode replay --suite reliability-v1
+```
+
+Live smoke 不进入 CI，固定使用 `Qwen/Qwen3-8B`、temperature 0 和纯内存工具沙箱。只有同时显式提供 `CARDMIND_AGENT_EVAL_LIVE=1`、`CARDMIND_AGENT_EVAL_BASE_URL`、`CARDMIND_AGENT_EVAL_API_KEY` 与 `--allow-network` 才会联网：
+
+```powershell
+pnpm agent:eval -- --mode live --provider notegen-free --suite live-smoke-v1 --allow-network
+```
+
+Eval 退出码为：0 通过、1 门槛失败、2 配置或 Provider 不可比较、130 用户中断。报告位于 `docs/evidence/`；离线报告不代表真实模型路由准确率。
 
 ## 推荐阅读顺序
 
@@ -95,4 +121,6 @@ pnpm check
 
 ## 上游与许可
 
-CardMind 使用 NoteGen 作为应用基础，并在其上增加面向知识学习的卡片、图谱、摄取和 Agent 改造。发布或对外介绍时应保留 NoteGen 来源说明，并遵守仓库中的 GPL-3.0 许可。
+CardMind 使用 NoteGen 作为应用基础，并在其上增加面向知识学习的卡片、图谱、摄取和 Agent 可靠性改造。发布或对外介绍时必须保留 NoteGen 来源说明，并遵守仓库中的 GPL-3.0-only 许可。除非有可复跑证据，否则不得声称生产安全、跨运行幂等、多 Agent、Responses API 或可用的 MCP 能力。
+
+`agent-reliability-v1` 标签只标识源码与可复跑证据版本；CardMind 当前没有自有桌面签名和更新源，该标签不代表已经发布可自动更新的桌面二进制。

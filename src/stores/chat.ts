@@ -98,10 +98,6 @@ interface ChatState {
   resetAgentState: () => void
   addAgentToolCall: (toolCall: ToolCall) => void
   updateAgentToolCall: (id: string, updates: Partial<ToolCall>) => void
-  agentAutoApproveConversationId: number | null
-  setAgentAutoApproveConversationId: (conversationId: number | null) => void
-  agentAutoApproveRuntimeSkillId: string | null
-  setAgentAutoApproveRuntimeSkillId: (skillId: string | null) => void
 
   // Placeholder 状态
   isPlaceholderEnabled: boolean
@@ -307,15 +303,6 @@ const useChatStore = create<ChatState>((set, get) => ({
         )
       }
     })
-  },
-
-  agentAutoApproveConversationId: null,
-  setAgentAutoApproveConversationId: (conversationId: number | null) => {
-    set({ agentAutoApproveConversationId: conversationId })
-  },
-  agentAutoApproveRuntimeSkillId: null,
-  setAgentAutoApproveRuntimeSkillId: (skillId: string | null) => {
-    set({ agentAutoApproveRuntimeSkillId: skillId })
   },
 
   isPlaceholderEnabled: true,
@@ -774,8 +761,6 @@ const useChatStore = create<ChatState>((set, get) => ({
           chats: [],
           pendingQuote: null,
           editorSelectionQuote: null,
-          agentAutoApproveConversationId: null,
-          agentAutoApproveRuntimeSkillId: null
         })
         get().resetAgentState()
         get().clearMcpToolCalls()
@@ -817,8 +802,6 @@ const useChatStore = create<ChatState>((set, get) => ({
       chats: [],
       pendingQuote: null,
       editorSelectionQuote: null,
-      agentAutoApproveConversationId: null,
-      agentAutoApproveRuntimeSkillId: null
     })
     // 清空 Agent 状态
     get().resetAgentState()

@@ -1,9 +1,5 @@
 import type OpenAI from 'openai'
 import useArticleStore from '@/stores/article'
-import { useMcpStore } from '@/stores/mcp'
-import { callTool as callMcpTool } from '@/lib/mcp/tools'
-import { mcpServerManager } from '@/lib/mcp/server-manager'
-import { skillManager } from '@/lib/skills'
 import {
   getEditorContentTool,
   getEditorSelectionTool,
@@ -27,8 +23,7 @@ import {
 import { listFoldersTool, checkFolderExistsTool, createFolderTool, deleteFolderTool } from './tools/folder-tools'
 import { listTagsTool, createTagTool, updateTagTool, deleteTagTool, searchTagsTool } from './tools/tag-tools'
 import { readMarksTool, searchMarksTool, createMarkTool, updateMarkTool, deleteMarkTool } from './tools/mark-tools'
-import { saveMemoryTool, listMemoriesTool, deleteMemoryTool, clearMemoriesTool } from './tools/memory-tools'
-import { executeSkillScriptTool, getCurrentTimeTool, loadSkillContentTool } from './tools/system-tools'
+import { getCurrentTimeTool } from './tools/system-tools'
 import type {
   AgentChange,
   AgentTool,
@@ -39,18 +34,17 @@ import type {
 } from './types'
 import type { EditorTransactionInput, EditorTransactionOperation } from './editor-adapter'
 import { buildEditorChange } from './editor-adapter'
+import {
+  AGENT_TOOL_MANIFEST,
+  bindAgentToolImplementation,
+  manifestToOpenAITools,
+} from './tool-manifest'
 
 const EMPTY_SCHEMA: JsonSchema = {
   type: 'object',
   properties: {},
   required: [],
   additionalProperties: false,
-}
-
-function asObject(input: unknown): Record<string, unknown> {
-  return input && typeof input === 'object' && !Array.isArray(input)
-    ? input as Record<string, unknown>
-    : {}
 }
 
 function resultFromLegacy(result: ToolResult): AgentToolResult {
@@ -113,16 +107,34 @@ async function readEditorMarkdown() {
   return typeof data.markdown === 'string' ? data.markdown : undefined
 }
 
+async function readEditorMarkdownAfterWrite(before: string | undefined) {
+  let after = await readEditorMarkdown()
+  for (let attempt = 0; attempt < 4 && before !== undefined && after === before; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)))
+    after = await readEditorMarkdown()
+  }
+  return after
+}
+
 function legacyInputSchema(tool: Tool): JsonSchema {
   const properties: Record<string, JsonSchema> = {}
   const required: string[] = []
 
   for (const parameter of tool.parameters) {
-    properties[parameter.name] = {
+    const schema: JsonSchema = {
       type: parameter.type === 'number' ? 'number' : parameter.type,
       description: parameter.description,
       default: parameter.default,
     }
+
+    // Ported from upstream b17a036c: strict providers require `items` for
+    // every array schema. Legacy descriptors do not expose an item type, so
+    // keep the item schema permissive instead of inventing one.
+    if (schema.type === 'array' && schema.items === undefined) {
+      schema.items = {}
+    }
+
+    properties[parameter.name] = schema
 
     if (parameter.required) {
       required.push(parameter.name)
@@ -133,7 +145,7 @@ function legacyInputSchema(tool: Tool): JsonSchema {
     type: 'object',
     properties,
     required,
-    additionalProperties: true,
+    additionalProperties: false,
   }
 }
 
@@ -285,7 +297,10 @@ async function executeEditorLegacyWrite(input: Record<string, unknown>, legacy: 
     return normalized
   }
 
-  const after = await readEditorMarkdown()
+  // Ported from upstream f0c37188: editor state propagation can lag behind a
+  // successful command, so verify with a short bounded poll before declaring
+  // that no change occurred.
+  const after = await readEditorMarkdownAfterWrite(before)
   if (before === undefined || after === undefined || before === after) {
     return normalized
   }
@@ -528,196 +543,13 @@ async function executeStructuralToolWithChange(
   }
 }
 
-const editorApplyTransactionTool: AgentTool = {
-  name: 'editor_apply_transaction',
-  title: '应用编辑器事务',
-  description: 'Apply one or more precise edits to the current Markdown editor using the latest editor snapshot.',
-  category: 'editor',
-  risk: 'editor-write',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      filePath: { type: 'string', description: 'Current editor file path, if known.' },
-      version: { type: 'number', description: 'Editor version from editor_get_state.' },
-      operations: {
-        type: 'array',
-        description: 'Ordered edit operations.',
-        items: {
-          type: 'object',
-          properties: {
-            type: {
-              type: 'string',
-              enum: ['replace_range', 'replace_lines', 'insert_after_line', 'insert_before_line'],
-            },
-            from: { type: 'number' },
-            to: { type: 'number' },
-            startLine: { type: 'number' },
-            endLine: { type: 'number' },
-            line: { type: 'number' },
-            content: { type: 'string' },
-          },
-          required: ['type', 'content'],
-          additionalProperties: false,
-        },
-      },
-    },
-    required: ['operations'],
-    additionalProperties: false,
-  },
-  execute: executeEditorTransaction,
-}
-
-function buildSkillListTool(): AgentTool {
-  return {
-    name: 'skill_list',
-    title: '列出 Skills',
-    description: 'List available skills with descriptions.',
-    category: 'skill',
-    risk: 'read',
-    inputSchema: EMPTY_SCHEMA,
-    execute: async () => {
-      const enabledSkills = await skillManager.getEnabledSkills()
-      return {
-        ok: true,
-        message: `找到 ${enabledSkills.length} 个可用 Skills`,
-        data: enabledSkills.map((skill) => ({
-          id: skill.metadata.id,
-          name: skill.metadata.name,
-          description: skill.metadata.description,
-        })),
-      }
-    },
-  }
-}
-
-function buildSkillLoadTool(): AgentTool {
-  return {
-    name: 'skill_load',
-    title: '加载 Skill',
-    description: 'Load the complete guidance and support files for a skill by ID.',
-    category: 'skill',
-    risk: 'read',
-    legacyName: loadSkillContentTool.name,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        skill_id: { type: 'string', description: 'Skill ID to load.' },
-        file_type: { type: 'string', description: 'Optional support filename or file type.' },
-      },
-      required: ['skill_id'],
-      additionalProperties: false,
-    },
-    execute: async (input) => resultFromLegacy(await loadSkillContentTool.execute(input as Record<string, any>)),
-  }
-}
-
-function buildMcpCallTool(): AgentTool {
-  return {
-    name: 'mcp_call_tool',
-    title: '调用 MCP 工具',
-    description: 'Call a selected MCP server tool. Use serverId and toolName exactly as shown in the MCP catalog.',
-    category: 'mcp',
-    risk: 'external',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        serverId: { type: 'string', description: 'Selected MCP server ID.' },
-        toolName: { type: 'string', description: 'MCP tool name.' },
-        args: {
-          type: 'object',
-          description: 'Arguments passed to the MCP tool.',
-          additionalProperties: true,
-        },
-      },
-      required: ['serverId', 'toolName'],
-      additionalProperties: false,
-    },
-    execute: async (input) => {
-      const serverId = typeof input.serverId === 'string' ? input.serverId : ''
-      const toolName = typeof input.toolName === 'string' ? input.toolName : ''
-      const args = asObject(input.args)
-
-      if (!serverId || !toolName) {
-        return {
-          ok: false,
-          message: '缺少 MCP serverId 或 toolName。',
-          error: 'serverId and toolName are required',
-        }
-      }
-
-      const result = await callMcpTool(serverId, toolName, args)
-      const text = result.content
-        .filter((part) => part.type === 'text')
-        .map((part) => part.text)
-        .join('\n')
-
-      return {
-        ok: !result.isError,
-        message: text || (result.isError ? 'MCP 工具执行失败' : 'MCP 工具执行成功'),
-        data: result.content,
-        error: result.isError ? text || 'MCP tool failed' : undefined,
-      }
-    },
-  }
-}
-
-function buildMcpListToolsTool(): AgentTool {
-  return {
-    name: 'mcp_list_tools',
-    title: '列出 MCP 工具',
-    description: 'List configured MCP servers, selected servers, connection state, tools, and resources. This is read-only.',
-    category: 'mcp',
-    risk: 'read',
-    inputSchema: EMPTY_SCHEMA,
-    execute: async () => {
-      const store = useMcpStore.getState()
-      await store.initMcpData()
-      const latestStore = useMcpStore.getState()
-      const servers = latestStore.servers.map((server) => {
-        const state = latestStore.serverStates.get(server.id)
-        const tools = mcpServerManager.getServerTools(server.id)
-        const resources = mcpServerManager.getServerResources(server.id)
-
-        return {
-          id: server.id,
-          name: server.name,
-          type: server.type,
-          enabled: server.enabled,
-          selected: latestStore.selectedServerIds.includes(server.id),
-          status: state?.status || 'disconnected',
-          error: state?.error,
-          toolCount: tools.length,
-          tools: tools.map((tool) => ({
-            name: tool.name,
-            description: tool.description || '',
-            required: tool.inputSchema?.required || [],
-          })),
-          resourceCount: resources.length,
-          resources: resources.map((resource) => ({
-            uri: resource.uri,
-            name: resource.name,
-            description: resource.description || '',
-            mimeType: resource.mimeType || '',
-          })),
-        }
-      })
-
-      return {
-        ok: true,
-        message: servers.length
-          ? `找到 ${servers.length} 个 MCP 服务，其中 ${servers.filter((server) => server.selected).length} 个已选中。`
-          : '当前没有配置 MCP 服务。',
-        data: {
-          servers,
-          selectedServerIds: latestStore.selectedServerIds,
-        },
-      }
-    },
-  }
-}
+const editorApplyTransactionTool = bindAgentToolImplementation(
+  'editor_apply_transaction',
+  executeEditorTransaction,
+)
 
 function buildTools(): AgentTool[] {
-  return [
+  const implementations: AgentTool[] = [
     adaptLegacyTool({
       name: 'system_get_current_time',
       title: '获取当前日期',
@@ -885,6 +717,24 @@ function buildTools(): AgentTool[] {
       category: 'note',
       risk: 'file-create',
       legacy: copyFileTool,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filePath: { type: 'string', minLength: 1 },
+          targetFolderPath: {
+            type: 'string',
+            description: '明确的目标目录；空字符串表示笔记根目录。',
+          },
+          newName: {
+            type: 'string',
+            minLength: 4,
+            pattern: '^[^/\\\\]+\\.md$',
+            description: '明确的目标文件名，必须包含 .md 扩展名。',
+          },
+        },
+        required: ['filePath', 'targetFolderPath', 'newName'],
+        additionalProperties: false,
+      },
       execute: executeCopyFileWithChange,
     }),
     adaptLegacyTool({ name: 'folder_list', title: '列出文件夹', category: 'folder', risk: 'read', legacy: listFoldersTool }),
@@ -981,65 +831,27 @@ function buildTools(): AgentTool[] {
         false
       ),
     }),
-    adaptLegacyTool({ name: 'memory_list', title: '列出记忆', category: 'memory', risk: 'read', legacy: listMemoriesTool }),
-    adaptLegacyTool({
-      name: 'memory_create',
-      title: '创建记忆',
-      category: 'memory',
-      risk: 'medium',
-      legacy: saveMemoryTool,
-      execute: (input) => executeStructuralToolWithChange(
-        input,
-        saveMemoryTool,
-        'memory',
-        (params) => `创建记忆 ${asString(params.content).slice(0, 24)}`,
-        (params) => asString(params.content).slice(0, 48)
-      ),
-    }),
-    adaptLegacyTool({
-      name: 'memory_delete',
-      title: '删除记忆',
-      category: 'memory',
-      risk: 'delete',
-      legacy: deleteMemoryTool,
-      execute: (input) => executeStructuralToolWithChange(
-        input,
-        deleteMemoryTool,
-        'memory',
-        (params) => `删除记忆 ${String(params.id ?? '')}`,
-        (params) => String(params.id ?? ''),
-        false
-      ),
-    }),
-    adaptLegacyTool({
-      name: 'memory_clear_all',
-      title: '清空全部记忆',
-      category: 'memory',
-      risk: 'delete',
-      legacy: clearMemoriesTool,
-      execute: (input) => executeStructuralToolWithChange(
-        input,
-        clearMemoriesTool,
-        'memory',
-        () => '清空全部记忆',
-        () => 'all',
-        false
-      ),
-    }),
-    buildSkillListTool(),
-    buildSkillLoadTool(),
-    adaptLegacyTool({
-      name: 'skill_execute_script',
-      title: '执行 Skill 脚本',
-      description: 'Execute an approved runtime script for a loaded Skill. If long script content is needed, create the script first with note_create_file, then execute it.',
-      category: 'skill',
-      risk: 'script',
-      legacy: executeSkillScriptTool,
-    }),
-    buildMcpListToolsTool(),
-    buildMcpCallTool(),
-  // CardMind 当前只开放核心笔记工作流；这些上游能力保留实现，但不进入活动 Agent 工具面。
-  ].filter((tool) => !['memory', 'skill', 'mcp'].includes(tool.category))
+  ]
+
+  const implementationByName = new Map(implementations.map((tool) => [tool.name, tool]))
+  if (implementationByName.size !== implementations.length) {
+    throw new Error('Duplicate production Agent tool implementation name')
+  }
+  if (implementations.length !== AGENT_TOOL_MANIFEST.length) {
+    throw new Error('Production Agent executors and canonical manifest are out of sync')
+  }
+
+  return AGENT_TOOL_MANIFEST.map((definition) => {
+    const implementation = implementationByName.get(definition.name)
+    if (!implementation) {
+      throw new Error(`Missing production Agent executor for ${definition.name}`)
+    }
+    return {
+      ...implementation,
+      ...definition,
+      legacyName: implementation.legacyName,
+    }
+  })
 }
 
 export class AgentToolRegistry {
@@ -1055,14 +867,7 @@ export class AgentToolRegistry {
   }
 
   toOpenAITools(): OpenAI.Chat.ChatCompletionTool[] {
-    return this.tools.map((tool) => ({
-      type: 'function',
-      function: {
-        name: tool.name,
-        description: `${tool.title}. ${tool.description}`,
-        parameters: tool.inputSchema as Record<string, unknown>,
-      },
-    }))
+    return manifestToOpenAITools()
   }
 }
 

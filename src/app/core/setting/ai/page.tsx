@@ -284,8 +284,8 @@ export default function AiPage() {
 
   return (
     <SettingType id="ai" icon={<BotMessageSquare />} title={t('title')} desc={t('desc')}>
-      {/* 当没有用户自定义模型时显示默认模型区域 */}
-      {userCustomModels.length === 0 && <DefaultModelsSection />}
+      {/* Fresh installs have no source-shipped credential or provider. */}
+      {aiModelList.length === 0 && <DefaultModelsSection />}
       
       <CreateConfig 
         hasCustomModels={userCustomModels.length > 0} 

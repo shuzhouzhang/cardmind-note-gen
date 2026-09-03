@@ -16,6 +16,7 @@ import 'highlight.js/styles/github.min.css';
 import './chat.css';
 import { advanceStreamingSmoother } from './streaming-smoother';
 import { cn } from "@/lib/utils";
+import { configureSafeMarkdown } from '@/lib/chat-markdown-security.mjs';
 
 type ThemeType = 'light' | 'dark' | 'system';
 
@@ -53,7 +54,7 @@ export default function ChatPreview({text, streaming = false, containerClassName
   
   useEffect(() => {
     md.current = new MarkdownIt({
-      html: true,
+      html: false,
       linkify: true,
       typographer: true,
       highlight: function (str, lang): string {
@@ -75,11 +76,7 @@ export default function ChatPreview({text, streaming = false, containerClassName
       errorColor: '#cc0000'
     });
 
-    md.current.renderer.rules.link_open = function (tokens, idx, options, _env, self) {
-      tokens[idx].attrSet('target', '_blank');
-      tokens[idx].attrSet('rel', 'noopener noreferrer');
-      return self.renderToken(tokens, idx, options);
-    }
+    configureSafeMarkdown(md.current)
 
     if (displayedTextRef.current) {
       setHtmlContent(md.current.render(displayedTextRef.current));

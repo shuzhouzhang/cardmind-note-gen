@@ -4,14 +4,14 @@
 
 ## 1. 先确定仓库边界
 
-当前机器上存在两层仓库：
+公开仓库不依赖维护者机器上的目录结构：
 
 ```text
-E:\CardMind              历史仓库、数据和工具目录
-└─ note-gen\.git         当前 CardMind 应用仓库
+cardmind-note-gen/       当前 CardMind 应用仓库
+└─ .git/                 个人 Fork 的 Git 元数据
 ```
 
-运行、类型检查和 Git 操作都应从 `E:\CardMind\note-gen` 开始。正式 SQLite 数据库位于外层 `E:\CardMind\data\note.db`，不要用它执行测试。
+运行、类型检查和 Git 操作都从仓库根目录开始。桌面数据库使用 Tauri 应用数据目录内的 `sqlite:note.db`；测试和 Eval 不得读取该数据库。
 
 ## 2. 运行时总览
 
@@ -28,8 +28,7 @@ E:\CardMind              历史仓库、数据和工具目录
           │
           └─ Tauri invoke ─> Rust
                               ├─ HTTP / AI 流式请求
-                              ├─ 文件、托盘、截图和 OCR
-                              └─ MCP 子进程与系统能力
+                              └─ 文件、托盘、截图和 OCR
 
 Python CLI ─> 对话摄取 / 结构化知识应用 ─> 同一个 SQLite
 ```
@@ -56,7 +55,7 @@ Python CLI ─> 对话摄取 / 结构化知识应用 ─> 同一个 SQLite
 
 ### SQLite
 
-`src/db/index.ts` 加载 `E:/CardMind/data/note.db`，并初始化以下数据域：
+`src/db/index.ts` 加载 Tauri 应用数据目录下的 `sqlite:note.db`，并初始化以下数据域：
 
 - `chats`、`conversations`：AI 对话
 - `marks`、`notes`、`tags`：记录和笔记元数据
@@ -77,6 +76,7 @@ chat-send.tsx
 AgentHandler
           ↓
 AgentRuntime
+  ├─ AgentModelPort / AgentToolCatalog
   ├─ ContextManager
   ├─ PromptAssembler
   ├─ ToolRegistry
@@ -84,12 +84,14 @@ AgentRuntime
   ├─ RecoveryManager
   └─ TraceRecorder
           ↓
-模型 Function Calling，最多 15 轮
+模型 Function Calling，默认最多 15 轮
 ```
 
 模型请求使用 OpenAI-compatible Chat Completions 协议。TypeScript 的 `tauri-client.ts` 把请求转成 Tauri command，再由 `src-tauri/src/ai.rs` 执行实际网络访问和流式回传。
 
-当前活动工具集中在编辑器、笔记、文件夹、标签和快速记录。Memory、Skill、MCP 的定义仍在代码中，但 `tool-registry.ts` 在返回活动工具前过滤了这些类别。
+当前活动工具集中在编辑器、笔记、文件夹、标签和快速记录。Reliability v1 不构建 MCP、Skill、Memory Agent 工具，也不向模型描述这些能力；用户显式正向请求时，Runtime 会在模型调用前返回 `CAPABILITY_DISABLED`。MCP 没有活动 UI、Agent 工具或已注册的 Tauri command；仓库内仍保留的上游实现模块不可从当前产品路径到达。已有 MCP 配置仅作为用户数据保留且不参与同步。Skills 的导入与设置管理仍是非 Agent 功能，但不会进入 Agent 工具目录；Memory Agent 工具同样不暴露。
+
+Runtime 通过 `AgentModelPort`、`AgentToolCatalog` 和时间/ID/sleep 依赖注入支持生产模型、Fake、Record 与 Replay。结果明确区分 `success`、`partial`、`failed`、`stopped`，并记录终止原因、迭代、重试、usage 可用性和工具指标。工具参数先经 Ajv 深层校验，再进行目标/选区权限和审批；副作用去重只保证同一次运行，不跨进程或跨运行。
 
 ## 6. 两条知识处理路径
 

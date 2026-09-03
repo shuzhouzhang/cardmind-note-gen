@@ -2,6 +2,16 @@
 
 # dependencies
 node_modules
+store.json
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+.cache/
+cache/
+tmp/
+temp/
 
 ./dist
 dist-ssr
@@ -34,6 +44,10 @@ target/*
 .superpowers/*
 .agents/*
 /docs/*/*
+!/docs/evidence/
+!/docs/evidence/**
+!/docs/resume/
+!/docs/resume/**
 skills-lock.json
 src-tauri/resources/ocr/*
 !src-tauri/resources/ocr/.gitkeep

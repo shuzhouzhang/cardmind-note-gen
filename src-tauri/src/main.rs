@@ -13,8 +13,6 @@ mod file_open;
 mod fonts;
 mod fuzzy_search;
 mod keywords;
-mod mcp;
-mod mcp_runtime;
 mod ocr_packages;
 mod screenshot;
 mod skills;
@@ -30,10 +28,6 @@ use device::get_device_id;
 use fonts::list_system_fonts;
 use fuzzy_search::{fuzzy_search, fuzzy_search_parallel};
 use keywords::rank_keywords;
-use mcp::{send_mcp_message, start_mcp_stdio_server, stop_mcp_server, McpServerManager};
-use mcp_runtime::{
-    cancel_mcp_runtime_install, inspect_mcp_runtime, install_mcp_runtime, RuntimeInstallManager,
-};
 use ocr_packages::{list_ocr_providers, run_ocr_provider};
 use screenshot::{cleanup_temp_screenshot_dir, screenshot};
 use skills::import_skill_zip;
@@ -49,10 +43,7 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_sql::Builder::default().build())
-        // MCP 服务器管理器
         .manage(file_open::PendingOpenFiles::default())
-        .manage(McpServerManager::new())
-        .manage(RuntimeInstallManager::new())
         .manage(AiRequestManager::new())
         // 系统级插件
         .plugin(tauri_plugin_process::init())
@@ -65,8 +56,6 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        // 功能插件
-        .plugin(tauri_plugin_updater::Builder::new().build())
         // 注册命令处理器
         .invoke_handler(tauri::generate_handler![
             screenshot,
@@ -77,12 +66,6 @@ fn main() {
             import_app_data,
             import_app_data_from_file,
             import_skill_zip,
-            start_mcp_stdio_server,
-            stop_mcp_server,
-            send_mcp_message,
-            inspect_mcp_runtime,
-            install_mcp_runtime,
-            cancel_mcp_runtime_install,
             get_device_id,
             list_system_fonts,
             analytics::track_analytics_event,

@@ -16,7 +16,6 @@ import { AppFootbar } from "@/components/app-footbar"
 import { TooltipProvider } from "@/components/ui/tooltip";
 import './mobile-styles.css'
 import useImageStore from "@/stores/imageHosting";
-import { initMcp } from "@/lib/mcp/init"
 import { reportAppStart } from "@/lib/event-report"
 import { MobileStatusBar } from "@/components/mobile-statusbar"
 import { TextSizeProvider } from "@/contexts/text-size-context"
@@ -52,8 +51,6 @@ export default function RootLayout({
         await initAllDatabases()
         if (cancelled) return
         await initAutoDataSyncRuntime()
-        if (cancelled) return
-        initMcp()
       } catch (error) {
         console.error('Failed to initialize mobile app:', error)
       }

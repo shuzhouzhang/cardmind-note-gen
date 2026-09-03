@@ -2,7 +2,9 @@
 name = "cardmind"
 version = "0.1.0"
 description = "CardMind knowledge card review app based on NoteGen"
-authors = ["codexu"]
+authors = ["codexu", "shuzhouzhang"]
+license = "GPL-3.0-only"
+repository = "https://github.com/shuzhouzhang/cardmind-note-gen"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -49,7 +51,6 @@ version = "2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"
-tauri-plugin-updater = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-clipboard = "2"
 xcap = "=0.6.0"

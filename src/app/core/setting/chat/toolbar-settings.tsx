@@ -5,7 +5,6 @@ import { Switch } from '@/components/ui/switch'
 import {
   BotMessageSquare,
   Drama,
-  ServerCrash,
   Database,
   Clipboard,
   GripVertical
@@ -38,11 +37,6 @@ const TOOL_CONFIGS = {
     icon: <Drama className="size-4" />,
     titleKey: 'record.chat.input.promptSelect.tooltip',
     descKey: 'settings.chat.toolbar.chatToolbar.promptSelect.desc',
-  },
-  mcpButton: {
-    icon: <ServerCrash className="size-4" />,
-    titleKey: 'mcp.selectServers',
-    descKey: 'settings.chat.toolbar.chatToolbar.mcpButton.desc',
   },
   ragSwitch: {
     icon: <Database className="size-4" />,
