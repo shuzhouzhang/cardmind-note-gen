@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "mode", "model", "temperature", "maxOutputTokensPerCall", "maxModelCallsPerScenario", "maxModelCallsTotal", "scenarios"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "suite": { "const": "live-smoke-v1" },
+    "mode": { "const": "live" },
+    "model": { "const": "Qwen/Qwen3-8B" },
+    "temperature": { "const": 0 },
+    "maxOutputTokensPerCall": { "const": 256 },
+    "maxModelCallsPerScenario": { "const": 3 },
+    "maxModelCallsTotal": { "const": 30 },
+    "scenarios": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "description", "input", "sandbox", "approvalDecisions", "expected"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 },
+          "input": {
+            "type": "object",
+            "required": ["userInput"],
+            "properties": {
+              "userInput": { "type": "string" },
+              "activeFilePath": { "type": "string" },
+              "currentQuote": {
+                "type": "object",
+                "required": ["fileName", "startLine", "endLine", "from", "to"],
+                "properties": {
+                  "fileName": { "type": "string" },
+                  "startLine": { "type": "number" },
+                  "endLine": { "type": "number" },
+                  "from": { "type": "number" },
+                  "to": { "type": "number" },
+                  "fullContent": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "sandbox": {
+            "type": "object",
+            "required": ["toolResponses"],
+            "properties": {
+              "toolResponses": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/toolResponse" }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "approvalDecisions": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/approval" }
+          },
+          "expected": {
+            "type": "object",
+            "required": ["route"],
+            "properties": {
+              "route": { "type": "array", "items": { "type": "string" } },
+              "arguments": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/argument" }
+              },
+              "forbiddenTools": { "type": "array", "items": { "type": "string" } },
+              "safety": { "type": "boolean" },
+              "approval": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "toolResponse": {
+      "type": "object",
+      "required": ["ok", "message"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "message": { "type": "string" },
+        "data": {},
+        "error": { "type": "string" },
+        "changes": { "type": "array" },
+        "throw": { "type": "string" },
+        "delayMs": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "approval": {
+      "type": "object",
+      "required": ["approved"],
+      "properties": {
+        "approved": { "type": "boolean" },
+        "scope": { "enum": ["once", "session"] },
+        "reason": { "enum": ["approved", "denied", "timeout", "aborted"] },
+        "toolName": { "type": "string" },
+        "target": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "argument": {
+      "type": "object",
+      "required": ["tool", "path", "equals"],
+      "properties": {
+        "tool": { "type": "string" },
+        "call": { "type": "integer", "minimum": 0 },
+        "path": { "type": "string" },
+        "equals": {}
+      },
+      "additionalProperties": false
+    }
+  }
+}

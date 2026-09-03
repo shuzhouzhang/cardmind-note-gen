@@ -1,0 +1,265 @@
+{
+  "schemaVersion": 1,
+  "suite": "reliability-v1",
+  "mode": "replay",
+  "scenarios": [
+    {
+      "id": "direct-answer",
+      "description": "A direct answer completes without any tool execution.",
+      "input": { "userInput": "用一句话解释什么是幂等。" },
+      "replayTurns": [
+        { "content": "幂等表示同一操作重复执行，系统最终状态仍与执行一次相同。", "usage": { "promptTokens": 24, "completionTokens": 18, "totalTokens": 42 } }
+      ],
+      "sandbox": { "toolResponses": {} },
+      "approvalDecisions": [],
+      "expected": {
+        "outcome": "success",
+        "terminationReason": "final_answer",
+        "toolSequence": [],
+        "requestedToolSequence": [],
+        "forbiddenTools": ["note_create_file", "note_update_file", "note_delete_file"],
+        "maximumRealExecutions": 0
+      }
+    },
+    {
+      "id": "list-files",
+      "description": "A fragmented function call lists only sandbox Markdown files.",
+      "input": { "userInput": "列出我的 Markdown 文件。" },
+      "replayTurns": [
+        { "fragmentToolCalls": true, "toolCalls": [{ "id": "call-list", "name": "note_list_files", "arguments": {} }] },
+        { "content": "沙箱中有 notes/a.md 和 notes/b.md。" }
+      ],
+      "sandbox": {
+        "toolResponses": {
+          "note_list_files": [{ "ok": true, "message": "2 files", "data": ["notes/a.md", "notes/b.md"] }]
+        }
+      },
+      "approvalDecisions": [],
+      "expected": {
+        "outcome": "success",
+        "terminationReason": "final_answer",
+        "toolSequence": ["note_list_files"],
+        "requestedToolSequence": ["note_list_files"],
+        "arguments": [{ "tool": "note_list_files", "path": "", "equals": {} }],
+        "maximumRealExecutions": 0
+      }
+    },
+    {
+      "id": "schema-repair",
+      "description": "Missing required arguments are rejected before execution and then repaired.",
+      "input": { "userInput": "读取 notes/roadmap.md。" },
+      "replayTurns": [
+        { "toolCalls": [{ "id": "call-read-invalid", "name": "note_read_file", "arguments": {} }] },
+        { "toolCalls": [{ "id": "call-read-valid", "name": "note_read_file", "arguments": { "filePath": "notes/roadmap.md" } }] },
+        { "content": "roadmap 记录了可靠性改造。" }
+      ],
+      "sandbox": {
+        "toolResponses": {
+          "note_read_file": [{ "ok": true, "message": "read", "data": { "content": "可靠性改造" } }]
+        }
+      },
+      "approvalDecisions": [],
+      "expected": {
+        "outcome": "success",
+        "terminationReason": "final_answer",
+        "toolSequence": ["note_read_file"],
+        "requestedToolSequence": ["note_read_file", "note_read_file"],
+        "arguments": [{ "tool": "note_read_file", "path": "filePath", "equals": "notes/roadmap.md" }],
+        "maximumRealExecutions": 0
+      }
+    },
+    {
+      "id": "target-scope-repair",
+      "description": "A read outside the explicitly named target is blocked before the correct target runs.",
+      "input": { "userInput": "Only read notes/safe.md and summarize it." },
+      "replayTurns": [
+        { "toolCalls": [{ "id": "call-private", "name": "note_read_file", "arguments": { "filePath": "notes/private.md" } }] },
+        { "toolCalls": [{ "id": "call-safe", "name": "note_read_file", "arguments": { "filePath": "notes/safe.md" } }] },
+        { "content": "safe.md 只包含公开的测试说明。" }
+      ],
+      "sandbox": {
+        "toolResponses": {
+          "note_read_file": [{ "ok": true, "message": "read", "data": { "content": "公开测试说明" } }]
+        }
+      },
+      "approvalDecisions": [],
+      "expected": {
+        "outcome": "success",
+        "terminationReason": "final_answer",
+        "toolSequence": ["note_read_file"],
+        "requestedToolSequence": ["note_read_file", "note_read_file"],
+        "forbiddenTools": ["note_update_file", "note_delete_file"],
+        "arguments": [{ "tool": "note_read_file", "path": "filePath", "equals": "notes/safe.md" }],
+        "maximumRealExecutions": 0
+      }
+    },
+    {
+      "id": "selection-and-denial",
+      "description": "An out-of-selection edit is blocked and a scoped retry is denied without execution.",
+      "input": {
+        "userInput": "把选中的文字改成正式表述。",
+        "activeFilePath": "notes/current.md",
+        "currentQuote": {
+          "fileName": "notes/current.md",
+          "startLine": 2,
+          "endLine": 2,
+          "from": 5,
+          "to": 9,
+          "fullContent": "01234原文56789"
+        }
+      },
+      "replayTurns": [
+        { "toolCalls": [{ "id": "call-range-bad", "name": "editor_replace_range", "arguments": { "from": 0, "to": 100, "content": "越权" } }] },
+        { "toolCalls": [{ "id": "call-range-good", "name": "editor_replace_range", "arguments": { "from": 5, "to": 9, "content": "正式表述" } }] }
+      ],
+      "sandbox": {
+        "toolResponses": {
+          "editor_replace_range": [{ "ok": true, "message": "replaced" }]
+        }
+      },
+      "approvalDecisions": [
+        { "toolName": "editor_replace_range", "target": "notes/current.md#chars:5-9", "approved": false, "reason": "denied" }
+      ],
+      "expected": {
+        "outcome": "failed",
+        "terminationReason": "approval_denied",
+        "toolSequence": [],
+        "requestedToolSequence": ["editor_replace_range", "editor_replace_range"],
+        "maximumRealExecutions": 0
+      }
+    },
+    {
+      "id": "duplicate-write",
+      "description": "A duplicate write tool-call ID produces only one sandbox mutation.",
+      "input": { "userInput": "创建 notes/new.md，内容为 replay evidence。" },
+      "replayTurns": [
+        {
+          "toolCalls": [
+            { "id": "call-create-once", "name": "note_create_file", "arguments": { "fileName": "new.md", "folderPath": "notes", "content": "replay evidence" } },
+            { "id": "call-create-once", "name": "note_create_file", "arguments": { "fileName": "new.md", "folderPath": "notes", "content": "replay evidence" } }
+          ]
+        },
+        { "content": "已在沙箱中创建一次 notes/new.md。" }
+      ],
+      "sandbox": {
+        "toolResponses": {
+          "note_create_file": [{
+            "ok": true,
+            "message": "created",
+            "changes": [{ "id": "change-create", "type": "file", "target": "notes/new.md", "after": "replay evidence", "reversible": true }]
+          }]
+        }
+      },
+      "approvalDecisions": [
+        { "toolName": "note_create_file", "target": "notes/new.md", "approved": true, "scope": "once", "reason": "approved" }
+      ],
+      "expected": {
+        "outcome": "success",
+        "terminationReason": "final_answer",
+        "toolSequence": ["note_create_file"],
+        "requestedToolSequence": ["note_create_file", "note_create_file"],
+        "arguments": [{ "tool": "note_create_file", "path": "fileName", "equals": "new.md" }],
+        "maximumRealExecutions": 0
+      }
+    },
+    {
+      "id": "stream-retry",
+      "description": "A model stream interruption after partial content retries before running a read tool.",
+      "input": { "userInput": "列出 Markdown 文件。" },
+      "replayTurns": [
+        { "content": "incomplete candidate", "streamErrorAfterChunks": 1 },
+        { "toolCalls": [{ "id": "call-list-retry", "name": "note_list_files", "arguments": {} }] },
+        { "content": "重试后读取到 notes/a.md。" }
+      ],
+      "sandbox": {
+        "toolResponses": {
+          "note_list_files": [{ "ok": true, "message": "1 file", "data": ["notes/a.md"] }]
+        }
+      },
+      "approvalDecisions": [],
+      "expected": {
+        "outcome": "success",
+        "terminationReason": "final_answer",
+        "toolSequence": ["note_list_files"],
+        "requestedToolSequence": ["note_list_files"],
+        "minimumRetries": 1,
+        "maximumRealExecutions": 0
+      }
+    },
+    {
+      "id": "tool-throw-structured",
+      "description": "A thrown read tool error becomes a structured observation and the model explains the failure.",
+      "input": { "userInput": "读取 notes/broken.md；如果失败就说明原因。" },
+      "replayTurns": [
+        { "toolCalls": [{ "id": "call-read-throw", "name": "note_read_file", "arguments": { "filePath": "notes/broken.md" } }] },
+        { "content": "沙箱读取失败，因此没有返回笔记正文。" }
+      ],
+      "sandbox": {
+        "toolResponses": {
+          "note_read_file": [{ "ok": false, "message": "synthetic failure", "throw": "SYNTHETIC_TOOL_THROW" }]
+        }
+      },
+      "approvalDecisions": [],
+      "expected": {
+        "outcome": "success",
+        "terminationReason": "final_answer",
+        "toolSequence": ["note_read_file"],
+        "requestedToolSequence": ["note_read_file"],
+        "maximumRealExecutions": 0
+      }
+    },
+    {
+      "id": "partial-write",
+      "description": "A successful write followed by an unstructured write failure reports partial and effect_unknown without replay.",
+      "input": { "userInput": "创建 notes/a.md，然后把 notes/b.md 更新为 done。" },
+      "replayTurns": [
+        {
+          "toolCalls": [
+            { "id": "call-create-a", "name": "note_create_file", "arguments": { "fileName": "a.md", "folderPath": "notes", "content": "created" } },
+            { "id": "call-update-b", "name": "note_update_file", "arguments": { "filePath": "notes/b.md", "content": "done" } }
+          ]
+        }
+      ],
+      "sandbox": {
+        "toolResponses": {
+          "note_create_file": [{
+            "ok": true,
+            "message": "created",
+            "changes": [{ "id": "change-a", "type": "file", "target": "notes/a.md", "after": "created", "reversible": true }]
+          }],
+          "note_update_file": [{ "ok": false, "message": "write failed", "throw": "SYNTHETIC_WRITE_THROW" }]
+        }
+      },
+      "approvalDecisions": [
+        { "toolName": "note_create_file", "target": "notes/a.md", "approved": true, "scope": "once", "reason": "approved" },
+        { "toolName": "note_update_file", "target": "notes/b.md", "approved": true, "scope": "once", "reason": "approved" }
+      ],
+      "expected": {
+        "outcome": "partial",
+        "terminationReason": "effect_unknown",
+        "toolSequence": ["note_create_file", "note_update_file"],
+        "requestedToolSequence": ["note_create_file", "note_update_file"],
+        "maximumRealExecutions": 0
+      }
+    },
+    {
+      "id": "maximum-iterations",
+      "description": "An unproductive tool loop terminates as a failure at the configured iteration limit.",
+      "input": { "userInput": "尝试调用不存在的工具，直到运行时终止。" },
+      "replayTurns": [
+        { "toolCalls": [{ "id": "call-unknown-1", "name": "nonexistent_tool", "arguments": {} }] },
+        { "toolCalls": [{ "id": "call-unknown-2", "name": "nonexistent_tool", "arguments": {} }] },
+        { "toolCalls": [{ "id": "call-unknown-3", "name": "nonexistent_tool", "arguments": {} }] }
+      ],
+      "sandbox": { "toolResponses": {} },
+      "approvalDecisions": [],
+      "expected": {
+        "outcome": "failed",
+        "terminationReason": "maximum_iterations",
+        "toolSequence": [],
+        "requestedToolSequence": ["nonexistent_tool", "nonexistent_tool", "nonexistent_tool"],
+        "maximumRealExecutions": 0
+      }
+    }
+  ]
+}

@@ -28,8 +28,9 @@
 | 卡片分块完整性 | `src/lib/card-generation-chunks.spec.mjs` | 测试覆盖消息保持、超长拆分和覆盖率 |
 | 知识摄取幂等性 | `scripts/tests/` | 能用临时数据库验证重复导入和知识应用 |
 | Agent 活动调用链 | `chat-send.tsx`、`agent-handler.ts`、`runtime.ts` | 能说明上下文、工具调用、权限、循环和错误处理 |
+| Agent 可靠性 | `runtime-reliability.spec.ts`、`scripts/agent-eval/`、`docs/evidence/` | 能区分单元测试、脚本回放与真实 Provider 指标 |
 
-这里的“可证明”只表示本地工作树有代码和测试，不等于 GitHub 已经形成清晰的个人贡献历史。
+这里的“可证明”只表示代码和测试能支撑相应结论；对外使用时还要能指向公开 PR、版本标签及报告中记录的被测提交。
 
 ### 需补证：代码存在，但还不能用于强结论
 
@@ -37,7 +38,7 @@
 - 用真实个人数据完整执行一次 `ingest -> pending -> apply -> status`。
 - 两条知识路径统一后的迁移和兼容性验证。
 - 卡片生成准确率、耗时、成本等可复现实验。
-- 将当前大工作区改动拆成来源清晰、主题单一的 Git 提交。
+- 每个对外主张都要绑定到对应提交的 Windows CI 和本地报告，不沿用旧提交的结果。
 
 ### 暂时不能写进简历
 
@@ -116,7 +117,7 @@ chat-send.tsx
 - 为什么限制最多 15 轮？达到上限后用户看到什么？
 - 参数不完整、工具不存在、权限拒绝、工具执行失败分别如何处理？
 - `ContextManager`、`PromptAssembler`、`RecoveryManager` 和 `TraceRecorder` 各解决什么问题？
-- 为什么注册表里有 Memory、Skill、MCP 定义，活动工具却过滤了它们？
+- 为什么 Reliability v1 要在模型调用前对 MCP、Skill、Memory 返回 `CAPABILITY_DISABLED`，同时保留用户已有配置？
 
 通过证据：在调试器里观察一轮 `messages -> tool_calls -> tool result -> messages`，保存一张调用链截图和一段自己的说明。
 
@@ -220,12 +221,12 @@ python -B scripts/cardmind.py --db <临时路径> status
 
 ## 9. Git 证据要求
 
-当前本地历史能看到上游提交，但 CardMind 改造仍主要集中在未提交工作区。公开前需要：
+公开 Fork 保留 NoteGen 历史，CardMind 改造从冻结基线分支按真实主题拆分提交。对外展示时必须同时指向：
 
-- 先做完整备份并确认所有改动来源。
-- 按真实功能拆分提交，不伪造日期和作者。
-- 每个提交只解决一个主题，并带对应测试或验证记录。
-- 在 README 保留 NoteGen 来源和 GPL-3.0 许可说明。
+- 冻结的 NoteGen 基础提交和 CardMind 基线提交。
+- 功能 PR 及其 Windows CI 记录。
+- 与被测提交绑定的 Replay/Live 报告和版本标签。
+- README/NOTICE 中的 NoteGen 来源、GPL-3.0 和二次开发边界。
 - 不把上游已有 Agent 框架描述为个人从零实现。
 
 完成后，面试证据应形成闭环：设计说明 -> 代码提交 -> 测试结果 -> 运行截图 -> 口头讲解。
