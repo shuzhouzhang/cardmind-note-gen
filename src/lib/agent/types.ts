@@ -9,11 +9,16 @@ export interface JsonObject {
 export interface JsonSchema {
   type?: string | string[]
   description?: string
+  const?: JsonPrimitive
   enum?: JsonPrimitive[]
+  oneOf?: JsonSchema[]
   properties?: Record<string, JsonSchema>
   required?: string[]
   items?: JsonSchema
+  minItems?: number
   additionalProperties?: boolean | JsonSchema
+  minLength?: number
+  pattern?: string
   default?: JsonValue
 }
 
@@ -64,8 +69,11 @@ export interface AgentSkillSummary {
 }
 
 export interface AgentToolExecutionContext {
-  signal?: AbortSignal
+  signal: AbortSignal
   runId: string
+  toolCallId: string
+  operationKey: string
+  attempt: number
   context: AgentContextSnapshot
 }
 
@@ -84,6 +92,7 @@ export interface AgentToolResult {
   message: string
   data?: unknown
   error?: string
+  effectStatus?: 'none' | 'applied' | 'unknown'
   changes?: AgentChange[]
 }
 
@@ -114,6 +123,7 @@ export type AgentRunStatus =
   | 'failed'
 
 export interface AgentTraceEvent {
+  schemaVersion?: 1
   id: string
   runId: string
   type:
@@ -129,6 +139,10 @@ export interface AgentTraceEvent {
   status: 'pending' | 'running' | 'success' | 'error'
   timestamp: number
   duration?: number
+  iteration?: number
+  attempt?: number
+  usage?: AgentModelUsage
+  terminationReason?: AgentTerminationReason
   toolName?: string
   input?: Record<string, unknown>
   output?: unknown
@@ -142,13 +156,20 @@ export interface AgentApprovalRequest {
   title: string
   risk: AgentToolRisk
   params: Record<string, unknown>
+  target: string
+  operationKey: string
+  approvalScopeKey: string
   previewParams?: Record<string, unknown>
   originalContent?: string
   modifiedContent?: string
   filePath?: string
   canApproveForSession?: boolean
-  sessionApprovalType?: 'write' | 'runtime-script-skill'
-  sessionApprovalSkillId?: string
+}
+
+export interface AgentApprovalDecision {
+  approved: boolean
+  scope?: 'once' | 'session'
+  reason?: 'approved' | 'denied' | 'timeout' | 'aborted'
 }
 
 export interface AgentRuntimeInput {
@@ -171,21 +192,129 @@ export interface AgentRuntimeCallbacks {
   onCandidateAnswerClear?: () => void
   onFinalAnswerRender?: (markdownContent: string) => void
   requestConfirmation?: (
-    toolName: string,
-    params: Record<string, unknown>,
-    context?: {
-      previewParams?: Record<string, unknown>
-      originalContent?: string
-      modifiedContent?: string
-      filePath?: string
-    }
-  ) => Promise<boolean>
+    request: AgentApprovalRequest,
+    signal: AbortSignal
+  ) => Promise<AgentApprovalDecision>
+}
+
+export interface AgentModelUsage {
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
+}
+
+export interface AgentModelSettings {
+  model: string
+  baseURL?: string
+  temperature?: number
+  topP?: number
+  raw?: unknown
+}
+
+export interface AgentModelValidation {
+  ok: boolean
+  reason?: string
+}
+
+export interface AgentModelStreamRequest {
+  settings: AgentModelSettings
+  messages: OpenAI.Chat.ChatCompletionMessageParam[]
+  tools: OpenAI.Chat.ChatCompletionTool[]
+  toolChoice: OpenAI.Chat.ChatCompletionToolChoiceOption
+  iteration: number
+  attempt: number
+  signal: AbortSignal
+}
+
+/** Production, fake, record and replay models all implement this small port. */
+export interface AgentModelPort {
+  loadSettings: () => Promise<AgentModelSettings | null | undefined>
+  validateSettings?: (settings: AgentModelSettings) => Promise<AgentModelValidation>
+  getSystemPrompt: () => Promise<string>
+  createStream: (
+    request: AgentModelStreamRequest
+  ) => Promise<AsyncIterable<OpenAI.Chat.ChatCompletionChunk>>
+  formatError?: (error: unknown) => string
+}
+
+/** A run receives an explicit catalog instead of reaching into the global registry. */
+export interface AgentToolCatalog {
+  listTools: () => AgentTool[]
+  getTool: (name: string) => AgentTool | undefined
+  toOpenAITools: () => OpenAI.Chat.ChatCompletionTool[]
+}
+
+export interface AgentRuntimeDependencies {
+  modelPort: AgentModelPort
+  toolCatalog: AgentToolCatalog
+  now: () => number
+  createId: (prefix: string) => string
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>
+  maxIterations: number
+  maxModelRetries: number
+  modelTimeoutMs: number
+  toolTimeoutMs: number
+  approvalTimeoutMs: number
+  prepareMessages: (
+    messages: OpenAI.Chat.ChatCompletionMessageParam[]
+  ) => OpenAI.Chat.ChatCompletionMessageParam[]
+  buildCurrentUserMessage: (
+    text: string,
+    imageUrls?: string[]
+  ) => Promise<OpenAI.Chat.ChatCompletionMessageParam>
+  assemblePrompt: (
+    context: AgentContextSnapshot,
+    tools: AgentTool[],
+    basePrompt: string
+  ) => string
+}
+
+export type AgentRuntimeOutcome = 'success' | 'partial' | 'failed' | 'stopped'
+
+export type AgentTerminationReason =
+  | 'final_answer'
+  | 'no_change_needed'
+  | 'configuration_error'
+  | 'capability_disabled'
+  | 'guardrail_blocked'
+  | 'approval_denied'
+  | 'approval_timeout'
+  | 'empty_response'
+  | 'model_error'
+  | 'model_timeout'
+  | 'tool_error'
+  | 'tool_timeout'
+  | 'effect_unknown'
+  | 'maximum_iterations'
+  | 'missing_required_tool'
+  | 'runtime_busy'
+  | 'user_stopped'
+
+export interface AgentRunMetrics {
+  startedAt: number
+  completedAt: number
+  durationMs: number
+  currentIteration: number
+  iterations: number
+  modelCalls: number
+  modelAttempts: number
+  retries: number
+  toolCalls: number
+  successfulTools: number
+  failedTools: number
+  deduplicatedTools: number
+  effectUnknownCount: number
+  usageAvailable: boolean
+  usage?: AgentModelUsage
 }
 
 export interface AgentRuntimeResult {
   runId: string
   content: string
   stopped: boolean
+  outcome: AgentRuntimeOutcome
+  terminationReason: AgentTerminationReason
+  metrics: AgentRunMetrics
   steps: AgentStep[]
   toolCalls: ToolCall[]
   changes: AgentChange[]
@@ -217,6 +346,7 @@ export interface ToolResult {
   data?: any
   error?: string
   message?: string
+  effectStatus?: 'none' | 'applied' | 'unknown'
 }
 
 export interface ToolCall {
@@ -233,9 +363,7 @@ export interface ConfirmationRecord {
   params: Record<string, any>
   status: 'pending' | 'confirmed' | 'cancelled'
   timestamp: number
-  scope?: 'once' | 'conversation'
-  sessionApprovalType?: 'write' | 'runtime-script-skill'
-  sessionApprovalSkillId?: string
+  scope?: 'once' | 'session'
 }
 
 export interface AgentState {
@@ -262,8 +390,6 @@ export interface AgentState {
     modifiedContent?: string
     filePath?: string
     canApproveForSession?: boolean
-    sessionApprovalType?: 'write' | 'runtime-script-skill'
-    sessionApprovalSkillId?: string
   }
   confirmationHistory: ConfirmationRecord[]
   loadedSkills?: AgentSkillSummary[]

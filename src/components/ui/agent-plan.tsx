@@ -43,9 +43,7 @@ interface ConfirmationRecord {
   params: Record<string, any>;
   status: "pending" | "confirmed" | "cancelled";
   timestamp: number;
-  scope?: "once" | "conversation";
-  sessionApprovalType?: "write" | "runtime-script-skill";
-  sessionApprovalSkillId?: string;
+  scope?: "once" | "session";
 }
 
 interface ReActStep {
@@ -80,8 +78,6 @@ interface AgentPlanProps {
     modifiedContent?: string;
     filePath?: string;
     canApproveForSession?: boolean;
-    sessionApprovalType?: "write" | "runtime-script-skill";
-    sessionApprovalSkillId?: string;
   };
   confirmationHistory?: ConfirmationRecord[];
   currentStepStartTime?: number; // 当前步骤开始时间戳
@@ -90,7 +86,7 @@ interface AgentPlanProps {
   historyJson?: string;
 
   // Callbacks for live mode
-  onConfirm?: (scope?: "once" | "conversation") => void;
+  onConfirm?: (scope?: "once" | "session") => void;
   onCancel?: () => void;
 
   // i18n namespace (optional, defaults to 'record.chat.input.agent')
@@ -563,7 +559,7 @@ export function AgentPlan({
   };
 
   // Handle confirmation
-  const handleConfirm = (scope: "once" | "conversation" = "once") => {
+  const handleConfirm = (scope: "once" | "session" = "once") => {
     if (onConfirm) onConfirm(scope);
   };
 
@@ -971,13 +967,11 @@ export function AgentPlan({
                   size="sm"
                   variant="ghost"
                   className="h-6 px-2 text-xs"
-                  onClick={() => handleConfirm("conversation")}
+                  onClick={() => handleConfirm("session")}
                 >
                   <CheckCircle2 className="size-4 text-green-600" />
                   <span className="ml-1">
-                    {pendingConfirmation.sessionApprovalType === "runtime-script-skill"
-                      ? "本会话允许此 Skill 脚本"
-                      : "本会话都允许"}
+                    本次运行允许同一工具和目标
                   </span>
                 </Button>
               )}
