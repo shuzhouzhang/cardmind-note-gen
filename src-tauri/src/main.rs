@@ -7,6 +7,7 @@ mod analytics;
 mod android_ocr;
 mod app_setup;
 mod backup;
+mod chatgpt_share;
 mod device;
 mod file_open;
 mod fonts;
@@ -90,6 +91,7 @@ fn main() {
             ai_multipart_request,
             ai_chat_completion_stream,
             cancel_ai_request,
+            chatgpt_share::fetch_chatgpt_share_html,
             update_tray_record_toolbar_config,
             list_ocr_providers,
             run_ocr_provider,

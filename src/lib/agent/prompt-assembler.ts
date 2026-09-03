@@ -1,4 +1,3 @@
-import { getSelectedServerTools } from '@/lib/mcp/tools'
 import { DEFAULT_SYSTEM_PROMPT } from '@/lib/ai/system-prompt'
 import type { AgentContextSnapshot, AgentTool } from './types'
 
@@ -6,38 +5,6 @@ function formatToolCatalog(tools: AgentTool[]) {
   return tools
     .map((tool) => `- ${tool.name}: ${tool.title}. ${tool.description}`)
     .join('\n')
-}
-
-function formatSkills(context: AgentContextSnapshot) {
-  const skills = context.availableSkills ?? []
-  if (skills.length === 0) {
-    return ''
-  }
-
-  return [
-    '## Skills',
-    'Skills are guidance documents, not direct actions. Use skill_load when a skill is relevant, then use concrete tools to act.',
-    ...skills.map((skill) => `- ${skill.id}: ${skill.name}${skill.description ? ` - ${skill.description}` : ''}`),
-  ].join('\n')
-}
-
-function formatMcpCatalog() {
-  try {
-    const selectedTools = getSelectedServerTools()
-    if (selectedTools.length === 0) {
-      return ''
-    }
-
-    return [
-      '## MCP Tools',
-      'Use mcp_call_tool with serverId, toolName, and args when an external MCP capability is needed.',
-      ...selectedTools.map(({ serverId, serverName, tool }) =>
-        `- ${serverId}/${tool.name} (${serverName}): ${tool.description || tool.name}`
-      ),
-    ].join('\n')
-  } catch {
-    return ''
-  }
 }
 
 function formatActiveFile(context: AgentContextSnapshot) {
@@ -86,8 +53,6 @@ export class AgentPromptAssembler {
       formatToolCatalog(tools),
       formatActiveFile(context),
       formatQuote(context),
-      formatSkills(context),
-      formatMcpCatalog(),
     ].filter((section) => section.trim().length > 0)
 
     return sections.join('\n\n')

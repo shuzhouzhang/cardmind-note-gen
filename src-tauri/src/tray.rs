@@ -57,7 +57,7 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::tray:
     let tray = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .menu(&menu)
-        .tooltip("NoteGen")
+        .tooltip("CardMind")
         .on_menu_event(move |app, event| {
             handle_menu_event(app, event.id.0.as_str());
         })
@@ -183,7 +183,7 @@ fn default_tray_menu_labels() -> TrayMenuLabels {
         window: "Window".to_string(),
         pin_toggle: "Pin/Unpin".to_string(),
         hide_window: "Hide to Tray".to_string(),
-        quit: "Quit NoteGen".to_string(),
+        quit: "Quit CardMind".to_string(),
     }
 }
 

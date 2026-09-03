@@ -582,6 +582,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "cardmind"
+version = "0.1.0"
+dependencies = [
+ "core-graphics 0.23.2",
+ "font-kit",
+ "futures-util",
+ "fuzzy-matcher",
+ "jieba-rs",
+ "machine-uid",
+ "openssl",
+ "percent-encoding",
+ "rayon",
+ "regex",
+ "reqwest",
+ "reqwest_dav",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-http",
+ "tauri-plugin-opener",
+ "tauri-plugin-os",
+ "tauri-plugin-process",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-sql",
+ "tauri-plugin-store",
+ "tauri-plugin-updater",
+ "tauri-plugin-window-state",
+ "tauri-utils",
+ "tokio",
+ "tokio-util",
+ "url",
+ "urlencoding",
+ "uuid",
+ "windows 0.58.0",
+ "xcap",
+ "zip",
+]
+
+[[package]]
 name = "cargo-platform"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3482,51 +3527,6 @@ name = "noop_proc_macro"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
-
-[[package]]
-name = "note-gen"
-version = "0.1.0"
-dependencies = [
- "core-graphics 0.23.2",
- "font-kit",
- "futures-util",
- "fuzzy-matcher",
- "jieba-rs",
- "machine-uid",
- "openssl",
- "percent-encoding",
- "rayon",
- "regex",
- "reqwest",
- "reqwest_dav",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-http",
- "tauri-plugin-opener",
- "tauri-plugin-os",
- "tauri-plugin-process",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tauri-plugin-sql",
- "tauri-plugin-store",
- "tauri-plugin-updater",
- "tauri-plugin-window-state",
- "tauri-utils",
- "tokio",
- "tokio-util",
- "url",
- "urlencoding",
- "uuid",
- "windows 0.58.0",
- "xcap",
- "zip",
-]
 
 [[package]]
 name = "num-bigint"

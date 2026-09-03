@@ -3,6 +3,7 @@ mod analytics;
 #[cfg(target_os = "android")]
 mod android_ocr;
 mod backup;
+mod chatgpt_share;
 mod device;
 mod fonts;
 #[cfg(target_os = "ios")]
@@ -68,6 +69,7 @@ pub fn run() {
             ai_multipart_request,
             ai_chat_completion_stream,
             cancel_ai_request,
+            chatgpt_share::fetch_chatgpt_share_html,
             list_ocr_providers,
             run_ocr_provider,
             mobile_system_bars::set_mobile_system_bars,

@@ -1,11 +1,10 @@
 'use client'
 
-import { FileText, MessageSquareText, Search, FolderOpen } from 'lucide-react'
+import { Brain, FileText, MessageSquareText, FolderOpen } from 'lucide-react'
 import useArticleStore from '@/stores/article'
 import { useTranslations } from 'next-intl'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Store } from '@tauri-apps/plugin-store'
-import Image from 'next/image'
 import emitter from '@/lib/emitter'
 import { useEffect, useState } from 'react'
 import useShortcutStore from '@/stores/shortcut'
@@ -13,6 +12,7 @@ import useSettingStore from '@/stores/setting'
 import { useSidebarStore } from '@/stores/sidebar'
 import { getActiveOnboardingStep, getNextOnboardingStep, type OnboardingProgress, type OnboardingStepId } from './onboarding-state'
 import { createNewNoteFromEmptyState } from './empty-state-actions'
+import { useRouter } from 'next/navigation'
 
 interface ActionItem {
   icon: React.ReactNode
@@ -46,6 +46,7 @@ export function EmptyState({
   const t = useTranslations('article.emptyState')
   const { shortcuts } = useShortcutStore()
   const { addWorkspaceHistory } = useSettingStore()
+  const router = useRouter()
   const [textRecordShortcut, setTextRecordShortcut] = useState('')
 
   const handleCreateNote = async () => {
@@ -114,17 +115,6 @@ export function EmptyState({
     emitter.emit('quickRecordTextHandler')
   }
 
-  const handleGlobalSearch = () => {
-    // 触发全局搜索弹窗 (Cmd/Ctrl + F)
-    const event = new KeyboardEvent('keydown', {
-      key: 'f',
-      metaKey: true,
-      ctrlKey: true,
-      bubbles: true
-    })
-    window.dispatchEvent(event)
-  }
-
   const actions: ActionItem[] = [
     {
       icon: <FileText className="w-5 h-5" />,
@@ -141,11 +131,10 @@ export function EmptyState({
       onClick: handleOpenRecord
     },
     {
-      icon: <Search className="w-5 h-5" />,
-      title: t('actions.globalSearch.title'),
-      description: t('actions.globalSearch.desc'),
-      shortcut: '⌘ F',
-      onClick: handleGlobalSearch
+      icon: <Brain className="w-5 h-5" />,
+      title: t('actions.cards.title'),
+      description: t('actions.cards.desc'),
+      onClick: () => router.push('/core/cards')
     },
     {
       icon: <FolderOpen className="w-5 h-5" />,
@@ -188,36 +177,61 @@ export function EmptyState({
   const showOnboardingCard = !onboardingProgress.dismissed && (showCompletedCard || Boolean(currentOnboardingStep))
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center h-full bg-background p-8">
-      <div className="max-w-2xl w-full space-y-8">
-        {/* Header */}
-        <div className="text-center space-y-3">
-          <div className="flex items-center justify-center gap-3 mb-2">
-            <Image 
-              src="/app-icon.png" 
-              alt="NoteGen" 
-              width={60}
-              height={60}
-              className="w-10 h-10 dark:invert"
-            />
-            <h1 className="text-4xl font-bold tracking-tight">
-              NoteGen
-            </h1>
+    <div className="flex h-full flex-1 items-center justify-center bg-background px-6 py-10">
+      <div className="w-full max-w-3xl">
+        <div className="cardmind-memory-line pl-6">
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold tracking-[0.16em] text-muted-foreground">
+            <Brain className="size-4 text-amber-600" />
+            CARDMIND
           </div>
-          <h2 className="text-xl font-semibold tracking-tight">
+          <h1 className="max-w-2xl text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
             {t('title')}
-          </h2>
-          <p className="text-muted-foreground text-sm">
+          </h1>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
             {t('subtitle')}
           </p>
         </div>
 
+        <div className="mt-9 grid gap-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+          <button
+            onClick={actions[0].onClick}
+            className="cardmind-surface group flex min-h-28 items-center gap-4 rounded-xl p-5 text-left transition-colors hover:border-amber-500/50 hover:bg-amber-500/[.035] focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-foreground text-background">
+              {actions[0].icon}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">{actions[0].title}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{actions[0].description}</div>
+            </div>
+            <kbd className="rounded border bg-muted/70 px-2 py-1 font-mono text-[10px] text-muted-foreground">{actions[0].shortcut}</kbd>
+          </button>
+
+          <div className="cardmind-surface divide-y rounded-xl px-4">
+            {actions.slice(1).map((action) => (
+              <button
+                key={action.title}
+                onClick={action.onClick}
+                className="group flex w-full items-center gap-3 py-3.5 text-left focus-visible:outline-2 focus-visible:outline-ring"
+              >
+                <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-colors group-hover:text-foreground">
+                  {action.icon}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium">{action.title}</div>
+                  <div className="truncate text-xs text-muted-foreground">{action.description}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {showOnboardingCard && (
-          <div className="rounded-2xl border bg-card/80 p-5 shadow-sm">
-            <div className="flex items-start justify-between gap-4">
+          <div className="mt-5 rounded-xl border border-dashed bg-muted/20 px-4 py-3">
+            <div className="flex items-center justify-between gap-4">
               <div className="space-y-1">
-                <h3 className="text-base font-semibold">{t('onboarding.title')}</h3>
-                <p className="text-sm text-muted-foreground">{t('onboarding.subtitle')}</p>
+                <h3 className="text-sm font-medium">{t('onboarding.title')}</h3>
+                <p className="text-xs text-muted-foreground">{t('onboarding.subtitle')}</p>
               </div>
               <button
                 onClick={() => void onDismissOnboarding()}
@@ -228,7 +242,7 @@ export function EmptyState({
             </div>
 
             {showCompletedCard && completedStep ? (
-              <div className="mt-4 rounded-xl border border-emerald-500/50 bg-emerald-500/5 p-4 transition-colors">
+              <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-emerald-500/5 px-3 py-2.5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
                     <p className="text-xs uppercase tracking-wide text-emerald-700/80 dark:text-emerald-300/80">
@@ -241,16 +255,11 @@ export function EmptyState({
                       {t(`onboarding.completedStates.${completedStep.id}.desc`)}
                     </p>
                   </div>
-                  <button
-                    onClick={() => void onContinueToNextStep()}
-                    className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-500"
-                  >
-                    {t('onboarding.continue')}
-                  </button>
                 </div>
+                <button onClick={() => void onContinueToNextStep()} className="shrink-0 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500">{t('onboarding.continue')}</button>
               </div>
             ) : currentOnboardingStep ? (
-              <div className="mt-4 rounded-xl border border-primary/60 bg-primary/5 p-4 transition-colors">
+              <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-background px-3 py-2.5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -259,62 +268,12 @@ export function EmptyState({
                     <h4 className="text-sm font-medium">{currentOnboardingStep.title}</h4>
                     <p className="text-xs text-muted-foreground">{currentOnboardingStep.description}</p>
                   </div>
-                  <button
-                    onClick={() => void onStartOnboardingStep(currentOnboardingStep.id)}
-                    className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:opacity-90"
-                  >
-                    {visibleOnboardingStep === currentOnboardingStep.id ? t('onboarding.viewHint') : t('onboarding.start')}
-                  </button>
                 </div>
+                <button onClick={() => void onStartOnboardingStep(currentOnboardingStep.id)} className="shrink-0 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90">{visibleOnboardingStep === currentOnboardingStep.id ? t('onboarding.viewHint') : t('onboarding.start')}</button>
               </div>
             ) : null}
           </div>
         )}
-
-        {/* Actions Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {actions.map((action, index) => (
-            <button
-              key={index}
-              onClick={action.onClick}
-              className="group relative flex items-start gap-4 p-4 rounded-lg border bg-card hover:bg-accent hover:border-primary/50 transition-all duration-200 text-left"
-            >
-              <div className="flex-shrink-0 mt-1 text-muted-foreground group-hover:text-primary transition-colors">
-                {action.icon}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="font-medium text-sm">
-                    {action.title}
-                  </h3>
-                  {action.shortcut && (
-                    <kbd className="hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">
-                      {action.shortcut}
-                    </kbd>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {action.description}
-                </p>
-              </div>
-            </button>
-          ))}
-        </div>
-
-        {/* Tips */}
-        <div className="text-center space-y-2 pt-4">
-          <p className="text-xs text-muted-foreground">
-            查看使用文档：
-            <a 
-              href="https://notegen.top/" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-primary hover:underline ml-1"
-            >
-              https://notegen.top/
-            </a>
-          </p>
-        </div>
       </div>
     </div>
   )

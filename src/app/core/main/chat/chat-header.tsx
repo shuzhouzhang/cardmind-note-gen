@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo } from 'react'
-import { MessageSquarePlus, ChevronDown, Search, Trash2 } from "lucide-react"
+import { MessageSquarePlus, ChevronDown, Search, Trash2, FileText, StickyNote, Sparkles } from "lucide-react"
 import { TooltipButton } from "@/components/tooltip-button"
 import useChatStore from "@/stores/chat"
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,8 @@ import relativeTime from 'dayjs/plugin/relativeTime'
 import 'dayjs/locale/zh-cn'
 import 'dayjs/locale/en'
 import useSettingStore from '@/stores/setting'
+import useArticleStore from '@/stores/article'
+import useMarkStore from '@/stores/mark'
 
 dayjs.extend(relativeTime)
 
@@ -32,6 +34,8 @@ export function ChatHeader() {
   const { language } = useSettingStore()
   const t = useTranslations()
   const tEmpty = useTranslations('record.chat.empty')
+  const activeFilePath = useArticleStore(state => state.activeFilePath)
+  const { activeMarkId, marks, allMarks } = useMarkStore()
 
   const [showHistoryDropdown, setShowHistoryDropdown] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -58,17 +62,30 @@ export function ChatHeader() {
     ? currentConversation.title
     : tEmpty('conversationHistory')
 
+  const activeRecord = activeMarkId
+    ? marks.find(mark => mark.id === activeMarkId) || allMarks.find(mark => mark.id === activeMarkId)
+    : null
+  const fileName = activeFilePath.split(/[\\/]/).filter(Boolean).pop()
+  const contextLabel = fileName
+    ? `当前笔记：${fileName}`
+    : activeRecord
+      ? `当前记录：${(activeRecord.desc || activeRecord.content || activeRecord.url || '快速记录').replace(/\s+/g, ' ').slice(0, 26)}`
+      : '未选择上下文'
+
   return (
-    <header className="h-12 w-full flex items-center justify-between border-b px-4 gap-2">
+    <header className="flex h-14 w-full items-center justify-between gap-2 border-b bg-background/85 px-3 backdrop-blur-sm">
       {/* 左侧：历史对话下拉 */}
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-300">
+          <Sparkles className="size-4" />
+        </div>
         <DropdownMenu open={showHistoryDropdown} onOpenChange={setShowHistoryDropdown}>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              className="px-2 hover:bg-transparent cursor-pointer justify-start gap-1.5"
+              className="h-9 min-w-0 cursor-pointer justify-start gap-1.5 px-1 hover:bg-transparent"
             >
-              <span className="text-sm font-medium truncate max-w-30">{dropdownTitle}</span>
+              <span className="max-w-28 truncate text-sm font-medium">{dropdownTitle}</span>
               <span className="text-xs text-muted-foreground">
                 ({filteredConversations.length})
               </span>
@@ -137,14 +154,22 @@ export function ChatHeader() {
         </DropdownMenu>
       </div>
 
-      {/* 右侧：新建对话 */}
-      <TooltipButton
-        icon={<MessageSquarePlus />}
-        tooltipText={t('record.chat.input.newChat')}
-        side="bottom"
-        onClick={() => startNewConversation()}
-        disabled={isDisabled}
-      />
+      <div className="flex min-w-0 items-center gap-1.5">
+        <div
+          className={`hidden min-w-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] xl:flex ${fileName || activeRecord ? 'border-emerald-600/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground'}`}
+          title={contextLabel}
+        >
+          {fileName ? <FileText className="size-3" /> : <StickyNote className="size-3" />}
+          <span className="max-w-36 truncate">{contextLabel}</span>
+        </div>
+        <TooltipButton
+          icon={<MessageSquarePlus />}
+          tooltipText={t('record.chat.input.newChat')}
+          side="bottom"
+          onClick={() => startNewConversation()}
+          disabled={isDisabled}
+        />
+      </div>
     </header>
   )
 }

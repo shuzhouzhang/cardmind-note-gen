@@ -148,6 +148,7 @@
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+    --workspace-sidebar: 42 33% 97%;
     --component-inactive-color: var(--muted-foreground);
     --component-bg: var(--card);
     --component-shadow: var(--border);
@@ -192,6 +193,7 @@
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+    --workspace-sidebar: 225 10% 10%;
     --component-inactive-color: var(--muted-foreground);
     --component-bg: var(--card);
     --component-shadow: var(--border);
@@ -209,6 +211,36 @@
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
     font-family: var(--notegen-app-font-family);
+  }
+
+  button,
+  [role="button"],
+  a,
+  input,
+  textarea {
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  .cardmind-surface {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border) / 0.78);
+    box-shadow: 0 1px 2px hsl(var(--shadow) / 0.04);
+  }
+
+  .cardmind-memory-line {
+    position: relative;
+  }
+
+  .cardmind-memory-line::before {
+    content: "";
+    position: absolute;
+    inset-block: 0.3rem;
+    left: 0;
+    width: 3px;
+    border-radius: 999px;
+    background: hsl(38 92% 52%);
   }
 }
 

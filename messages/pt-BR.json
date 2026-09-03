@@ -2315,6 +2315,7 @@
       "me": "Meu"
     },
     "search": "Pesquisar",
+    "cards": "Importar conversa e grafo",
     "githubImageHosting": "Hospedagem de Imagens Github",
     "login": "Entrar",
     "loading": "Carregando",
@@ -2423,6 +2424,10 @@
         "globalSearch": {
           "title": "Pesquisa Global",
           "desc": "Encontre rapidamente o conteúdo de suas notas"
+        },
+        "cards": {
+          "title": "Importar conversa",
+          "desc": "Use IA para criar um grafo de conhecimento"
         },
         "openWorkspace": {
           "title": "Abrir Workspace",

@@ -2322,6 +2322,7 @@
       "me": "我的"
     },
     "search": "搜索",
+    "cards": "匯入對話與知識圖譜",
     "githubImageHosting": "Github 圖床",
     "login": "登錄",
     "loading": "載入中",
@@ -2431,6 +2432,10 @@
           "title": "全局搜索",
           "desc": "快速查找你的筆記內容"
         },
+        "cards": {
+          "title": "匯入對話",
+          "desc": "讓 AI 拆分知識點並生成知識圖譜"
+        },
         "openWorkspace": {
           "title": "打開工作區",
           "desc": "選擇或切換工作區目錄"
@@ -2438,7 +2443,7 @@
       },
       "onboarding": {
         "title": "新手引導",
-        "subtitle": "跟著這三步體驗 NoteGen 的核心工作流。",
+        "subtitle": "跟著這三步完成從記錄到 AI 整理的核心流程。",
         "dismiss": "跳過新手引導",
         "reopen": "重新顯示新手引導",
         "start": "開始引導",

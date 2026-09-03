@@ -33,9 +33,9 @@ function getDefaultLayout(layoutKey: string) {
   // 根据布局组合返回默认值，但始终返回3个面板的尺寸
   switch (layoutKey) {
     case 'left-center-right':
-      return [20, 50, 30]
+      return [20, 80, 0]
     case 'left-center':
-      return [30, 70, 0] // 右侧折叠
+      return [20, 80, 0] // 右侧折叠
     case 'center-right':
       return [0, 60, 40] // 左侧折叠
     case 'left-right':
@@ -47,7 +47,7 @@ function getDefaultLayout(layoutKey: string) {
     case 'right':
       return [0, 0, 100] // 只有右侧
     default:
-      return [30, 40, 30] // 默认三等分
+      return [20, 80, 0]
   }
 }
 
@@ -63,7 +63,7 @@ function ResizableWrapper() {
   const centerPanelRef = useRef<ImperativePanelHandle>(null)
   const rightPanelRef = useRef<ImperativePanelHandle>(null)
   
-  const MIN_SIDEBAR_WIDTH_PX = 280
+  const MIN_SIDEBAR_WIDTH_PX = 230
   const MIN_EDITOR_WIDTH_PX = 400
   const [minSidebarSize, setMinSidebarSize] = useState(20)
   const [minEditorSize, setMinEditorSize] = useState(30)
@@ -139,7 +139,7 @@ function ResizableWrapper() {
     }
     
     // 如果保存的布局不是3个值，使用默认布局
-    return [30, 40, 30] // 左侧30%，中间40%，右侧30%
+    return [20, 80, 0]
   }
   
   const actualLayout = getActualLayout()
@@ -164,6 +164,7 @@ function ResizableWrapper() {
         minSize={minSidebarSize}
         collapsible={true}
         collapsedSize={0}
+        className="bg-[hsl(var(--workspace-sidebar))]"
       >
         <LeftSidebar />
       </ResizablePanel>
@@ -175,7 +176,7 @@ function ResizableWrapper() {
     panels.push(
       <ResizableHandle
         key="handle-left-center"
-        className={`${!shouldShowLeftHandle ? 'hidden' : ''}`}
+        className={`${!shouldShowLeftHandle ? 'hidden' : ''} transition-colors hover:bg-primary/25`}
       />
     )
 
@@ -188,6 +189,7 @@ function ResizableWrapper() {
         minSize={minEditorSize}
         collapsible={true}
         collapsedSize={0}
+        className="bg-background"
       >
         <EditorLayout />
       </ResizablePanel>
@@ -198,7 +200,7 @@ function ResizableWrapper() {
     panels.push(
       <ResizableHandle
         key="handle-center-right"
-        className={`${!centerPanelVisible || !rightSidebarVisible ? 'hidden' : ''}`}
+        className={`${!centerPanelVisible || !rightSidebarVisible ? 'hidden' : ''} transition-colors hover:bg-primary/25`}
       />
     )
 
@@ -211,6 +213,7 @@ function ResizableWrapper() {
         minSize={minSidebarSize}
         collapsible={true}
         collapsedSize={0}
+        className="bg-[hsl(var(--workspace-sidebar))]"
       >
         <Chat />
       </ResizablePanel>

@@ -1233,10 +1233,7 @@ const useSettingStore = create<SettingState>((set, get) => ({
   chatToolbarConfigPc: [
     // 底部工具栏（可排序）
     { id: 'modelSelect', enabled: true, order: 0 },
-    { id: 'promptSelect', enabled: true, order: 1 },
-    { id: 'mcpButton', enabled: true, order: 2 },
-    { id: 'ragSwitch', enabled: true, order: 3 },
-    { id: 'clipboardMonitor', enabled: true, order: 4 },
+    { id: 'clipboardMonitor', enabled: true, order: 1 },
     // 顶部工具栏 - 右侧（不参与排序）
     { id: 'newChat', enabled: true, order: 5 },
   ],
@@ -1266,12 +1263,8 @@ const useSettingStore = create<SettingState>((set, get) => ({
   // 记录工具栏配置
   recordToolbarConfig: [
     { id: 'text', enabled: true, order: 0 },
-    { id: 'recording', enabled: true, order: 1 },
-    { id: 'scan', enabled: true, order: 2 },
-    { id: 'image', enabled: true, order: 3 },
-    { id: 'link', enabled: true, order: 4 },
-    { id: 'file', enabled: true, order: 5 },
-    { id: 'todo', enabled: true, order: 6 },
+    { id: 'image', enabled: true, order: 1 },
+    { id: 'link', enabled: true, order: 2 },
   ],
   setRecordToolbarConfig: async (config: RecordToolbarItem[]) => {
     set({ recordToolbarConfig: config })

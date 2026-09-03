@@ -37,6 +37,7 @@ import { Store } from '@tauri-apps/plugin-store'
 import { toast } from '@/hooks/use-toast'
 import { RecordSaveTarget } from './record-save-target'
 import { useRecordCompletion } from './use-record-completion'
+import { isChatGptShareUrl, parseChatGptShareHtml } from '@/lib/chatgpt-import'
 
 export function ControlLink() {
   const t = useTranslations();
@@ -189,8 +190,18 @@ export function ControlLink() {
       // 获取 HTML 内容
       const html = await response.text();
 
-      // 创建一个 DOMParser 来解析 HTML
-      const pageContent = await parseHtmlContent(html, targetUrl);
+      // ChatGPT 分享页使用流式序列化数据，普通 DOM 文本无法得到真实对话。
+      const chatConversation = isChatGptShareUrl(targetUrl)
+        ? parseChatGptShareHtml(html, targetUrl)
+        : null
+      const pageContent = chatConversation
+        ? {
+            title: chatConversation.title,
+            metaDesc: `ChatGPT 对话 · ${chatConversation.messages.length} 条可见消息`,
+            mainContent: chatConversation.markdown,
+            bodyText: chatConversation.markdown,
+          }
+        : await parseHtmlContent(html, targetUrl);
       
       setQueue(queueId, { progress: '90%' });
       

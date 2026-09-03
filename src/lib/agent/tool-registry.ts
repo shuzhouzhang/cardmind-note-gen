@@ -1038,7 +1038,8 @@ function buildTools(): AgentTool[] {
     }),
     buildMcpListToolsTool(),
     buildMcpCallTool(),
-  ]
+  // CardMind 当前只开放核心笔记工作流；这些上游能力保留实现，但不进入活动 Agent 工具面。
+  ].filter((tool) => !['memory', 'skill', 'mcp'].includes(tool.category))
 }
 
 export class AgentToolRegistry {

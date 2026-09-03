@@ -1,8 +1,5 @@
 import OpenAI from 'openai'
 import useChatStore from '@/stores/chat'
-import { skillManager } from '@/lib/skills'
-import { useSkillsStore } from '@/stores/skills'
-import { reloadMcpTools } from './tools'
 import { AgentRuntime } from './runtime'
 import type { AgentChange, AgentRuntimeResult, AgentSkillSummary, AgentStep, AgentTraceEvent, ToolCall } from './types'
 
@@ -60,8 +57,7 @@ export class AgentHandler {
       currentStepStartTime: Date.now(),
     })
 
-    await this.initializeMcp()
-    const skillsInfo = await this.getSkillsInfo()
+    const skillsInfo: AgentSkillSummary[] = []
 
     const messages = Array.isArray(contextOrMessages)
       ? contextOrMessages
@@ -154,40 +150,6 @@ export class AgentHandler {
     this.runtime?.stop()
   }
 
-  private async initializeMcp() {
-    try {
-      const { useMcpStore } = await import('@/stores/mcp')
-      const mcpStore = useMcpStore.getState()
-      if (!mcpStore.initialized) {
-        await mcpStore.initMcpData()
-      }
-      await reloadMcpTools()
-    } catch (error) {
-      console.error('[Agent Handler] Failed to initialize MCP:', error)
-    }
-  }
-
-  private async getSkillsInfo(): Promise<AgentSkillSummary[]> {
-    const skillsStore = useSkillsStore.getState()
-
-    if (!skillsStore.enabled || !skillsStore.autoMatch) {
-      return []
-    }
-
-    try {
-      await skillsStore.initSkills()
-      const enabledSkills = await skillManager.getEnabledSkills()
-      return enabledSkills.map((skill) => ({
-        id: skill.metadata.id,
-        name: skill.metadata.name,
-        description: skill.metadata.description,
-      }))
-    } catch (error) {
-      console.error('[Agent Handler] Failed to load skills:', error)
-      return []
-    }
-  }
-
   private appendTrace(event: AgentTraceEvent) {
     const current = useChatStore.getState().agentState
     useChatStore.getState().setAgentState({
@@ -214,32 +176,6 @@ export class AgentHandler {
       currentAction: `${toolCall.toolName}(${JSON.stringify(toolCall.params)})`,
     })
 
-    if (toolCall.toolName === 'skill_load' && toolCall.status === 'success') {
-      this.appendLoadedSkill(toolCall.params.skill_id)
-    }
-  }
-
-  private appendLoadedSkill(skillId: unknown) {
-    if (typeof skillId !== 'string' || !skillId) {
-      return
-    }
-
-    const skill = skillManager.getSkill(skillId)
-    const current = useChatStore.getState().agentState.loadedSkills || []
-    if (current.some((item) => item.id === skillId)) {
-      return
-    }
-
-    useChatStore.getState().setAgentState({
-      loadedSkills: [
-        ...current,
-        {
-          id: skillId,
-          name: skill?.metadata.name || skillId,
-          description: skill?.metadata.description,
-        },
-      ],
-    })
   }
 
   private appendStep(step: AgentStep) {

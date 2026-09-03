@@ -3,14 +3,12 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { isMobileDevice } from '@/lib/check';
 import { Store } from '@tauri-apps/plugin-store';
 
 export default function NotFound() {
   const router = useRouter();
-  const mobile = isMobileDevice()
-  const fallbackPath = mobile ? '/mobile/record' : '/core/main'
-  const fallbackLabel = mobile ? 'Record' : 'Main'
+  const fallbackPath = '/core/main'
+  const fallbackLabel = 'Main'
   const [countdown, setCountdown] = useState(2);
 
   async function resetRouteStore() {

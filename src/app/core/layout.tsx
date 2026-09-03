@@ -9,14 +9,12 @@ import zh from "dayjs/locale/zh-cn";
 import en from "dayjs/locale/en";
 import { useI18n } from "@/hooks/useI18n"
 import useVectorStore from "@/stores/vector"
-import useImageStore from "@/stores/imageHosting"
 import useShortcutStore from "@/stores/shortcut"
 import useEditorShortcutStore from "@/stores/editor-shortcut"
 import useUpdateStore from "@/stores/update"
 import initQuickRecordText from "@/lib/shortcut/quick-record-text"
 import { useRouter, usePathname } from "next/navigation"
 import initShowWindow from "@/lib/shortcut/show-window"
-import { initMcp } from "@/lib/mcp/init"
 import { SearchDialog } from "@/components/search-dialog"
 import { ActivityDrawer } from "@/components/activity/activity-drawer"
 import { reportAppStart } from "@/lib/event-report"
@@ -25,8 +23,6 @@ import { Store } from '@tauri-apps/plugin-store'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import { TextSizeProvider } from "@/contexts/text-size-context"
-import { SyncConfirmDialog } from "@/components/sync-confirm-dialog"
-import { AutoDataSyncConflictDialog } from "@/components/auto-data-sync-conflict-dialog"
 import { applyThemeColors } from "@/lib/theme-utils"
 import { applyAppFontFamily } from "@/lib/font-settings"
 import emitter from "@/lib/emitter"
@@ -34,7 +30,6 @@ import { isEditableKeyboardTarget } from "@/lib/is-editable-keyboard-target"
 import useArticleStore from "@/stores/article"
 import { resolveOpenedMarkdownPath } from "@/lib/opened-files"
 import { useToast } from "@/hooks/use-toast"
-import { initAutoDataSyncRuntime } from "@/lib/sync/auto-data-sync-queue"
 import { useSidebarStore } from "@/stores/sidebar"
 import { useTranslations } from "next-intl"
 
@@ -44,12 +39,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const { initSettingData, uiScale, customThemeColors, recordToolbarConfig, appFontFamily } = useSettingStore()
-  const { initMainHosting } = useImageStore()
   const { currentLocale } = useI18n()
   const { initShortcut } = useShortcutStore()
   const { initEditorShortcuts } = useEditorShortcutStore()
   const { initVectorDb } = useVectorStore()
-  const { initUpdateStore, checkForUpdates } = useUpdateStore()
+  const { initUpdateStore } = useUpdateStore()
   const router = useRouter()
   const pathname = usePathname()
   const t = useTranslations()
@@ -297,12 +291,8 @@ export default function RootLayout({
     const initializeApp = async () => {
       try {
         initSettingData()
-        initMainHosting()
-
         // 先完成数据库和默认工作区初始化，避免首次启动时其他逻辑抢先读取空目录或未建表数据库。
         await initAllDatabases()
-        if (cancelled) return
-        await initAutoDataSyncRuntime()
         if (cancelled) return
 
         initShortcut()
@@ -312,11 +302,10 @@ export default function RootLayout({
 
         initQuickRecordText()
         initShowWindow()
-        initMcp()
 
         await initUpdateStore()
         if (cancelled) return
-        checkForUpdates()
+        // CardMind does not have its own public updater feed in phase one.
       } catch (error) {
         console.error('Failed to initialize app core:', error)
       }
@@ -420,8 +409,6 @@ export default function RootLayout({
         </main>
         <ActivityDrawer open={activityOpen} onOpenChange={setActivityOpen} />
         <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
-        <SyncConfirmDialog />
-        <AutoDataSyncConflictDialog />
       </TextSizeProvider>
     </ThemeProvider>
   );

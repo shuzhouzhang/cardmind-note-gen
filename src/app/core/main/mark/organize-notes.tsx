@@ -58,7 +58,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { getTemplateRangeLabel } from "@/lib/template-range-utils"
-import { ArrowLeft, ArrowRight, Check, ChevronDown, FileText, FolderOpen, Home, ListChecks, Pencil, Search, Settings2, X, Zap } from "lucide-react"
+import { ArrowLeft, ArrowRight, Check, ChevronDown, FileText, FolderOpen, Home, ListChecks, Search, Settings2, X, Zap } from "lucide-react"
 import type { Mark } from "@/db/marks"
 import { MarkItem } from "./mark-item"
 
@@ -326,11 +326,6 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
     t,
   ])
   const activeStepItem = stepItems[organizeStepIndex] ?? stepItems[0]
-
-  const handleManageTemplate = useCallback(() => {
-    setOpen(false)
-    router.push(isMobile ? '/mobile/setting/pages/template' : '/core/setting/template')
-  }, [isMobile, router])
 
   const getMarkTypeLabel = useCallback((type: Mark['type']) => {
     return tGlobal(`record.mark.type.${type}`)
@@ -897,13 +892,7 @@ export const OrganizeNotes = forwardRef<{ openOrganize: () => void }, OrganizeNo
                 isMobile ? "gap-3 pb-2" : "gap-4 pr-1"
               )}>
                 <div className={cn("flex min-w-0 flex-col gap-2", isMobile && "rounded-2xl border bg-background p-3")}>
-                  <div className="flex min-w-0 items-center justify-between gap-2">
-                    <Label>{t('selectTemplate')}</Label>
-                    <Button className={cn("h-8 gap-1 px-2", isMobile && "rounded-full text-xs")} variant="outline" disabled={loading} onClick={handleManageTemplate}>
-                      <Pencil className="size-4" />
-                      {t('manageTemplate')}
-                    </Button>
-                  </div>
+                  <Label>{t('selectTemplate')}</Label>
                   <Tabs className="min-w-0" value={tab} onValueChange={handleTemplateChange}>
                     <div className="w-full min-w-0 overflow-x-auto pb-1">
                     <TabsList className={cn(

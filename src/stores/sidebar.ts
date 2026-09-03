@@ -22,8 +22,14 @@ export interface SidebarState {
 }
 
 // 从 localStorage 获取初始状态
+const SIMPLE_LAYOUT_VERSION = '2'
+
 const getInitialState = () => {
-  if (typeof window === 'undefined') return { left: true, center: true, right: true }
+  if (typeof window === 'undefined') return { left: true, center: true, right: false }
+
+  if (localStorage.getItem('cardmindSimpleLayoutVersion') !== SIMPLE_LAYOUT_VERSION) {
+    return { left: true, center: true, right: false }
+  }
   
   const leftState = localStorage.getItem('leftSidebarVisible')
   const centerState = localStorage.getItem('centerPanelVisible')
@@ -32,7 +38,7 @@ const getInitialState = () => {
   return {
     left: leftState !== null ? leftState === 'true' : true,
     center: centerState !== null ? centerState === 'true' : true,
-    right: rightState !== null ? rightState === 'true' : true,
+    right: rightState !== null ? rightState === 'true' : false,
   }
 }
 
@@ -147,7 +153,7 @@ export const useSidebarStore = create<SidebarState>((set, get) => ({
     await store.set('rightSidebarVisible', newState)
     await store.save()
   },
-  leftSidebarTab: 'files',
+  leftSidebarTab: 'notes',
   setLeftSidebarTab: async (tab: 'files' | 'notes') => {
     set({ leftSidebarTab: tab })
     localStorage.setItem('leftSidebarTab', tab)
@@ -157,6 +163,24 @@ export const useSidebarStore = create<SidebarState>((set, get) => ({
   },
   initSidebarState: async () => {
     const store = await Store.load('store.json')
+    const needsSimpleLayoutMigration = localStorage.getItem('cardmindSimpleLayoutVersion') !== SIMPLE_LAYOUT_VERSION
+
+    if (needsSimpleLayoutMigration) {
+      set({ leftSidebarVisible: true, centerPanelVisible: true, rightSidebarVisible: false })
+      localStorage.setItem('leftSidebarVisible', 'true')
+      localStorage.setItem('centerPanelVisible', 'true')
+      localStorage.setItem('rightSidebarVisible', 'false')
+      localStorage.setItem('cardmindSimpleLayoutVersion', SIMPLE_LAYOUT_VERSION)
+      Object.keys(localStorage)
+        .filter(key => key.startsWith('react-resizable-panels:main-layout:'))
+        .forEach(key => localStorage.removeItem(key))
+      await store.set('leftSidebarVisible', true)
+      await store.set('centerPanelVisible', true)
+      await store.set('rightSidebarVisible', false)
+      await store.save()
+      return
+    }
+
     const leftState = await store.get<boolean>('leftSidebarVisible')
     const centerState = await store.get<boolean>('centerPanelVisible')
     const rightState = await store.get<boolean>('rightSidebarVisible')

@@ -1,23 +1,12 @@
 import {
   BotMessageSquare,
-  LayoutTemplate,
-  ScanText,
   Store,
-  UserRoundCog,
-  Drama,
   FolderOpen,
-  DatabaseBackup,
-  ImageUp,
   FileCog,
-  Book,
   KeyboardIcon,
-  Volume2,
   Settings,
-  Puzzle,
-  Sparkles,
   MessageSquare,
   PenTool,
-  Brain,
 } from "lucide-react"
 
 const baseConfig = [
@@ -43,41 +32,8 @@ const baseConfig = [
   },
   '-',
   {
-    icon: <DatabaseBackup className="size-4 md:size-6" />,
-    anchor: 'sync',
-  },
-  {
-    icon: <ImageUp className="size-4 md:size-6" />,
-    anchor: 'imageHosting',
-  },
-  '-',
-  {
     icon: <BotMessageSquare className="size-4 md:size-6" />,
     anchor: 'ai',
-  },
-  {
-    icon: <Book className="size-4 md:size-6" />,
-    anchor: 'rag',
-  },
-  {
-    icon: <Puzzle className="size-4 md:size-6" />,
-    anchor: 'mcp',
-  },
-  {
-    icon: <Sparkles className="size-4 md:size-6" />,
-    anchor: 'skills',
-  },
-  {
-    icon: <Drama className="size-4 md:size-6" />,
-    anchor: 'prompt',
-  },
-  {
-    icon: <Brain className="size-4 md:size-6" />,
-    anchor: 'memories',
-  },
-  {
-    icon: <LayoutTemplate className="size-4 md:size-6" />,
-    anchor: 'template',
   },
   '-',
   {
@@ -88,19 +44,6 @@ const baseConfig = [
     icon: <KeyboardIcon className="size-4 md:size-6" />,
     anchor: 'shortcuts',
   },
-  {
-    icon: <ScanText className="size-4 md:size-6" />,
-    anchor: 'imageMethod',
-  },
-  {
-    icon: <Volume2 className="size-4 md:size-6" />,
-    anchor: 'audio',
-  },
-  '-',
-  {
-    icon: <UserRoundCog className="size-4 md:size-6" />,
-    anchor: 'dev',
-  }
 ]
 
 export default baseConfig

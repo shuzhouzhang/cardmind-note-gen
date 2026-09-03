@@ -2412,6 +2412,7 @@
       "me": "我的"
     },
     "search": "搜索",
+    "cards": "导入对话与知识图谱",
     "githubImageHosting": "Github 图床",
     "login": "登录",
     "loading": "载入中",
@@ -2505,8 +2506,8 @@
       "confirmPull": "确认拉取"
     },
     "emptyState": {
-      "title": "开始创作",
-      "subtitle": "选择一个文件开始编辑，或创建新的笔记",
+      "title": "把零散信息变成能复习的知识",
+      "subtitle": "从记录开始，整理成笔记，再交给 AI 制卡和复习",
       "tip": "💡 提示：你也可以从左侧文件管理器中选择文件",
       "actions": {
         "newNote": {
@@ -2521,6 +2522,10 @@
           "title": "全局搜索",
           "desc": "快速查找你的笔记内容"
         },
+        "cards": {
+          "title": "导入对话",
+          "desc": "让 AI 拆分知识点并生成知识图谱"
+        },
         "openWorkspace": {
           "title": "打开工作区",
           "desc": "选择或切换工作区目录"
@@ -2528,7 +2533,7 @@
       },
       "onboarding": {
         "title": "新手引导",
-        "subtitle": "跟着这三步体验 NoteGen 的核心工作流。",
+        "subtitle": "跟着这三步完成从记录到 AI 整理的核心流程。",
         "dismiss": "跳过新手引导",
         "reopen": "重新显示新手引导",
         "start": "开始引导",

@@ -135,10 +135,10 @@ function SortableTabWithMenu({
           style={style}
           data-tab-id={tab.id}
           className={cn(
-            'group relative flex items-center gap-1.5 px-3 h-9 text-sm cursor-pointer transition-all shrink-0',
+            'group relative flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-sm transition-all',
             isActive
-              ? 'text-foreground font-medium'
-              : 'text-muted-foreground hover:text-foreground'
+              ? 'border border-border/70 bg-background font-medium text-foreground shadow-sm'
+              : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
           )}
           title={tabTitle}
           onClick={() => onTabSwitch(tab.path)}
@@ -174,9 +174,9 @@ function SortableTabWithMenu({
             <X className="w-3 h-3" />
           </button>
 
-          {/* Active indicator line */}
+          {/* Active document indicator */}
           {isActive && (
-            <div className="absolute -bottom-px left-0 right-0 h-0.5 bg-primary" />
+            <div className="absolute left-1.5 top-1.5 size-1.5 rounded-full bg-emerald-500 ring-2 ring-background" />
           )}
         </div>
       </ContextMenuTrigger>
@@ -404,7 +404,7 @@ export function TabBar({
       onDragEnd={handleDragEnd}
     >
       <div className="relative tab-scrollbar-wrapper">
-        <div className="flex items-center h-12 bg-background border-b">
+        <div className="flex h-12 items-center border-b bg-muted/25 px-1">
           {/* Undo/Redo buttons - fixed on the left */}
           {showEditorUndoRedo && !activeTabIsRecord && (
             <div className="flex items-center gap-0.5 px-2 border-r border-border shrink-0">
@@ -436,7 +436,7 @@ export function TabBar({
           {/* Tabs scroll container */}
           <div
             ref={scrollContainerRef}
-            className="flex items-center h-12 px-1 overflow-x-auto tab-scrollbar gap-1"
+            className="tab-scrollbar flex h-12 items-center gap-1 overflow-x-auto px-1"
             onWheel={handleWheel}
           >
             {/* Tabs */}

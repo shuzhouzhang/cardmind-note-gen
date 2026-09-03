@@ -2,13 +2,9 @@
 import { useTranslations } from 'next-intl'
 import * as React from "react"
 import { initMarksDb } from "@/db/marks"
-import { ControlScan } from "./control-scan"
 import { ControlText } from "./control-text"
 import { ControlImage } from "./control-image"
-import { ControlFile } from "./control-file"
 import { ControlLink } from "./control-link"
-import { ControlRecording } from "./control-recording"
-import { ControlTodo } from "./control-todo"
 import useMarkStore from "@/stores/mark"
 import useSettingStore from "@/stores/setting"
 import {
@@ -35,6 +31,8 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+
+const CORE_RECORD_TOOLS = new Set(['text', 'image', 'link'])
 
 export function MarkHeader() {
   const t = useTranslations('record.mark');
@@ -92,12 +90,12 @@ export function MarkHeader() {
             onDragEnd={handleDragEnd}
           >
             <SortableContext
-              items={recordToolbarConfig.filter(item => item.enabled).map(item => item.id)}
+              items={recordToolbarConfig.filter(item => item.enabled && CORE_RECORD_TOOLS.has(item.id)).map(item => item.id)}
               strategy={horizontalListSortingStrategy}
             >
               <div className="flex">
                 {recordToolbarConfig
-                  .filter(item => item.enabled)
+                  .filter(item => item.enabled && CORE_RECORD_TOOLS.has(item.id))
                   .sort((a, b) => a.order - b.order)
                   .map(item => (
                     <SortableToolbarItem key={item.id} id={item.id} />
@@ -159,18 +157,10 @@ function SortableToolbarItem({ id }: SortableToolbarItemProps) {
     switch (id) {
       case 'text':
         return <ControlText />
-      case 'recording':
-        return <ControlRecording />
-      case 'scan':
-        return <ControlScan />
       case 'image':
         return <ControlImage />
       case 'link':
         return <ControlLink />
-      case 'file':
-        return <ControlFile />
-      case 'todo':
-        return <ControlTodo />
       default:
         return null
     }

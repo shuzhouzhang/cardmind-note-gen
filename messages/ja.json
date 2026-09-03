@@ -2310,6 +2310,7 @@
       "me": "マイ"
     },
     "search": "検索",
+    "cards": "会話の取込と知識グラフ",
     "githubImageHosting": "Github 画像ホスティング",
     "login": "ログイン",
     "loading": "読み込み中",
@@ -2440,6 +2441,10 @@
         "globalSearch": {
           "title": "グローバル検索",
           "desc": "ノートの内容を素早く検索"
+        },
+        "cards": {
+          "title": "会話を取り込む",
+          "desc": "AIで知識点に分解し知識グラフを生成"
         },
         "openWorkspace": {
           "title": "ワークスペースを開く",

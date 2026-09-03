@@ -11,7 +11,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
-import { Trash2, CircleCheck, CircleX, LoaderCircle } from "lucide-react"
+import { Trash2, CircleCheck, CircleX, LoaderCircle, Settings2, Sparkles } from "lucide-react"
 import { ModelConfig, ModelType, AiConfig } from "../config"
 import { useTranslations } from 'next-intl'
 import ModelSelect from "./modelSelect"
@@ -25,11 +25,13 @@ interface ModelCardProps {
   aiConfig: AiConfig
   onUpdate: (modelId: string, field: keyof ModelConfig, value: any) => void
   onDelete: (modelId: string) => void
+  onConnectionStateChange?: (modelId: string, state: 'ok' | 'error' | 'checking' | 'init') => void
 }
 
-export default function ModelCard({ modelConfig, aiConfig, onUpdate, onDelete }: ModelCardProps) {
+export default function ModelCard({ modelConfig, aiConfig, onUpdate, onDelete, onConnectionStateChange }: ModelCardProps) {
   const t = useTranslations('settings.ai')
   const [checkState, setCheckState] = useState<'ok' | 'error' | 'checking' | 'init'>('init')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
 
   const handleCheck = async () => {
@@ -39,24 +41,28 @@ export default function ModelCard({ modelConfig, aiConfig, onUpdate, onDelete }:
     }
     
     setCheckState('checking')
+    onConnectionStateChange?.(modelConfig.id, 'checking')
     abortControllerRef.current = new AbortController()
     
     try {
       const aiStatus = await checkModelStatus(modelConfig, aiConfig, abortControllerRef.current.signal)
       if (aiStatus) {
         setCheckState('ok')
+        onConnectionStateChange?.(modelConfig.id, 'ok')
         toast({
           description: t('connectionSuccess'),
           className: 'border-green-500 bg-green-50 text-green-800'
         })
       } else {
         setCheckState('error')
+        onConnectionStateChange?.(modelConfig.id, 'error')
       }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         return
       }
       setCheckState('error')
+      onConnectionStateChange?.(modelConfig.id, 'error')
     }
   }
 
@@ -201,23 +207,29 @@ export default function ModelCard({ modelConfig, aiConfig, onUpdate, onDelete }:
   }
 
   return (
-    <AccordionItem value={modelConfig.id} className="border rounded-lg">
+    <AccordionItem value={modelConfig.id} className="overflow-hidden rounded-xl border bg-background shadow-sm">
       <div className="flex items-center justify-between flex-wrap">
         <div className="flex-1">
           <AccordionTrigger className="w-full px-4 py-4 hover:no-underline">
-            <div className="flex items-center">
-              <span className="text-base font-semibold">
+            <div className="flex min-w-0 items-center gap-3 text-left">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                <Sparkles className="size-4" />
+              </div>
+              <div className="min-w-0">
+                <span className="block truncate text-base font-semibold">
                 {modelConfig.model || t('newModel')}
-              </span>
-              <Badge variant="secondary" className="ml-2">
-                {t(`modelType.${modelConfig.modelType}`)}
-              </Badge>
+                </span>
+                <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                  {modelConfig.model ? '用于聊天、总结和生成卡片' : '先选择一个模型'}
+                </span>
+              </div>
+              <Badge variant="secondary" className="ml-1 shrink-0">{t(`modelType.${modelConfig.modelType}`)}</Badge>
             </div>
           </AccordionTrigger>
         </div>
         <div className="flex items-center justify-end gap-2 p-2">
           <Button
-            variant="outline"
+            variant={checkState === 'ok' ? 'secondary' : 'outline'}
             size="sm"
             onClick={handleCheck}
             disabled={!modelConfig.model || checkState === 'checking'}
@@ -240,11 +252,26 @@ export default function ModelCard({ modelConfig, aiConfig, onUpdate, onDelete }:
           <Label>{t('model')}</Label>
           <ModelSelect
             model={modelConfig.model}
-            setModel={(model) => onUpdate(modelConfig.id, 'model', model)}
+            setModel={(model) => {
+              setCheckState('init')
+              onConnectionStateChange?.(modelConfig.id, 'init')
+              onUpdate(modelConfig.id, 'model', model)
+            }}
             aiConfig={aiConfig}
           />
+          <p className="text-xs text-muted-foreground">推荐先选择一个通用对话模型。更换模型不会删除已有卡片。</p>
         </div>
 
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen(value => !value)}
+          className="flex w-full items-center justify-between rounded-lg border bg-muted/25 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="flex items-center gap-2 font-medium"><Settings2 className="size-4" />高级参数</span>
+          <span className="text-xs text-muted-foreground">{advancedOpen ? '收起' : '模型类型、随机性与流式响应'}</span>
+        </button>
+
+        {advancedOpen && <div className="space-y-5 rounded-xl border bg-muted/15 p-4">
         {/* 模型类型 */}
         <div className="space-y-2">
           <Label>{t('modelType.title')}</Label>
@@ -338,6 +365,7 @@ export default function ModelCard({ modelConfig, aiConfig, onUpdate, onDelete }:
             />
           </div>
         )}
+        </div>}
       </AccordionContent>
     </AccordionItem>
   )

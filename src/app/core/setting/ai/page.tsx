@@ -22,7 +22,7 @@ import { SettingType, FormItem } from "../components/setting-base";
 import { AiConfig, ModelConfig, builtinProviderTemplates } from "../config";
 import useSettingStore from "@/stores/setting";
 import { noteGenModelKeys } from "@/app/model-config";
-import { BotMessageSquare, Copy, Eye, EyeOff, LoaderCircle, Plus, Trash2, X } from "lucide-react";
+import { BotMessageSquare, Check, Circle, Copy, Eye, EyeOff, LoaderCircle, Plus, Trash2, Waypoints, X } from "lucide-react";
 import { OpenBroswer } from "@/components/open-broswer";
 import DefaultModelsSection from "./default-models";
 import ModelCard from "./model-card";
@@ -42,6 +42,7 @@ export default function AiPage() {
   const [apiKeyVisible, setApiKeyVisible] = useState<boolean>(false)
   const [headerPairs, setHeaderPairs] = useState<Array<{key: string, value: string, id: string}>>([])
   const [expandedModels, setExpandedModels] = useState<string[]>([])
+  const [verifiedModelIds, setVerifiedModelIds] = useState<string[]>([])
   const [providerTemplates, setProviderTemplates] = useState<AiConfig[]>([])
   const [loadingTemplates, setLoadingTemplates] = useState(true)
   
@@ -51,6 +52,9 @@ export default function AiPage() {
   // 当前选中的AI配置
   const currentConfig = userCustomModels.find(model => model.key === selectedAiConfig)
   const currentProviderTemplate = getProviderTemplateMatch(currentConfig, providerTemplates)
+  const apiKeyReady = Boolean(currentConfig?.apiKey?.trim())
+  const configuredModels = (currentConfig?.models || []).filter(model => model.model.trim())
+  const connectionReady = configuredModels.some(model => verifiedModelIds.includes(model.id))
   
   const parseHeadersToKeyValue = (headers: Record<string, string> = {}) => {
     return Object.entries(headers).map(([key, value]) => ({
@@ -291,7 +295,7 @@ export default function AiPage() {
       />
       
       {userCustomModels.length > 0 && (
-        <div className="space-y-8">
+        <div className="space-y-6">
           {/* AI配置选择 */}
           <FormItem title={t('modelConfigTitle')} desc={t('modelConfigDesc')}>
               <div className="flex items-center gap-2 md:flex-row flex-col">
@@ -333,6 +337,42 @@ export default function AiPage() {
           {/* 当前配置的基础设置 */}
           {currentConfig && (
             <>
+              <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-950 px-5 py-5 text-slate-50 shadow-lg shadow-slate-950/10 dark:border-slate-800">
+                <div className="pointer-events-none absolute -right-12 -top-16 size-44 rounded-full border-[22px] border-amber-300/10" />
+                <div className="relative">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.18em] text-amber-300">
+                        <Waypoints className="size-4" /> Model connection
+                      </div>
+                      <h2 className="mt-2 text-xl font-semibold tracking-tight">让 CardMind 使用你的模型</h2>
+                      <p className="mt-1 text-sm text-slate-300">完成下面三步，就能开始聊天、总结和生成复习卡片。</p>
+                    </div>
+                    <div className="rounded-full border border-white/10 bg-white/[.06] px-3 py-1.5 text-xs text-slate-300">
+                      {currentConfig.title} · {configuredModels.length} 个模型
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid gap-2 sm:grid-cols-3">
+                    {[
+                      { label: '连接账号', desc: apiKeyReady ? 'API Key 已填写' : '等待填写 API Key', done: apiKeyReady },
+                      { label: '选择模型', desc: configuredModels[0]?.model || '等待选择模型', done: configuredModels.length > 0 },
+                      { label: '检测连接', desc: connectionReady ? '模型连接成功' : configuredModels.length > 0 ? '点击模型右侧检测' : '选择模型后可检测', done: connectionReady },
+                    ].map((step, index) => (
+                      <div key={step.label} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[.05] px-3 py-3">
+                        <div className={`flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${step.done ? 'bg-emerald-400 text-slate-950' : 'bg-white/10 text-slate-300'}`}>
+                          {step.done ? <Check className="size-4" /> : index + 1}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium">{step.label}</div>
+                          <div className="truncate text-[11px] text-slate-400">{step.desc}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
               {/* 供应商模板配置信息显示 */}
               {currentProviderTemplate && (
                 <FormItem title={t('providerInfo')}>
@@ -383,8 +423,9 @@ export default function AiPage() {
               )}
 
               {/* API Key */}
-              <FormItem title="API Key">
-                  <div className="flex gap-2">
+              <FormItem title="API Key" desc="默认以圆点隐藏。请只在你信任的设备上保存和使用密钥。">
+                  <div className="rounded-xl border bg-muted/25 p-3">
+                    <div className="flex gap-2">
                     <Input 
                       className="flex-1" 
                       value={currentConfig.apiKey || ''} 
@@ -401,6 +442,11 @@ export default function AiPage() {
                         title={t('apiKeyUrl')}
                       />
                     )}
+                    </div>
+                    <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                      {apiKeyReady ? <Check className="size-3.5 text-emerald-600" /> : <Circle className="size-3.5" />}
+                      <span>{apiKeyReady ? '已填写，可以继续选择模型' : '请粘贴以 sk- 开头的 OpenAI API Key'}</span>
+                    </div>
                   </div>
               </FormItem>
 
@@ -482,13 +528,18 @@ export default function AiPage() {
                           aiConfig={currentConfig}
                           onUpdate={updateModelConfig}
                           onDelete={deleteModel}
+                          onConnectionStateChange={(modelId, state) => {
+                            setVerifiedModelIds(current => state === 'ok'
+                              ? Array.from(new Set([...current, modelId]))
+                              : current.filter(id => id !== modelId))
+                          }}
                         />
                       ))}
                     </Accordion>
                     {/* 添加模型按钮 */}
-                    <Button onClick={addNewModel} className="w-full">
+                    <Button onClick={addNewModel} variant="outline" className="h-11 w-full border-dashed">
                       <Plus className="h-4 w-4 mr-2" />
-                      {t('addModel')}
+                      添加另一个模型
                     </Button>
                   </div>
               </FormItem>

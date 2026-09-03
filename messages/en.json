@@ -2412,6 +2412,7 @@
       "me": "Me"
     },
     "search": "Search",
+    "cards": "Import chat & graph",
     "githubImageHosting": "Github Image Hosting",
     "login": "Login",
     "loading": "Loading",
@@ -2505,8 +2506,8 @@
       "confirmPull": "Confirm Pull"
     },
     "emptyState": {
-      "title": "Start Creating",
-      "subtitle": "Select a file to start editing, or create a new note",
+      "title": "Turn scattered ideas into lasting knowledge",
+      "subtitle": "Capture, organize, create cards, and review",
       "tip": "💡 Tip: You can also select files from the left sidebar",
       "actions": {
         "newNote": {
@@ -2520,6 +2521,10 @@
         "globalSearch": {
           "title": "Global Search",
           "desc": "Quickly find your note content"
+        },
+        "cards": {
+          "title": "Import a conversation",
+          "desc": "Let AI split it into a knowledge graph"
         },
         "openWorkspace": {
           "title": "Open Workspace",

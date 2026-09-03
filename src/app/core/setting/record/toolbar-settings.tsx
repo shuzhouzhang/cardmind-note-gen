@@ -4,12 +4,8 @@ import { useTranslations } from 'next-intl'
 import { Switch } from '@/components/ui/switch'
 import {
   CopySlash,
-  Mic,
-  ScanLine,
   ImagePlus,
   Link2,
-  FileText,
-  CheckSquare,
   GripVertical
 } from 'lucide-react'
 import useSettingStore, { RecordToolbarItem } from '@/stores/setting'
@@ -36,16 +32,6 @@ const TOOL_CONFIGS = {
     titleKey: 'record.mark.toolbar.text',
     descKey: 'settings.record.toolbar.recordToolbar.text.desc',
   },
-  recording: {
-    icon: <Mic className="size-4" />,
-    titleKey: 'record.mark.toolbar.recording',
-    descKey: 'settings.record.toolbar.recordToolbar.recording.desc',
-  },
-  scan: {
-    icon: <ScanLine className="size-4" />,
-    titleKey: 'record.mark.toolbar.scan',
-    descKey: 'settings.record.toolbar.recordToolbar.scan.desc',
-  },
   image: {
     icon: <ImagePlus className="size-4" />,
     titleKey: 'record.mark.toolbar.image',
@@ -55,16 +41,6 @@ const TOOL_CONFIGS = {
     icon: <Link2 className="size-4" />,
     titleKey: 'record.mark.toolbar.link',
     descKey: 'settings.record.toolbar.recordToolbar.link.desc',
-  },
-  file: {
-    icon: <FileText className="size-4" />,
-    titleKey: 'record.mark.toolbar.file',
-    descKey: 'settings.record.toolbar.recordToolbar.file.desc',
-  },
-  todo: {
-    icon: <CheckSquare className="size-4" />,
-    titleKey: 'record.mark.toolbar.todo',
-    descKey: 'settings.record.toolbar.recordToolbar.todo.desc',
   },
 }
 

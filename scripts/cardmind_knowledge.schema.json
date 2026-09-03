@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cardmind.local/schemas/knowledge-payload.json",
+  "title": "CardMind knowledge ingestion payload",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "conversationId": {
+      "type": "string",
+      "description": "Internal or external conversation ID returned by cardmind pending."
+    },
+    "topics": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/topic" }
+    }
+  },
+  "required": ["topics"],
+  "$defs": {
+    "topic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "slug": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "knowledge": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/knowledgePoint" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/edge" }
+        }
+      },
+      "required": ["title", "knowledge"]
+    },
+    "knowledgePoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "canonicalKey": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "question": { "type": "string", "minLength": 1 },
+        "answer": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["mainline", "derived"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "status": { "enum": ["active", "quarantine", "archived"] },
+        "sortOrder": { "type": "number" },
+        "sourceMessageIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "sourceExcerpt": { "type": "string" }
+      },
+      "required": ["title", "question", "answer", "kind", "confidence", "sourceMessageIds"]
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string",
+          "minLength": 1,
+          "description": "canonicalKey of the source point"
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "description": "canonicalKey of the target point"
+        },
+        "relation": { "type": "string", "minLength": 1 },
+        "strength": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "required": ["from", "to", "relation"]
+    }
+  }
+}

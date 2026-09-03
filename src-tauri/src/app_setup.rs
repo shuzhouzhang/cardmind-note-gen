@@ -16,7 +16,7 @@ pub fn setup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     {
         if let Some(window) = app_handle.get_webview_window("main") {
             let _ = window.set_decorations(false);
-            let _ = window.set_title("NoteGen");
+            let _ = window.set_title("CardMind");
         }
     }
 

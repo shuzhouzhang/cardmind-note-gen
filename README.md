@@ -1,128 +1,98 @@
-<div align="center">
-  <h1>NoteGen</h1>
-  <p><strong>Capture first, organize later.</strong></p>
-  <p>
-    <a href="https://notegen.top/en/">Documentation</a>
-    ·
-    <a href="https://notegen.top/en/download">Download</a>
-    ·
-    <a href="https://github.com/codexu/note-gen/discussions">Discussions</a>
-  </p>
-  <p>
-    <a href="https://github.com/codexu/note-gen/actions/workflows/release.yml"><img alt="Release workflow" src="https://img.shields.io/github/actions/workflow/status/codexu/note-gen/release.yml?branch=release&label=release&style=flat-square&logo=githubactions&logoColor=white"></a>
-    <a href="https://github.com/codexu/note-gen/blob/dev/LICENSE"><img alt="License" src="https://img.shields.io/github/license/codexu/note-gen?style=flat-square&color=0f766e"></a>
-    <img alt="Pricing: free" src="https://img.shields.io/badge/pricing-free-155eef?style=flat-square">
-  </p>
-  <p>
-    <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-ffc131?style=flat-square&logo=tauri&logoColor=111111">
-    <img alt="Next.js 15" src="https://img.shields.io/badge/Next.js-15-000000?style=flat-square&logo=nextdotjs&logoColor=white">
-    <img alt="React 19" src="https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=111111">
-    <img alt="Tailwind CSS 4" src="https://img.shields.io/badge/Tailwind_CSS-4-06b6d4?style=flat-square&logo=tailwindcss&logoColor=white">
-  </p>
-  <p>
-    <a href="https://trendshift.io/repositories/12784" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12784" alt="codexu%2Fnote-gen | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-    <a href="https://hellogithub.com/repository/0163cb946dca44cc8905dbe34c2c987b" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=0163cb946dca44cc8905dbe34c2c987b&claim_uid=YJ39kIMBz1TGAvc" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" /></a>
-    <a href="https://www.producthunt.com/products/notegen-2?embed=true&utm_source=badge-featured&utm_medium=badge&utm_source=badge-notegen&#0045;2" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=956348&theme=light&t=1749194675492" alt="NoteGen - A&#0032;cross&#0045;platform&#0032;Markdown&#0032;note&#0045;taking&#0032;application | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
-  </p>
-</div>
+# CardMind
 
-## Get Started
+CardMind 是一个基于 [NoteGen](https://github.com/codexu/note-gen) 改造的本地优先知识学习桌面应用。当前目标不是保留 NoteGen 的全部功能，而是形成一条清晰的个人学习主线：
 
-> Capture first, organize later.
+```text
+记录 / Markdown / ChatGPT 对话
+                ↓
+         AI 理解与知识拆分
+                ↓
+       知识卡片 / 关系图 / 复习
+                ↓
+      Agent 基于个人材料继续工作
+```
 
-NoteGen is an open-source, cross-platform note app that helps you capture rough information first and turn it into structured writing later.
+> 当前有效应用仓库是 `E:\CardMind\note-gen`。外层 `E:\CardMind` 是历史工作区和数据目录，不是运行命令的位置。
 
-It works like a capture inbox, Markdown editor, and AI assistant in one app. Save scattered thoughts, voice recordings, screenshots, images, links, files, and todos in one place. When you are ready, let AI organize those raw records into clear notes, summaries, reports, articles, or reusable knowledge.
+## 当前产品边界
 
-![](https://s2.loli.net/2025/12/22/jlpEP2c6ogwHhIA.png)
+目前重点维护：
 
-## What Can NoteGen Do?
+- Windows Tauri 桌面应用
+- 快速记录、Markdown 编辑和 AI 对话
+- 用户触发的单 Agent 工具循环
+- ChatGPT 对话、当前记录或笔记生成知识卡片
+- 本地 SQLite 卡片、复习和结构化知识数据
 
-NoteGen is built around a simple idea: do not force yourself to write a perfect note at the moment an idea appears.
+仍保留但不是当前产品主线：
 
-- 🧩 Capture anything quickly: text, voice, screenshots, images, links, files, and todos.
-- 🧠 Turn messy records into organized notes: select records, choose a template, and generate structured Markdown.
-- ✍️ Keep writing after AI helps: edit the result in a Markdown editor with tables, diagrams, math, outline, search, and export tools.
-- 💬 Ask questions about your own material: chat with notes, records, and knowledge base content instead of starting from a blank prompt.
-- 🖼️ Make images useful: save screenshots and images, run OCR or AI recognition, add descriptions, and reuse them in notes.
-- 🔄 Work across devices: keep notes local as Markdown files and sync them through GitHub, Gitee, GitLab, Gitea, S3, or WebDAV.
+- NoteGen 上游的移动端、同步、模板、音频等代码
+- Agent 的 Memory、Skill、MCP 工具定义；当前活动注册表没有启用这些类别
+- `cm_*` 结构化知识引擎；它已实现导入和存储，但尚未成为前端图谱的唯一数据源
 
-## Use NoteGen For
+更详细的实现边界和调用链见 [架构与阅读指南](docs/ARCHITECTURE.md)。
 
-- Meeting notes and class notes: capture fragments during the session, then turn them into a readable summary.
-- Reading and research: collect links, screenshots, documents, and quotes, then ask AI to organize the material.
-- Weekly reports and work logs: generate reports from recent records by tag, time range, or template.
-- Personal knowledge management: keep long-term notes as Markdown files and chat with your own knowledge base.
+如果目标是把项目用于面试，请按 [项目掌握与面试过关手册](docs/INTERVIEW_OWNERSHIP.md) 训练。准备中的个人功能设计见 [可信知识卡设计练习](docs/TRUSTED_CARDS_DESIGN.md)。
 
-## Typical Workflow
+## 技术栈
 
-1. **Record first**: save a thought, meeting snippet, screenshot, webpage, document, or task without deciding where it belongs.
-2. **Organize later**: filter records by tag, time, or type, then ask AI to turn selected records into a note, weekly report, draft, or summary.
-3. **Write with control**: polish the generated Markdown, keep useful references and images, and export or sync when needed.
-4. **Reuse your knowledge**: search, chat, translate, rewrite, or let the Agent help continue working with your notes.
+- TypeScript、React 19、Next.js 15：页面、状态、Agent、数据库调用
+- Tauri 2、Rust、Tokio、Reqwest：桌面壳和原生能力
+- SQLite：聊天、记录、向量、卡片、复习和知识图谱数据
+- Python：无界面的对话摄取和结构化知识应用
+- Zustand、Tiptap、Tailwind CSS：状态、编辑器和界面
+- OpenAI-compatible Chat Completions：模型调用和 Function Calling
 
-## Powerful When You Need It
+## 目录入口
 
-NoteGen keeps the everyday experience focused on recording and writing, while still offering advanced tools for heavier workflows:
+```text
+src/app/core/main/       主工作区：记录、编辑器、聊天
+src/app/core/cards/      卡片生成、知识图谱、复习
+src/stores/              Zustand 状态和前端业务编排
+src/db/                  SQLite 表和数据访问
+src/lib/agent/           Agent 运行循环、工具、权限、追踪
+src/lib/ai/              AI 配置和 Tauri 网络客户端
+src-tauri/src/           Rust 桌面能力
+scripts/                 Python 知识导入引擎
+```
 
-- Local-first Markdown storage and workspace-based file management.
-- AI chat, inline completion, translation, rewriting, summaries, prompts, memories, and Agent mode.
-- Knowledge base search with vector indexing and hybrid retrieval.
-- Configurable AI providers and models for chat, embeddings, OCR/VLM, audio, and more.
-- MCP support for connecting external AI tools.
-- Cross-platform desktop and mobile apps built with Tauri.
+## 本地运行
 
-## Download
+在本目录执行：
 
-| ![Windows](https://img.shields.io/badge/Windows-0078D4?logo=windows&logoColor=white&style=for-the-badge) | ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white&style=for-the-badge) | ![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=for-the-badge) | ![Android](https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white&style=for-the-badge) | ![iOS](https://img.shields.io/badge/iOS-000000?logo=apple&logoColor=white&style=for-the-badge) |
-| --- | --- | --- | --- | --- |
-| ✅ beta | ✅ beta | ✅ beta | 🛠️ alpha | 🛠️ alpha |
-| [Download](https://notegen.top/en/download) | [Download](https://notegen.top/en/download) | [Download](https://notegen.top/en/download) | [Download](https://notegen.top/en/download) | [TestFlight](https://testflight.apple.com/join/8KjFRTCq) |
+```powershell
+pnpm tauri dev
+```
 
-Desktop and Android packages are distributed through the official download page, with GitHub Releases kept as a fallback mirror.
+开发时，Tauri 会启动 `http://localhost:3456` 的 Next.js 前端；生产构建会加载静态导出的 `out` 目录。
 
-## Contribute
+## 验证
 
-- [Read contribution guide](https://notegen.top/en/docs/contributing)
-- [Update plans](https://github.com/codexu/note-gen/issues/46)
-- [Submit bugs or improvement suggestions](https://github.com/codexu/note-gen/issues)
-- [Discussions](https://github.com/codexu/note-gen/discussions)
+完整的快速验证入口：
 
-## Contributors
+```powershell
+pnpm check
+```
 
-<a href="https://github.com/codexu/note-gen/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=codexu/note-gen" />
-</a>
+它依次执行：
 
-## Thanks
+1. TypeScript 类型检查
+2. 卡片分块测试
+3. Python 知识引擎测试
 
-Special thanks to our technology partners who make NoteGen better:
+知识引擎测试不得使用正式数据库。正式数据库位于 `E:\CardMind\data\note.db`。
 
-**[SiliconFlow](https://cloud.siliconflow.cn/i/O2ciJeZw)** - Providing free AI model services, powering NoteGen's intelligent features with high-quality AI capabilities.
+## 推荐阅读顺序
 
-<a href="https://cloud.siliconflow.cn/i/O2ciJeZw" target="_blank">
-  <img width="240" src="https://s2.loli.net/2025/09/10/KWPOA5XhIGmYTV9.png" />
-</a>
+1. `src-tauri/tauri.conf.json`：桌面应用如何启动
+2. `src/app/core/layout.tsx`：前端初始化
+3. `src/app/core/main/page.tsx`：主界面布局
+4. `src/app/core/main/chat/chat-send.tsx`：Agent 上下文来源
+5. `src/lib/agent/runtime.ts`：Agent 多轮循环
+6. `src/lib/agent/tool-registry.ts`：模型能够调用什么
+7. `src/app/core/cards/page.tsx`：知识卡片用户流程
+8. `scripts/cardmind.py`：结构化知识导入流程
 
-We also thank other partners for their service support
+## 上游与许可
 
-<div>
-  <a href="https://www.qiniu.com/products/ai-token-api?utm_source=NoteGen" target="_blank">
-    <img src="https://s2.loli.net/2025/06/11/OKJq542lTs7U9xg.png" />
-  </a>
-  <a href="https://share.302.ai/jfFrIP" target="_blank">
-    <img src="https://s2.loli.net/2025/07/01/dPlkU1tejnDyV4S.png" />
-  </a>
-  <a href="https://www.shengsuanyun.com/?from=CH_KAFLGC9O" target="_blank">
-    <img src="https://s2.loli.net/2025/09/15/CcVRbTUBtf7ZvNl.png" />
-  </a>
-  <a href="https://ai.gitee.com/" target="_blank">
-    <img src="https://s2.loli.net/2025/09/15/wmnBWfyACMz9pVc.png" />
-  </a>
-  <a href="https://www.netlify.com" target="_blank">
-    <img src="https://s2.loli.net/2025/09/16/yJ64xIlrhdABt9o.png" />
-  </a>
-  <a href="https://skywork.ai/p/bY47ky" target="_blank">
-    <img src="https://s2.loli.net/2025/09/16/mTzMCQ8tZLfJNk5.png" />
-  </a>
-</div>
+CardMind 使用 NoteGen 作为应用基础，并在其上增加面向知识学习的卡片、图谱、摄取和 Agent 改造。发布或对外介绍时应保留 NoteGen 来源说明，并遵守仓库中的 GPL-3.0 许可。

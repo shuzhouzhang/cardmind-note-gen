@@ -6,7 +6,6 @@ import useTagStore from "@/stores/tag"
 import { TooltipButton } from "@/components/tooltip-button"
 import { useImperativeHandle, forwardRef, useRef, useEffect } from "react"
 import { useTranslations } from "next-intl"
-import useVectorStore from "@/stores/vector"
 import { getContextForQuery, getContextForQueryInFolder } from '@/lib/rag'
 import { invoke } from "@tauri-apps/api/core"
 import { LinkedResource, isLinkedFolder } from "@/lib/files"
@@ -19,6 +18,7 @@ import { getSessionApprovalScope, matchesSessionApproval } from "@/lib/agent/ses
 import { ImageAttachment } from "./image-attachments"
 import type { RagSource } from "@/lib/rag"
 import { cn } from "@/lib/utils"
+import useMarkStore from "@/stores/mark"
 
 interface QuoteData {
   quote: string
@@ -52,7 +52,11 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
     maybeCondense,
     linkedResourcePreview,
   } = useChatStore()
-  const { isRagEnabled } = useVectorStore()
+  const isRagEnabled = false
+  const { activeMarkId, marks, allMarks } = useMarkStore()
+  const activeRecord = activeMarkId
+    ? marks.find(mark => mark.id === activeMarkId) || allMarks.find(mark => mark.id === activeMarkId) || null
+    : null
   const abortControllerRef = useRef<AbortController | null>(null)
   const agentHandlerRef = useRef<AgentHandler | null>(null)
   const t = useTranslations()
@@ -402,6 +406,19 @@ export const ChatSend = forwardRef<{ sendChat: () => void }, ChatSendProps>(({ i
       // 1. 如果有当前打开的笔记，自动传入其内容
       if (articleStore.activeFilePath && articleStore.currentArticle) {
         context = `## 当前打开的笔记\n文件路径: ${articleStore.activeFilePath}\n\n内容:\n${articleStore.currentArticle}\n\n`
+      }
+
+      // 记录详情不是 Markdown 编辑器。把当前打开的快速记录直接注入上下文，
+      // 避免用户说“总结这条记录”时 Agent 错误调用编辑器选区工具。
+      if (activeRecord) {
+        const recordContent = [activeRecord.desc, activeRecord.content, activeRecord.url]
+          .map(value => value?.trim())
+          .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index)
+          .join('\n')
+
+        if (recordContent) {
+          context += `## 当前打开的快速记录\n记录编号: ${activeRecord.id}\n记录类型: ${activeRecord.type}\n\n内容:\n${recordContent}\n\n说明：当前对象是快速记录，不是 Markdown 编辑器。用户提到“这条记录”或“这段内容”时，请直接使用以上内容回答，不要调用编辑器选区工具。\n\n`
+        }
       }
 
       agentDebugLog('chat_context_active_note', {

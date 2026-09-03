@@ -1,8 +1,13 @@
 
 import Database from '@tauri-apps/plugin-sql';
 
+// Keep CardMind's growing knowledge base off the system drive.
+// tauri-plugin-sql resolves absolute SQLite paths without placing them in AppData.
+export const CARDMIND_DATABASE_PATH = 'E:/CardMind/data/note.db';
+export const CARDMIND_DATABASE_URL = `sqlite:${CARDMIND_DATABASE_PATH}`;
+
 // 导出数据库实例
-export const db = await Database.load('sqlite:note.db');
+export const db = await Database.load(CARDMIND_DATABASE_URL);
 
 // 获取数据库实例(兼容旧代码)
 export async function getDb() {
@@ -20,6 +25,8 @@ export async function initAllDatabases() {
   const { initConversationsDb } = await import('./conversations');
   const { initMemoriesDb } = await import('./memories');
   const { initActivityDb } = await import('./activity');
+  const { initCardsDb } = await import('./cards');
+  const { initKnowledgeEngineDb } = await import('./knowledge-engine');
 
   // 执行初始化：先确保基础表存在，再做 conversations 对 chats 的迁移/补列。
   await initChatsDb();
@@ -30,4 +37,6 @@ export async function initAllDatabases() {
   await initVectorDb();
   await initMemoriesDb();
   await initActivityDb();
+  await initCardsDb();
+  await initKnowledgeEngineDb();
 }

@@ -4,7 +4,6 @@ import { Cloud, HardDrive, User } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { SyncToggle } from '@/components/title-bar-toolbars/sync-toggle'
 import { Badge } from '@/components/ui/badge'
 
 interface MobileMeProfileCardProps {
@@ -65,13 +64,10 @@ export function MobileMeProfileCard({
           </AvatarFallback>
         </Avatar>
         <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
             <div className="min-w-0">
               <p className="truncate text-base font-semibold">{name}</p>
               <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
-            </div>
-            <div className="shrink-0">
-              <SyncToggle presentation="drawer" />
             </div>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">

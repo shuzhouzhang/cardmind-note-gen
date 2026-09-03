@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "NoteGen",
+  "productName": "CardMind",
   "version": "0.30.1",
-  "identifier": "com.codexu.NoteGen",
+  "identifier": "com.cardmind.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:3456",
@@ -32,7 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "targets": "all",
     "resources": [
       "icons",
@@ -72,7 +72,7 @@
         "https://download.notegen.top/updates/latest.json",
         "https://github.com/codexu/note-gen/releases/latest/download/latest.json"
       ],
-      "createUpdaterArtifacts": true
+      "createUpdaterArtifacts": false
     }
   }
 }

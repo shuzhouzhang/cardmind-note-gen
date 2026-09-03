@@ -4,12 +4,11 @@ import { useEffect, useState } from 'react'
 import { platform } from '@tauri-apps/plugin-os'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { isMobileDevice } from '@/lib/check'
-import { Search, Settings, Minus, Square, X, PanelLeft, PanelRight, SquarePen, Cog, CalendarDays } from 'lucide-react'
+import { Search, Settings, Minus, Square, X, PanelLeft, PanelRight, SquarePen, Cog, CalendarDays, Brain, Plus, FileText, ImagePlus, Link2 } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import { useSidebarStore } from '@/stores/sidebar'
 import { PinToggle } from './pin-toggle'
-import { SyncToggle } from './title-bar-toolbars/sync-toggle'
 import AppStatus from './app-status'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
@@ -18,29 +17,26 @@ import useArticleStore from '@/stores/article'
 import useUpdateStore from '@/stores/update'
 import React from 'react'
 import { ControlText } from '@/app/core/main/mark/control-text'
-import { ControlRecording } from '@/app/core/main/mark/control-recording'
-import { ControlScan } from '@/app/core/main/mark/control-scan'
 import { ControlImage } from '@/app/core/main/mark/control-image'
 import { ControlLink } from '@/app/core/main/mark/control-link'
-import { ControlFile } from '@/app/core/main/mark/control-file'
-import { ControlTodo } from '@/app/core/main/mark/control-todo'
-import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-} from '@dnd-kit/core'
-import {
-  arrayMove,
-  SortableContext,
-  horizontalListSortingStrategy,
-} from '@dnd-kit/sortable'
-import { DraggableToolbarItem } from './draggable-toolbar-item'
 import { useToolbarShortcuts } from '@/hooks/use-toolbar-shortcuts'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import emitter from '@/lib/emitter'
 
 type Platform = 'macos' | 'windows' | 'linux' | 'unknown'
+
+const RECORD_ACTIONS = [
+  { id: 'text', label: '文字记录', desc: '快速记下一段文字', icon: FileText },
+  { id: 'image', label: '导入图片', desc: '从图片创建记录', icon: ImagePlus },
+  { id: 'link', label: '链接记录', desc: '保存网页或 ChatGPT 对话', icon: Link2 },
+] as const
 
 interface TitleBarProps {
   onSearchClick?: () => void
@@ -73,11 +69,11 @@ export function TitleBar({ onSearchClick, onActivityClick, activityOpen = false 
     
     return false
   }
-  const { recordToolbarConfig, setRecordToolbarConfig } = useSettingStore()
+  const { recordToolbarConfig } = useSettingStore()
   const { activeFilePath } = useArticleStore()
   const { hasUpdate } = useUpdateStore()
   const t = useTranslations()
-  const { isModifierPressed } = useToolbarShortcuts()
+  useToolbarShortcuts()
 
   const getFileName = () => {
     if (!activeFilePath) return ''
@@ -88,30 +84,20 @@ export function TitleBar({ onSearchClick, onActivityClick, activityOpen = false 
   const searchPlaceholder = getFileName() || t('navigation.searchPlaceholder')
 
 
-  // 拖拽传感器配置
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        delay: 200,
-        tolerance: 5,
-      },
+  const enabledRecordActions = recordToolbarConfig
+    .filter(item => item.enabled)
+    .sort((a, b) => a.order - b.order)
+    .flatMap(item => {
+      const action = RECORD_ACTIONS.find(candidate => candidate.id === item.id)
+      return action ? [action] : []
     })
-  )
 
-  // 处理拖拽结束
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-
-    if (over && active.id !== over.id) {
-      const oldIndex = recordToolbarConfig.findIndex((item) => item.id === active.id)
-      const newIndex = recordToolbarConfig.findIndex((item) => item.id === over.id)
-      
-      const newItems = arrayMove(recordToolbarConfig, oldIndex, newIndex)
-      const updatedItems = newItems.map((item, index) => ({
-        ...item,
-        order: index
-      }))
-      setRecordToolbarConfig(updatedItems)
+  const renderRecordControl = (id: string) => {
+    switch (id) {
+      case 'text': return <ControlText />
+      case 'image': return <ControlImage />
+      case 'link': return <ControlLink />
+      default: return null
     }
   }
 
@@ -186,65 +172,48 @@ export function TitleBar({ onSearchClick, onActivityClick, activityOpen = false 
         }}
         data-tauri-drag-region
       >
-        {/* 左侧记录工具栏按钮 */}
-        <div id="onboarding-target-record-toolbar" className="flex items-center gap-0.5 px-2 shrink-0" data-tauri-drag-region="false">
-          <TooltipProvider>
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
-            >
-              <SortableContext
-                items={recordToolbarConfig.filter(item => item.enabled).map(item => item.id)}
-                strategy={horizontalListSortingStrategy}
-              >
-                <div className="flex">
-                  {recordToolbarConfig
-                    .filter(item => item.enabled)
-                    .sort((a, b) => a.order - b.order)
-                    .map((item, index) => {
-                      const renderToolbarItem = () => {
-                        switch (item.id) {
-                          case 'text':
-                            return <ControlText />
-                          case 'recording':
-                            return <ControlRecording />
-                          case 'scan':
-                            return <ControlScan />
-                          case 'image':
-                            return <ControlImage />
-                          case 'link':
-                            return <ControlLink />
-                          case 'file':
-                            return <ControlFile />
-                          case 'todo':
-                            return <ControlTodo />
-                          default:
-                            return null
-                        }
-                      }
-                      
-                      return (
-                        <DraggableToolbarItem
-                          key={item.id}
-                          id={item.id}
-                          shortcutNumber={index + 1}
-                          showShortcut={isModifierPressed && index < 9}
-                        >
-                          {renderToolbarItem()}
-                        </DraggableToolbarItem>
-                      )
-                    })}
-                </div>
-              </SortableContext>
-            </DndContext>
-          </TooltipProvider>
+        {/* 单一记录入口：减少首屏按钮，保留全部捕获方式和快捷键。 */}
+        <div id="onboarding-target-record-toolbar" className="flex shrink-0 items-center px-2" data-tauri-drag-region="false">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-8 gap-1.5 rounded-lg bg-slate-950 px-3 text-xs font-medium text-white hover:bg-slate-800 hover:text-white dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200">
+                <Plus className="size-4" />
+                记录
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64 p-2">
+              <DropdownMenuLabel className="px-2 pb-2 text-xs text-muted-foreground">你想记录什么？</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {enabledRecordActions.map((action, index) => {
+                const Icon = action.icon
+                return (
+                  <DropdownMenuItem
+                    key={action.id}
+                    className="gap-3 rounded-lg px-2 py-2.5"
+                    onSelect={() => emitter.emit(`toolbar-shortcut-${action.id}` as any)}
+                  >
+                    <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted"><Icon className="size-4" /></div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium">{action.label}</div>
+                      <div className="truncate text-xs text-muted-foreground">{action.desc}</div>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">Alt+{index + 1}</span>
+                  </DropdownMenuItem>
+                )
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <div className="hidden" aria-hidden="true">
+            {enabledRecordActions.map(action => (
+              <React.Fragment key={action.id}>{renderRecordControl(action.id)}</React.Fragment>
+            ))}
+          </div>
         </div>
 
         {/* 中间搜索输入框 */}
         <div className="flex-1 flex items-center justify-center px-4 min-w-[200px] max-w-[600px] mx-auto" data-tauri-drag-region>
           <div 
-            className="relative w-full h-6 max-w-md group cursor-pointer flex justify-center items-center border rounded-sm"
+            className="relative flex h-7 w-full max-w-md cursor-pointer items-center justify-center rounded-lg border bg-muted/25 transition-colors hover:bg-muted/50"
             onClick={() => onSearchClick?.()}
             data-tauri-drag-region="false"
           >
@@ -262,82 +231,60 @@ export function TitleBar({ onSearchClick, onActivityClick, activityOpen = false 
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
-                size="icon"
-                className={`h-8 w-8 ${wouldCauseLeftOnly(leftSidebarVisible, 'left') ? 'cursor-not-allowed opacity-50' : ''}`}
-                onClick={() => {
-                  if (!wouldCauseLeftOnly(leftSidebarVisible, 'left')) {
-                    toggleLeftSidebar()
-                  }
-                }}
+                size="sm"
+                className={`h-8 gap-1.5 px-2.5 ${pathname.includes('/core/cards') ? 'bg-amber-500/15 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300' : ''}`}
+                onClick={() => router.push(pathname.includes('/core/cards') ? '/core/main' : '/core/cards')}
               >
-                <PanelLeft className={`h-4 w-4 ${!leftSidebarVisible ? 'opacity-30' : ''}`} />
+                <Brain className="h-4 w-4" />
+                <span className="hidden text-xs font-medium 2xl:inline">复习</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              <p>{leftSidebarVisible ? t('navigation.hideLeftSidebar') : t('navigation.showLeftSidebar')}</p>
+              <p>{pathname.includes('/core/cards') ? '返回工作台' : '卡片与复习'}</p>
             </TooltipContent>
           </Tooltip>
 
-          {/* 中间面板切换按钮 */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-8 w-8 ${wouldCauseLeftOnly(centerPanelVisible, 'center') ? 'cursor-not-allowed opacity-50' : ''}`}
-                onClick={() => {
-                  if (!wouldCauseLeftOnly(centerPanelVisible, 'center')) {
-                    toggleCenterPanel()
-                  }
-                }}
-              >
-                <SquarePen className={`h-4 w-4 ${!centerPanelVisible ? 'opacity-30' : ''}`} />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2.5 text-xs text-muted-foreground hover:text-foreground">
+                <PanelLeft className="size-4" />
+                <span className="hidden 2xl:inline">视图</span>
               </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              <p>{centerPanelVisible ? t('navigation.hideCenterPanel') : t('navigation.showCenterPanel')}</p>
-            </TooltipContent>
-          </Tooltip>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52 p-1.5">
+              <DropdownMenuLabel className="text-xs text-muted-foreground">工作区布局</DropdownMenuLabel>
+              <DropdownMenuItem
+                className="gap-2"
+                disabled={wouldCauseLeftOnly(leftSidebarVisible, 'left')}
+                onSelect={() => void toggleLeftSidebar()}
+              >
+                <PanelLeft className="size-4" />
+                {leftSidebarVisible ? '隐藏资料栏' : '显示资料栏'}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2"
+                disabled={wouldCauseLeftOnly(centerPanelVisible, 'center')}
+                onSelect={() => void toggleCenterPanel()}
+              >
+                <SquarePen className="size-4" />
+                {centerPanelVisible ? '隐藏编辑器' : '显示编辑器'}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2"
+                disabled={wouldCauseLeftOnly(rightSidebarVisible, 'right')}
+                onSelect={() => void toggleRightSidebar()}
+              >
+                <PanelRight className="size-4" />
+                {rightSidebarVisible ? '隐藏 AI 助手' : '打开 AI 助手'}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="gap-2" onSelect={onActivityClick}>
+                <CalendarDays className="size-4" />
+                {activityOpen ? '关闭学习记录' : '查看学习记录'}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-          {/* 右侧边栏切换按钮 */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-8 w-8 ${wouldCauseLeftOnly(rightSidebarVisible, 'right') ? 'cursor-not-allowed opacity-50' : ''}`}
-                onClick={() => {
-                  if (!wouldCauseLeftOnly(rightSidebarVisible, 'right')) {
-                    toggleRightSidebar()
-                  }
-                }}
-              >
-                <PanelRight className={`h-4 w-4 ${!rightSidebarVisible ? 'opacity-30' : ''}`} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              <p>{rightSidebarVisible ? t('navigation.hideRightSidebar') : t('navigation.showRightSidebar')}</p>
-            </TooltipContent>
-          </Tooltip>
-          
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={`h-8 w-8 ${activityOpen ? 'bg-primary/10 text-primary hover:bg-primary/15' : ''}`}
-                onClick={onActivityClick}
-              >
-                <CalendarDays className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              <p>{t('navigation.activity')}</p>
-            </TooltipContent>
-          </Tooltip>
-
-          <SyncToggle />
-          
           <PinToggle />
           
           <Tooltip>

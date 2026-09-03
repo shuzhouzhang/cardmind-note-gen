@@ -51,6 +51,11 @@ src-tauri/native-ocr/ios-vision/.tauri/
 /coverage
 *.test.*
 
+# python generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
 # next.js
 /.next/
 /out/
@@ -96,3 +101,6 @@ docs/.vitepress/cache
 
 # worktrees
 .worktrees
+
+# Personal planning material must stay outside the product repository.
+/实习/

@@ -11,12 +11,9 @@ import { useTranslations } from 'next-intl'
 import { useLocalStorage } from 'react-use';
 import { ModelSelect } from "./model-select"
 import { getWorkspacePath } from "@/lib/workspace"
-import { PromptSelect } from "./prompt-select"
 import { ChatSend } from "./chat-send"
 import { LinkedFileDisplay } from "./file-link"
 import { LinkedResource, MarkdownFile, LinkedFolder } from "@/lib/files"
-import { McpButton } from "./mcp-button"
-import { RagSwitch } from "./rag-switch"
 import { ClipboardMonitor } from "./clipboard-monitor"
 import emitter from "@/lib/emitter"
 import { ChatToolsDrawer } from "@/app/mobile/chat/components/chat-tools-drawer"
@@ -127,12 +124,6 @@ const SortableToolbarItem = React.memo(function SortableToolbarItem({ id }: Sort
     switch (id) {
       case 'modelSelect':
         return <ModelSelect />
-      case 'promptSelect':
-        return <PromptSelect />
-      case 'mcpButton':
-        return <McpButton />
-      case 'ragSwitch':
-        return <RagSwitch />
       case 'clipboardMonitor':
         return <ClipboardMonitor />
       default:
@@ -768,7 +759,7 @@ export const ChatInput = React.memo(function ChatInput() {
   // 使用 useMemo 优化工具栏项过滤 - 显示底部工具栏（排除 newChat）
   const bottomToolbarItems = useMemo(() => {
     return chatToolbarConfigPc
-      .filter(item => item.enabled && item.id !== 'newChat')
+      .filter(item => item.enabled && ['modelSelect', 'clipboardMonitor'].includes(item.id))
       .sort((a, b) => a.order - b.order)
   }, [chatToolbarConfigPc])
 

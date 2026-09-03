@@ -1,7 +1,7 @@
 import React from 'react'
 import useChatStore from '@/stores/chat'
 import useTagStore from '@/stores/tag'
-import { ArrowDownToLine, X, Loader2, QuoteIcon } from 'lucide-react'
+import { ArrowDownToLine, X, Loader2, QuoteIcon, Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Chat } from '@/db/chats'
 import ChatPreview from './chat-preview'
@@ -224,8 +224,8 @@ const ChatContent = React.memo(function ChatContent() {
     return true
   }, [loading, agentState.isRunning, chats])
 
-  return <div ref={wrapperRef} id="chats-wrapper" className="relative flex min-h-0 flex-1 flex-col items-end gap-6 overflow-y-auto overflow-x-hidden w-full p-4 [overflow-anchor:none]">
-    <div ref={contentRef} className="w-full flex flex-col items-end gap-6">
+  return <div ref={wrapperRef} id="chats-wrapper" className="relative flex min-h-0 flex-1 flex-col items-end gap-5 overflow-y-auto overflow-x-hidden w-full px-4 py-5 [overflow-anchor:none]">
+    <div ref={contentRef} className="mx-auto flex w-full max-w-3xl flex-col items-end gap-5">
       {
         chats.length ? chats.map((chat) => {
           return <Message key={chat.id} chat={chat} />
@@ -234,8 +234,8 @@ const ChatContent = React.memo(function ChatContent() {
 
       {/* Loading 指示器 - 服务器等待时显示 */}
       {shouldShowLoading && (
-        <div className="flex w-full min-w-0 -mt-6">
-          <div className='text-sm leading-6 flex-1 flex items-center gap-2 text-muted-foreground'>
+        <div className="flex w-full min-w-0">
+          <div className='flex flex-1 items-center gap-2 rounded-xl border border-border/70 bg-background px-4 py-3 text-sm leading-6 text-muted-foreground shadow-sm'>
             <Loader2 className="size-4 animate-spin" />
             <span>正在思考...</span>
           </div>
@@ -264,12 +264,12 @@ const MessageWrapper = React.memo(function MessageWrapper({ chat, children }: { 
   }, [chat.id, deleteChat])
   const shouldShowDelete = showDelete
 
-  // 用户消息：右对齐，带边框和背景
+  // 用户消息：右对齐，用深色气泡与 AI 回复形成明确区分
   if (chat.role === 'user') {
     return (
       <div className="flex w-full justify-end">
         <div
-          className="group relative max-w-[85%] rounded-lg border px-3 py-2"
+          className="group relative max-w-[86%] rounded-2xl rounded-tr-md bg-foreground px-4 py-3 text-background shadow-sm"
           onMouseEnter={() => {
             if (!isMobile) setShowDelete(true)
           }}
@@ -280,7 +280,7 @@ const MessageWrapper = React.memo(function MessageWrapper({ chat, children }: { 
             if (isMobile) setShowDelete((prev) => !prev)
           }}
         >
-          <div className='text-sm leading-6 wrap-break-word text-primary-foreground'>
+          <div className='wrap-break-word text-sm leading-6'>
             {children}
           </div>
           {shouldShowDelete && (
@@ -301,11 +301,19 @@ const MessageWrapper = React.memo(function MessageWrapper({ chat, children }: { 
     )
   }
 
-  // AI 消息：左对齐，无边框，无图标
+  // AI 消息：用稳定的内容卡片承载回答、工具过程与操作区
   return (
     <div className="flex w-full min-w-0">
-      <div className='text-sm leading-6 flex-1 word-break min-w-0 overflow-hidden'>
-        {children}
+      <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-border/70 bg-background px-4 py-4 shadow-sm">
+        <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-muted-foreground">
+          <span className="flex size-6 items-center justify-center rounded-lg bg-foreground text-background">
+            <Sparkles className="size-3.5" />
+          </span>
+          <span>CardMind AI</span>
+        </div>
+        <div className='word-break min-w-0 overflow-hidden text-sm leading-6'>
+          {children}
+        </div>
       </div>
     </div>
   )
@@ -508,15 +516,15 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
           </div>
         ) : (
           // 用户消息
-          <div className="w-full space-y-3 text-primary">
+          <div className="w-full space-y-3 text-inherit">
             {/* 显示用户消息中的图片 */}
             {images.length > 0 && <ChatImages images={images} />}
             {/* 显示用户消息中的引用 */}
             {quoteData && (
               <div className="flex flex-col gap-1 text-[11px]">
                 <div className="flex items-center gap-1">
-                  <QuoteIcon className="size-3 text-primary/75" />
-                  <span className="text-primary/75">
+                  <QuoteIcon className="size-3 text-background/75" />
+                  <span className="text-background/75">
                     {quoteData.startLine !== -1 && quoteData.endLine !== -1 ? (
                       quoteData.startLine === quoteData.endLine ? (
                         t('record.chat.quote.lineSingle', { fileName: quoteData.fileName, line: quoteData.startLine })
@@ -528,7 +536,7 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
                     )}
                   </span>
                 </div>
-                <div className="text-primary/50 line-clamp-2 whitespace-pre-wrap pl-4">
+                <div className="line-clamp-2 whitespace-pre-wrap pl-4 text-background/55">
                   {quoteData.fullContent}
                 </div>
               </div>
