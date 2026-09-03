@@ -26,13 +26,6 @@ async function getInspirationModelConfig() {
     }
   }
 
-  // 如果没找到配置的灵感模型，使用默认的 NoteGen 聊天模型作为 fallback
-  const { noteGenDefaultModels } = await import('@/app/model-config')
-  const noteGenChat = noteGenDefaultModels[0]?.models?.find(m => m.modelType === 'chat')
-  if (noteGenChat) {
-    return noteGenDefaultModels[0]
-  }
-
   return null
 }
 
@@ -43,15 +36,11 @@ async function getInspirationModelConfig() {
  */
 export async function fetchAiPlaceholder(text: string): Promise<string | false> {
   try {
-    // 动态导入 model-config 以获取默认模型配置
-    const { noteGenDefaultModels } = await import('@/app/model-config')
-
-    // 使用第一个默认模型配置（NoteGen Free）
-    const defaultConfig = noteGenDefaultModels[0]
-    const chatModel = defaultConfig.models?.find(m => m.modelType === 'chat')
+    const defaultConfig = await getInspirationModelConfig()
+    const chatModel = defaultConfig?.models?.find(m => m.modelType === 'chat')
 
     if (!defaultConfig || !chatModel) {
-      console.error('No default chat model found in noteGenDefaultModels')
+      console.info('No inspiration model is configured; skipping AI placeholder generation.')
       return false
     }
 

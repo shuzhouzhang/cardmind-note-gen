@@ -1,10 +1,10 @@
 
 import Database from '@tauri-apps/plugin-sql';
 
-// Keep CardMind's growing knowledge base off the system drive.
-// tauri-plugin-sql resolves absolute SQLite paths without placing them in AppData.
-export const CARDMIND_DATABASE_PATH = 'E:/CardMind/data/note.db';
-export const CARDMIND_DATABASE_URL = `sqlite:${CARDMIND_DATABASE_PATH}`;
+// Keep the public build portable: tauri-plugin-sql resolves this relative URL
+// inside the application's data directory. Personal databases are never copied
+// into the repository or opened by tests/evals.
+export const CARDMIND_DATABASE_URL = 'sqlite:note.db';
 
 // 导出数据库实例
 export const db = await Database.load(CARDMIND_DATABASE_URL);

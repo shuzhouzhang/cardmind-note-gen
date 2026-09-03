@@ -24,7 +24,6 @@
     "clipboard:allow-clear",
     "clipboard:allow-write-text",
     "clipboard:allow-start-monitor",
-    "updater:default",
     "process:default",
     "global-shortcut:allow-is-registered",
     "global-shortcut:allow-register",

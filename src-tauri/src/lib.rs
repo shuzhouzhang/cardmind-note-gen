@@ -8,8 +8,6 @@ mod device;
 mod fonts;
 #[cfg(target_os = "ios")]
 mod ios_ocr;
-mod mcp;
-mod mcp_runtime;
 mod mobile_system_bars;
 mod ocr_packages;
 mod skills;
@@ -21,10 +19,6 @@ use ai::{
 use backup::{export_app_data, import_app_data, import_app_data_from_file};
 use device::get_device_id;
 use fonts::list_system_fonts;
-use mcp::{send_mcp_message, start_mcp_stdio_server, stop_mcp_server, McpServerManager};
-use mcp_runtime::{
-    cancel_mcp_runtime_install, inspect_mcp_runtime, install_mcp_runtime, RuntimeInstallManager,
-};
 use ocr_packages::{list_ocr_providers, run_ocr_provider};
 use skills::import_skill_zip;
 
@@ -38,8 +32,6 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
-        .manage(McpServerManager::new())
-        .manage(RuntimeInstallManager::new())
         .manage(AiRequestManager::new());
 
     #[cfg(target_os = "android")]
@@ -51,12 +43,6 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![
-            start_mcp_stdio_server,
-            stop_mcp_server,
-            send_mcp_message,
-            inspect_mcp_runtime,
-            install_mcp_runtime,
-            cancel_mcp_runtime_install,
             get_device_id,
             list_system_fonts,
             analytics::track_analytics_event,

@@ -4,7 +4,7 @@ import { getVersion } from '@tauri-apps/api/app'
 import { AiConfig } from '@/app/core/setting/config'
 import { GitlabInstanceType } from '@/lib/sync/gitlab.types'
 import { GiteaInstanceType } from '@/lib/sync/gitea.types'
-import { noteGenDefaultModels, noteGenModelKeys } from '@/app/model-config'
+import { noteGenDefaultModels } from '@/app/model-config'
 import { fetch } from '@tauri-apps/plugin-http'
 import { CustomThemeColors } from '@/types/theme'
 import { applyThemeColors, removeThemeColors } from '@/lib/theme-utils'
@@ -39,9 +39,6 @@ interface SettingState {
 
   version: string
   setVersion: () => Promise<void>
-
-  autoUpdate: boolean
-  setAutoUpdate: (autoUpdate: boolean) => void
 
   language: string
   setLanguage: (language: string) => void
@@ -336,6 +333,23 @@ async function persistChangedSyncableSettings(state: SettingState, changedKeys: 
   enqueueAutoDataSync('settings', `settings:${changedKeys.join(',')}`)
 }
 
+function findConfiguredNoteGenProvider(configs: AiConfig[]): AiConfig | undefined {
+  return configs.find((config) => config.key === 'note-gen-free' && Boolean(config.apiKey?.trim()))
+}
+
+function buildSecureModelsEndpoint(config: AiConfig): string | null {
+  try {
+    const baseUrl = new URL(config.baseURL || 'https://api.notegen.top/v1')
+    if (baseUrl.protocol !== 'https:') {
+      return null
+    }
+
+    return `${baseUrl.toString().replace(/\/+$/, '')}/models`
+  } catch {
+    return null
+  }
+}
+
 
 const useSettingStore = create<SettingState>((set, get) => ({
   initSettingData: async () => {
@@ -348,20 +362,20 @@ const useSettingStore = create<SettingState>((set, get) => ({
       set({ useImageRepo: savedUseImageRepo })
     }
 
-    // 初始化默认的NoteGen模型配置
+    // Preserve an existing user-managed NoteGen configuration, but never add
+    // an unauthenticated provider to a fresh install.
     const existingAiModelList = (await store.get('aiModelList') as AiConfig[]) || []
-    const hasNoteGenModels = existingAiModelList.some(config => 
-      config.key === 'note-gen-free' || 
-      noteGenModelKeys.includes(config.key) ||
-      config.models?.some(model => noteGenModelKeys.includes(model.id))
-    )
-    
-    const noteGenDefaultConfig = await loadNoteGenDefaultConfig(noteGenDefaultModels[0])
-    let finalAiModelList = applyNoteGenDefaultConfig(existingAiModelList, noteGenDefaultConfig)
+    const existingNoteGenConfig = existingAiModelList.find((config) => config.key === 'note-gen-free')
+    let finalAiModelList = existingAiModelList
+    if (existingNoteGenConfig) {
+      const noteGenDefaultConfig = await loadNoteGenDefaultConfig(noteGenDefaultModels[0])
+      finalAiModelList = applyNoteGenDefaultConfig(existingAiModelList, noteGenDefaultConfig)
+    }
+
     if (JSON.stringify(finalAiModelList) !== JSON.stringify(existingAiModelList)) {
       await store.set('aiModelList', finalAiModelList)
-      set({ aiModelList: finalAiModelList })
     }
+    set({ aiModelList: finalAiModelList })
 
     // 检查是否设置了主要模型，如果没有且存在note-gen-chat，则设置为主要模型
     const currentPrimaryModel = await store.get('primaryModel') as string
@@ -488,64 +502,68 @@ const useSettingStore = create<SettingState>((set, get) => ({
       }
     }
 
-    // 获取 NoteGen 限时免费模型
-    // 如果服务不可用,静默失败,不影响用户使用自己的模型
-    try {
-      const apiKey = noteGenDefaultModels[0].apiKey
-      const headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      }
-      const res = await fetch('https://api.notegen.top/v1/models', {
-        method: 'GET',
-        headers
-      })
+    // Discover optional NoteGen models only when the user already supplied a
+    // credential. Fresh installs remain offline and direct users to AI settings.
+    const configuredNoteGenProvider = findConfiguredNoteGenProvider(finalAiModelList)
+    const modelsEndpoint = configuredNoteGenProvider
+      ? buildSecureModelsEndpoint(configuredNoteGenProvider)
+      : null
 
-      // 检查响应状态
-      if (!res.ok) {
-        throw new Error(`API responded with status: ${res.status}`)
-      }
-
-      const resModels = await res.json()
-
-      if (resModels.data && resModels.data.length > 0) {
-        // 移除旧的 NoteGen Limited 配置
-        finalAiModelList = finalAiModelList.filter(model => 
-          model.title !== 'NoteGen Limited' && model.key !== 'note-gen-limited'
-        )
-        
-        // 过滤出不在默认模型中的限时免费模型
-        const limitedModels = resModels.data.filter((model: any) => {
-          // 检查是否在 noteGenDefaultModels 的 models 数组中
-          const noteGenFreeConfig = finalAiModelList.find(config => config.key === 'note-gen-free')
-          return !noteGenFreeConfig?.models?.some(defaultModel => defaultModel.model === model.id)
-        })
-        
-        // 如果有限时免费模型,创建统一的 NoteGen Limited 配置
-        if (limitedModels.length > 0) {
-          const noteGenLimitedConfig = {
-            apiKey,
-            baseURL: "https://api.notegen.top/v1",
-            key: "note-gen-limited",
-            title: "NoteGen Limited",
-            models: limitedModels.map((model: any) => ({
-              id: `note-gen-limited-${model.id}`,
-              model: model.id,
-              modelType: "chat",
-              temperature: 0.7,
-              topP: 1,
-              enableStream: true
-            }))
-          }
-          
-          finalAiModelList.push(noteGenLimitedConfig)
-          await store.set('aiModelList', finalAiModelList)
-          set({ aiModelList: finalAiModelList })
+    if (configuredNoteGenProvider && modelsEndpoint) {
+      try {
+        const apiKey = configuredNoteGenProvider.apiKey!.trim()
+        const headers = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
         }
+        const res = await fetch(modelsEndpoint, {
+          method: 'GET',
+          headers
+        })
+
+        if (!res.ok) {
+          throw new Error(`API responded with status: ${res.status}`)
+        }
+
+        const resModels = await res.json()
+
+        if (resModels.data && resModels.data.length > 0) {
+          finalAiModelList = finalAiModelList.filter(model =>
+            model.title !== 'NoteGen Limited' && model.key !== 'note-gen-limited'
+          )
+
+          const limitedModels = resModels.data.filter((model: any) => {
+            const noteGenFreeConfig = finalAiModelList.find(config => config.key === 'note-gen-free')
+            return !noteGenFreeConfig?.models?.some(defaultModel => defaultModel.model === model.id)
+          })
+
+          if (limitedModels.length > 0) {
+            const noteGenLimitedConfig = {
+              apiKey,
+              baseURL: configuredNoteGenProvider.baseURL || 'https://api.notegen.top/v1',
+              key: 'note-gen-limited',
+              title: 'NoteGen Limited',
+              models: limitedModels.map((model: any) => ({
+                id: `note-gen-limited-${model.id}`,
+                model: model.id,
+                modelType: 'chat' as const,
+                temperature: 0.7,
+                topP: 1,
+                enableStream: true
+              }))
+            }
+
+            finalAiModelList = [...finalAiModelList, noteGenLimitedConfig]
+            await store.set('aiModelList', finalAiModelList)
+            set({ aiModelList: finalAiModelList })
+          }
+        }
+      } catch {
+        // Do not include request headers or credentials in diagnostics.
+        console.debug('NoteGen API service unavailable; optional model discovery was skipped.')
       }
-    } catch (error) {
-      // 静默处理错误,不影响应用初始化和用户使用自己的模型
-      console.debug('NoteGen API service unavailable, skipping limited models:', error)
+    } else {
+      console.info('NoteGen Free is not configured; skipping model discovery. Configure an AI provider in Settings.')
     }
 
     await Promise.all(Object.entries(get()).map(async ([key, value]) => {
@@ -558,9 +576,10 @@ const useSettingStore = create<SettingState>((set, get) => ({
           setTimeout(() => {
             set({ [key]: res as GenTemplate[] })
           }, 0);
-        } else if (key === 'aiModelList' && hasNoteGenModels) {
-          // 如果已经有NoteGen模型，使用存储的配置
-          set({ [key]: res as AiConfig[] })
+        } else if (key === 'aiModelList') {
+          // Loaded and normalized above so a blank built-in credential can
+          // never replace a user-managed provider configuration.
+          return
         } else if (key === 'recordToolbarConfig') {
           // 确保包含所有工具，如果缺少新工具则自动添加
           const storedConfig = res as RecordToolbarItem[]
@@ -626,9 +645,6 @@ const useSettingStore = create<SettingState>((set, get) => ({
     const version = await getVersion()
     set({ version })
   },
-
-  autoUpdate: true,
-  setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
 
   language: '简体中文',
   setLanguage: (language) => set({ language }),
@@ -1248,10 +1264,9 @@ const useSettingStore = create<SettingState>((set, get) => ({
   chatToolbarConfigMobile: [
     { id: 'modelSelect', enabled: true, order: 0 },
     { id: 'promptSelect', enabled: true, order: 1 },
-    { id: 'mcpButton', enabled: true, order: 2 },
-    { id: 'ragSwitch', enabled: true, order: 3 },
-    { id: 'clipboardMonitor', enabled: true, order: 4 },
-    { id: 'newChat', enabled: true, order: 5 },
+    { id: 'ragSwitch', enabled: true, order: 2 },
+    { id: 'clipboardMonitor', enabled: true, order: 3 },
+    { id: 'newChat', enabled: true, order: 4 },
   ],
   setChatToolbarConfigMobile: async (config: ChatToolbarItem[]) => {
     set({ chatToolbarConfigMobile: config })

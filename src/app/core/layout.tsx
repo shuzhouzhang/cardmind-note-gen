@@ -11,7 +11,6 @@ import { useI18n } from "@/hooks/useI18n"
 import useVectorStore from "@/stores/vector"
 import useShortcutStore from "@/stores/shortcut"
 import useEditorShortcutStore from "@/stores/editor-shortcut"
-import useUpdateStore from "@/stores/update"
 import initQuickRecordText from "@/lib/shortcut/quick-record-text"
 import { useRouter, usePathname } from "next/navigation"
 import initShowWindow from "@/lib/shortcut/show-window"
@@ -43,7 +42,6 @@ export default function RootLayout({
   const { initShortcut } = useShortcutStore()
   const { initEditorShortcuts } = useEditorShortcutStore()
   const { initVectorDb } = useVectorStore()
-  const { initUpdateStore } = useUpdateStore()
   const router = useRouter()
   const pathname = usePathname()
   const t = useTranslations()
@@ -303,9 +301,6 @@ export default function RootLayout({
         initQuickRecordText()
         initShowWindow()
 
-        await initUpdateStore()
-        if (cancelled) return
-        // CardMind does not have its own public updater feed in phase one.
       } catch (error) {
         console.error('Failed to initialize app core:', error)
       }

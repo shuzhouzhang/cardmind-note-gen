@@ -188,7 +188,8 @@ def default_db_path() -> Path:
         return Path(override).expanduser().resolve()
 
     if sys.platform == "win32":
-        return Path("E:/CardMind/data/note.db")
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        return base / "com.cardmind.app" / "note.db"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "com.cardmind.app" / "note.db"
     base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))

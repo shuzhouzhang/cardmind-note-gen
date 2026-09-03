@@ -3,6 +3,7 @@
 import * as React from "react"
 import { diffLines, diffWords } from "diff"
 import { cn } from "@/lib/utils"
+import { toTextDiffSegments } from "./diff-viewer-security.mjs"
 
 export interface DiffViewerProps {
   /** Original content (before) */
@@ -25,6 +26,12 @@ interface DiffLine {
   type: "added" | "removed" | "unchanged" | "empty"
 }
 
+interface DiffWordSegment {
+  text: string
+  added: boolean
+  removed: boolean
+}
+
 export function DiffViewer({
   original,
   modified,
@@ -34,6 +41,7 @@ export function DiffViewer({
   className,
 }: DiffViewerProps) {
   const [diffData, setDiffData] = React.useState<DiffLine[]>([])
+  const [wordDiffData, setWordDiffData] = React.useState<DiffWordSegment[]>([])
   const [showAllChangedWarning, setShowAllChangedWarning] = React.useState(false)
 
   React.useEffect(() => {
@@ -43,6 +51,7 @@ export function DiffViewer({
     const normalizedModified = normalizeLineEndings(modified)
 
     if (mode === "lines") {
+      setWordDiffData([])
       const changes = diffLines(normalizedOriginal, normalizedModified)
       const lines: DiffLine[] = []
 
@@ -92,32 +101,23 @@ export function DiffViewer({
 
       setDiffData(lines)
     } else {
-      // Word mode
       const changes = diffWords(normalizedOriginal, normalizedModified)
-      let result = ""
-      changes.forEach((part) => {
-        const className = part.added
-          ? "bg-green-500/30 text-green-900 dark:text-green-100"
-          : part.removed
-          ? "bg-red-500/30 text-red-900 dark:text-red-100 line-through"
-          : ""
-        result += `<span class="${className}">${part.value}</span>`
-      })
-
-      // Convert to lines format for consistent rendering
-      setDiffData([
-        {
-          number: 0,
-          content: result,
-          type: "unchanged",
-        },
-      ])
+      setDiffData([])
+      setWordDiffData(toTextDiffSegments(changes))
+      setShowAllChangedWarning(false)
     }
   }, [original, modified, mode, showLineNumbers])
 
-  if (diffData.length === 0) {
+  if ((mode === "lines" && diffData.length === 0) || (mode === "words" && wordDiffData.length === 0)) {
     return null
   }
+
+  const additionCount = mode === "lines"
+    ? diffData.filter((line) => line.type === "added").length
+    : wordDiffData.filter((segment) => segment.added).length
+  const removalCount = mode === "lines"
+    ? diffData.filter((line) => line.type === "removed").length
+    : wordDiffData.filter((segment) => segment.removed).length
 
   const containerStyle = maxHeight
     ? { maxHeight: typeof maxHeight === "number" ? `${maxHeight}px` : maxHeight }
@@ -136,8 +136,8 @@ export function DiffViewer({
           {mode === "lines" ? "Line Diff" : "Word Diff"}
         </span>
         <span className="text-xs">
-          {diffData.filter((l) => l.type === "added").length} additions,{" "}
-          {diffData.filter((l) => l.type === "removed").length} deletions
+          {additionCount} additions,{" "}
+          {removalCount} deletions
         </span>
       </div>
 
@@ -179,21 +179,27 @@ export function DiffViewer({
                       line.type === "removed" && "text-red-900 dark:text-red-100",
                       line.type === "unchanged" && "text-foreground"
                     )}
-                    dangerouslySetInnerHTML={{
-                      __html: line.content,
-                    }}
-                  />
+                  >
+                    {line.content}
+                  </code>
                 </pre>
               </div>
             ))
           ) : (
             <div className="p-4">
-              <div
-                className="whitespace-pre-wrap break-words"
-                dangerouslySetInnerHTML={{
-                  __html: diffData[0]?.content || "",
-                }}
-              />
+              <div className="whitespace-pre-wrap break-words">
+                {wordDiffData.map((segment, idx) => (
+                  <span
+                    key={idx}
+                    className={cn(
+                      segment.added && "bg-green-500/30 text-green-900 dark:text-green-100",
+                      segment.removed && "bg-red-500/30 text-red-900 dark:text-red-100 line-through"
+                    )}
+                  >
+                    {segment.text}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
         </div>

@@ -1,0 +1,21 @@
+CardMind attribution and modification notice
+============================================
+
+CardMind is based on NoteGen by codexu and its contributors:
+https://github.com/codexu/note-gen
+
+Frozen upstream base:
+70e356981a360a59136043e97d7899007aa1022e
+
+CardMind modifications are maintained by GitHub user shuzhouzhang. The
+Agent Reliability v1 modification date is 2026-09-03. The modification scope
+includes knowledge-card workflows and reliability, permission, observability,
+and replay-evaluation work around the single-agent tool loop.
+
+This distribution is licensed under GPL-3.0-only. See LICENSE for the full
+license text. Existing upstream copyright and attribution notices remain in
+effect. The CardMind name and modifications do not imply endorsement by the
+NoteGen maintainers.
+
+Public descriptions must identify CardMind as a NoteGen derivative and must
+not describe disabled MCP, Skills, or Memory Agent capabilities as supported.

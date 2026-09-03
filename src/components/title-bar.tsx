@@ -14,7 +14,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Button } from '@/components/ui/button'
 import useSettingStore from '@/stores/setting'
 import useArticleStore from '@/stores/article'
-import useUpdateStore from '@/stores/update'
 import React from 'react'
 import { ControlText } from '@/app/core/main/mark/control-text'
 import { ControlImage } from '@/app/core/main/mark/control-image'
@@ -71,7 +70,6 @@ export function TitleBar({ onSearchClick, onActivityClick, activityOpen = false 
   }
   const { recordToolbarConfig } = useSettingStore()
   const { activeFilePath } = useArticleStore()
-  const { hasUpdate } = useUpdateStore()
   const t = useTranslations()
   useToolbarShortcuts()
 
@@ -305,9 +303,6 @@ export function TitleBar({ onSearchClick, onActivityClick, activityOpen = false 
                   <Cog className="h-4 w-4" />
                 ) : (
                   <Settings className="h-4 w-4" />
-                )}
-                {hasUpdate && !pathname.includes('/core/setting') && (
-                  <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500" />
                 )}
               </Button>
             </TooltipTrigger>

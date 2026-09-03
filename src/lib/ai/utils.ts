@@ -6,6 +6,7 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import { platform } from "@tauri-apps/plugin-os";
 import { createTauriOpenAIClient, type OpenAICompatibleClient } from "./tauri-client";
 import { DEFAULT_SYSTEM_PROMPT } from './system-prompt';
+import { enforceAgentReliabilityPolicy } from '@/lib/agent/reliability-policy';
 
 /**
  * 获取当前的prompt内容
@@ -34,8 +35,11 @@ export async function getPromptContent(): Promise<string> {
 export async function getSystemPromptContent(): Promise<string> {
   const store = await Store.load('store.json')
   const systemPrompt = await store.get<string>('systemPrompt')
+  const basePrompt = typeof systemPrompt === 'string' && systemPrompt.trim()
+    ? systemPrompt
+    : DEFAULT_SYSTEM_PROMPT
 
-  return typeof systemPrompt === 'string' ? systemPrompt.trim() : DEFAULT_SYSTEM_PROMPT
+  return enforceAgentReliabilityPolicy(basePrompt)
 }
 
 /**

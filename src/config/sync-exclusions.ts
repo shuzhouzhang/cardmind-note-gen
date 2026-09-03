@@ -73,6 +73,10 @@ export const ALWAYS_SYNC_EXCLUDED_FIELDS: string[] = [
   'autoDataSyncLastLocalUploadMeta',
   'autoDataSyncLastAppliedRemoteMeta',
   'autoDataSyncRecordSnapshots',
+  // MCP is disabled in CardMind Agent Reliability v1. Preserve any existing
+  // local configuration, but never upload it or overwrite it from a peer.
+  'mcp.servers',
+  'mcp.selectedServerIds',
 ]
 
 export const SENSITIVE_SYNC_EXCLUDED_FIELDS: string[] = [

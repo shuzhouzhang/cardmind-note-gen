@@ -15,7 +15,6 @@ import { useTranslations } from 'next-intl'
 import ChatThinking from './chat-thinking'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
-import { McpToolCallCard } from './mcp-tool-call'
 import { AgentExecutionStatus } from './agent-execution-status'
 import { AgentPanelWithRag } from './agent-panel-with-rag'
 import { AgentChangesPanel } from './agent-changes-panel'
@@ -322,7 +321,7 @@ MessageWrapper.displayName = 'MessageWrapper'
 
 const Message = React.memo(function Message({ chat }: { chat: Chat }) {
   const t = useTranslations()
-  const { chats, deleteChat, getMcpToolCallsByChatId, loading, agentState } = useChatStore()
+  const { chats, deleteChat, loading, agentState } = useChatStore()
   const content = chat.content
   const isActiveAgentMessage = chat.role === 'system' && agentState.activeChatId === chat.id
   const latestChatId = chats[chats.length - 1]?.id
@@ -366,9 +365,6 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
       return []
     }
   }, [chat.ragSourceDetails])
-
-  // 获取该消息关联的 MCP 工具调用
-  const mcpToolCalls = useMemo(() => getMcpToolCallsByChatId(chat.id), [chat.id, getMcpToolCallsByChatId])
 
   // 解析图片数组
   const images = useMemo(() => {
@@ -456,7 +452,6 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
         (chat.agentHistory && chat.agentHistory.length > 0) ||
         ragSources.length > 0 ||
         ragSourceDetails.length > 0 ||
-        mcpToolCalls.length > 0 ||
         isLiveAgentVisible
       )
 
@@ -491,15 +486,6 @@ const Message = React.memo(function Message({ chat }: { chat: Chat }) {
                     streaming={loading && isActiveAgentMessage}
                   />
                 )}
-              </div>
-            )}
-
-            {/* MCP 工具调用展示 */}
-            {mcpToolCalls.length > 0 && (
-              <div className="space-y-4">
-                {mcpToolCalls.map(toolCall => (
-                  <McpToolCallCard key={toolCall.id} toolCall={toolCall} />
-                ))}
               </div>
             )}
 

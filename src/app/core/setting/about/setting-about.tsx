@@ -3,7 +3,6 @@ import { SettingType } from "../components/setting-base";
 import { Item, ItemGroup, ItemMedia, ItemContent, ItemTitle, ItemDescription, ItemActions } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
 import { useLocale, useTranslations } from 'next-intl';
-import Updater from "./updater";
 import { Bug, ExternalLink, Github, HomeIcon, MessageSquare, SettingsIcon } from "lucide-react";
 import { open } from "@tauri-apps/plugin-shell";
 import { Button } from "@/components/ui/button";
@@ -91,11 +90,6 @@ export function SettingAbout({id, icon}: {id: string, icon?: React.ReactNode}) {
   return (
     <SettingType id={id} icon={icon} title={t('title')}>
       <div className="flex w-full flex-col gap-6">
-        <section className="flex flex-col gap-3">
-          <SectionHeading title={t('sections.appInfo.title')} desc={t('sections.appInfo.desc')} />
-          <Updater />
-        </section>
-
         {sections.map(section => (
           <ResourceSection key={section.id} section={section} />
         ))}

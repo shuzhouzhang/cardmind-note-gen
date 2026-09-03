@@ -10,10 +10,11 @@
     "frontendDist": "../out"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "macOSPrivateApi": true,
     "security": {
-      "csp": null,
+      "csp": "default-src 'self' customprotocol: asset:; connect-src 'self' ipc: http://ipc.localhost https:; img-src 'self' asset: http://asset.localhost blob: data: https:; media-src 'self' asset: http://asset.localhost blob: data: https:; font-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'",
+      "devCsp": "default-src 'self' customprotocol: asset: http://localhost:3456; connect-src 'self' ipc: http://ipc.localhost https: http://localhost:3456 ws://localhost:3456; img-src 'self' asset: http://asset.localhost blob: data: https: http://localhost:3456; media-src 'self' asset: http://asset.localhost blob: data: https: http://localhost:3456; font-src 'self' asset: http://asset.localhost data: http://localhost:3456; style-src 'self' 'unsafe-inline' http://localhost:3456; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:3456; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'",
       "assetProtocol": {
         "enable": true,
         "scope": ["**"]
@@ -63,16 +64,6 @@
       "signingIdentity": null,
       "entitlements": null,
       "exceptionDomain": null
-    }
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRENURGRUVFREY4M0RGRDkKUldUWjM0UGY3djVkVGQ0aDluR0J6SnBUV2dET0FibXdzVmdTL2hIM21QQ1NCS3R2enllUStSd2oK",
-      "endpoints": [
-        "https://download.notegen.top/updates/latest.json",
-        "https://github.com/codexu/note-gen/releases/latest/download/latest.json"
-      ],
-      "createUpdaterArtifacts": false
     }
   }
 }
