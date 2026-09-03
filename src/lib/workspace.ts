@@ -1,13 +1,15 @@
 import { BaseDirectory } from '@tauri-apps/plugin-fs'
 import { appDataDir, join } from '@tauri-apps/api/path'
 import { Store } from '@tauri-apps/plugin-store'
+import {
+  assertSafeWorkspaceRelativePathInput,
+  isAbsoluteFsPath,
+} from './workspace-path-safety'
+
+export { assertSafeWorkspaceRelativePathInput, isAbsoluteFsPath } from './workspace-path-safety'
 
 function normalizeFsPath(path: string): string {
   return path.trim().replace(/\\/g, '/').replace(/\/+/g, '/')
-}
-
-export function isAbsoluteFsPath(path: string): boolean {
-  return path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith('\\\\')
 }
 
 /**
@@ -175,20 +177,14 @@ export async function normalizeWorkspaceRelativePath(relativePath: string): Prom
  * Agent 文件工具应在执行读写前调用此函数，避免越过工作区根目录。
  */
 export async function ensureSafeWorkspaceRelativePath(relativePath: string): Promise<string> {
+  assertSafeWorkspaceRelativePathInput(relativePath)
   const normalized = await normalizeWorkspaceRelativePath(relativePath)
 
   if (!normalized) {
     throw new Error('路径不能为空')
   }
 
-  if (normalized.startsWith('/')) {
-    throw new Error('不允许使用绝对路径')
-  }
-
-  const segments = normalized.split('/').filter(Boolean)
-  if (segments.some(segment => segment === '..')) {
-    throw new Error('路径不能包含 ..')
-  }
+  assertSafeWorkspaceRelativePathInput(normalized)
 
   return normalized
 }

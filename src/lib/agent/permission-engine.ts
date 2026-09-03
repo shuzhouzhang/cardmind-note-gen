@@ -41,12 +41,13 @@ const CURRENT_MARKDOWN_PRESERVE_PATTERN = /(不要|别|无需|禁止|不需要).
 const WRITE_INTENT_PATTERN = /(修改|改写|编辑|润色|替换|插入|追加|添加|补充|删除|移除|创建|新建|保存|写入|更新|重命名|移动|复制|生成.{0,8}文件|整理(成|到|为|进)|记住|记录|应用|发布|发送|执行|运行|安装|部署|改(成|为|得|好|一下)|把.{0,20}(改|换|替换|写成|变成|调整|优化|润色|翻译(成|为|到)?)|将.{0,20}翻译(成|为|到)?|(?:当前|这篇|本文|笔记|文件|文档|内容|全文|全部|整篇).{0,16}翻译(成|为|到)?|让.{0,20}更(正式|专业|清晰|自然|流畅|简洁|准确)|调整|优化|完善|提升|modify|edit|change|rewrite|replace|insert|append|add|delete|remove|create|save|write|update|rename|move|copy|translate(?: .{0,20})? (?:to|into)|remember|record|apply|publish|send|execute|run|install|deploy)/i
 const OUTPUT_FILE_INTENT_PATTERN = /(生成|创建|新建|输出).{0,16}(pptx|docx|xlsx|pdf|图片|图像|文件|演示文稿|幻灯片|deck|slides|presentation)|create.{0,16}(pptx|docx|xlsx|pdf|image|file|deck|slides|presentation)|generate.{0,16}(pptx|docx|xlsx|pdf|image|file|deck|slides|presentation)/i
 const PORTABLE_PATH_SEGMENT_SOURCE = '[\\p{L}\\p{N}_.-]+'
+const PATH_SEPARATOR_SOURCE = '[/\\\\]'
 const PATH_TOKEN_PREFIX_SOURCE = "(?:^|[\\s\"'`：:，,（(])"
 const PATH_TOKEN_SUFFIX_SOURCE = "(?=$|[\\s\"'`。；;，,）)])"
 
 function stripPathLiterals(userInput: string) {
   const pathLiteral = new RegExp(
-    `${PATH_TOKEN_PREFIX_SOURCE}(?:${PORTABLE_PATH_SEGMENT_SOURCE}/)+${PORTABLE_PATH_SEGMENT_SOURCE}${PATH_TOKEN_SUFFIX_SOURCE}`,
+    `${PATH_TOKEN_PREFIX_SOURCE}(?:${PORTABLE_PATH_SEGMENT_SOURCE}${PATH_SEPARATOR_SOURCE})+${PORTABLE_PATH_SEGMENT_SOURCE}${PATH_TOKEN_SUFFIX_SOURCE}`,
     'giu',
   )
   const markdownBasename = new RegExp(
@@ -232,7 +233,7 @@ function sameFile(left: string, right: string) {
 
 function explicitMarkdownTargets(userInput: string) {
   const pattern = new RegExp(
-    `${PATH_TOKEN_PREFIX_SOURCE}((?:${PORTABLE_PATH_SEGMENT_SOURCE}/)+${PORTABLE_PATH_SEGMENT_SOURCE}\\.md|${PORTABLE_PATH_SEGMENT_SOURCE}\\.md)${PATH_TOKEN_SUFFIX_SOURCE}`,
+    `${PATH_TOKEN_PREFIX_SOURCE}((?:${PORTABLE_PATH_SEGMENT_SOURCE}${PATH_SEPARATOR_SOURCE})+${PORTABLE_PATH_SEGMENT_SOURCE}\\.md|${PORTABLE_PATH_SEGMENT_SOURCE}\\.md)${PATH_TOKEN_SUFFIX_SOURCE}`,
     'giu',
   )
   const targets: string[] = []
@@ -241,6 +242,49 @@ function explicitMarkdownTargets(userInput: string) {
     if (match[1]) targets.push(normalizePath(match[1]))
   }
   return [...new Set(targets)]
+}
+
+function scopedMarkdownInputPaths(tool: AgentTool, input: Record<string, unknown>) {
+  if (tool.name === 'note_read_files_batch' && Array.isArray(input.filePaths)) {
+    return input.filePaths.filter((value): value is string => typeof value === 'string')
+  }
+
+  const sourcePath = typeof input.filePath === 'string'
+    ? normalizePath(input.filePath)
+    : typeof input.path === 'string'
+      ? normalizePath(input.path)
+      : undefined
+
+  if (tool.name === 'note_rename_file' && sourcePath && typeof input.newName === 'string') {
+    const sourceParts = sourcePath.split('/').filter(Boolean)
+    sourceParts.pop()
+    const destination = normalizePath([...sourceParts, input.newName.trim()].filter(Boolean).join('/'))
+    return [sourcePath, destination]
+  }
+
+  if (tool.name === 'note_move_file' && sourcePath && typeof input.targetFolderPath === 'string') {
+    const sourceName = sourcePath.split('/').filter(Boolean).pop() || ''
+    const destination = normalizePath([input.targetFolderPath, sourceName].filter(Boolean).join('/'))
+    return [sourcePath, destination]
+  }
+
+  if (tool.name === 'note_copy_file' && sourcePath && typeof input.targetFolderPath === 'string') {
+    const sourceName = sourcePath.split('/').filter(Boolean).pop() || ''
+    const requestedName = typeof input.newName === 'string' && input.newName.trim()
+      ? input.newName.trim()
+      : sourceName
+    const targetName = requestedName.endsWith('.md') ? requestedName : `${requestedName}.md`
+    const destination = normalizePath([input.targetFolderPath, targetName].filter(Boolean).join('/'))
+    return [sourcePath, destination]
+  }
+
+  if (sourcePath) return [sourcePath]
+  if (typeof input.fileName === 'string') {
+    return [[typeof input.folderPath === 'string' ? input.folderPath : '', input.fileName]
+      .filter(Boolean)
+      .join('/')]
+  }
+  return []
 }
 
 function validateTransactionSelection(
@@ -277,18 +321,14 @@ function validateScopedTarget(
   if (!context) return undefined
 
   const explicitTargets = explicitMarkdownTargets(context.userInput)
-  const inputPath = typeof input.filePath === 'string'
+  const editorInputPath = typeof input.filePath === 'string'
     ? input.filePath
     : typeof input.path === 'string'
       ? input.path
       : typeof input.fileName === 'string'
         ? [typeof input.folderPath === 'string' ? input.folderPath : '', input.fileName].filter(Boolean).join('/')
-      : undefined
-  const inputPaths = tool.name === 'note_read_files_batch' && Array.isArray(input.filePaths)
-    ? input.filePaths.filter((value): value is string => typeof value === 'string')
-    : inputPath
-      ? [inputPath]
-      : []
+        : undefined
+  const inputPaths = scopedMarkdownInputPaths(tool, input)
 
   const outOfScopePaths = explicitTargets.length
     ? inputPaths.filter((path) => !explicitTargets.some((target) => sameFile(target, path)))
@@ -307,7 +347,7 @@ function validateScopedTarget(
     return `编辑器工具只能作用于当前文件 ${activeFilePath}，不能用于用户指定的其他文件 ${explicitTargets.join('、')}。`
   }
 
-  if (tool.category === 'editor' && context.activeFilePath && inputPath && !sameFile(context.activeFilePath, inputPath)) {
+  if (tool.category === 'editor' && context.activeFilePath && editorInputPath && !sameFile(context.activeFilePath, editorInputPath)) {
     return `编辑器工具只能作用于当前文件 ${context.activeFilePath}。`
   }
 
